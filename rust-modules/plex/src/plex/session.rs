@@ -564,6 +564,14 @@ pub struct Session {
     /// that never tuned a subtitle's timing serializes exactly as it did before the field existed.
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
     pub subtitle_offsets: Vec<SubtitleOffsets>,
+    /// **Per profile, the audio and subtitle track last picked in the player for each TV show**,
+    /// so the next episode of that show starts with the matching track instead of the defaults.
+    /// Keyed by the server's machine id and the show's ratingKey, and recorded as the track's
+    /// facts (language, forced, SDH, codec, title), never its stream id, because every episode
+    /// has its own ids. See [`ShowTracks`]. Bounded per profile ([`ShowTracks::CAP`]), soft-parsed,
+    /// and omitted while empty so an older session serializes exactly as before.
+    #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
+    pub show_tracks: Vec<ShowTracks>,
     /// **Every profile this television has switched to, with the credentials that switch
     /// resolved** — so the who's-watching picker can seat a household member with plex.tv
     /// unreachable. Written by the profile switch on every ONLINE success (replace-by-uuid), read
@@ -769,6 +777,8 @@ struct CanonicalSessionPreferences {
     library_order: Vec<LibraryOrder>,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
     subtitle_offsets: Vec<SubtitleOffsets>,
+    #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
+    show_tracks: Vec<ShowTracks>,
     #[serde(default, deserialize_with = "de_soft_hero_blur")]
     last_hero_blur: Option<[[f32; 3]; 4]>,
     #[serde(default = "default_true", deserialize_with = "de_soft_bool_on")]
@@ -822,6 +832,7 @@ impl Default for CanonicalSessionPreferences {
             library_views: Vec::new(),
             library_order: Vec::new(),
             subtitle_offsets: Vec::new(),
+            show_tracks: Vec::new(),
             last_hero_blur: None,
             trailer_autoplay: true,
             subtitle_tone: SubtitleTone::White,
@@ -878,6 +889,7 @@ fn split_public(session: &Session) -> Result<plx_platform::storage::state::Publi
         library_views: session.library_views.clone(),
         library_order: session.library_order.clone(),
         subtitle_offsets: session.subtitle_offsets.clone(),
+        show_tracks: session.show_tracks.clone(),
         last_hero_blur: session.last_hero_blur,
         trailer_autoplay: session.trailer_autoplay,
         subtitle_tone: session.subtitle_tone,
@@ -956,6 +968,7 @@ pub fn join_canonical(
         library_views: preferences.library_views,
         library_order: preferences.library_order,
         subtitle_offsets: preferences.subtitle_offsets,
+        show_tracks: preferences.show_tracks,
         last_hero_blur: preferences.last_hero_blur,
         trailer_autoplay: preferences.trailer_autoplay,
         subtitle_tone: preferences.subtitle_tone,
@@ -993,6 +1006,7 @@ fn public_session(public: &plx_platform::storage::state::PublicPayload) -> Sessi
         library_views: preferences.library_views,
         library_order: preferences.library_order,
         subtitle_offsets: preferences.subtitle_offsets,
+        show_tracks: preferences.show_tracks,
         last_hero_blur: preferences.last_hero_blur,
         trailer_autoplay: preferences.trailer_autoplay,
         subtitle_tone: preferences.subtitle_tone,
@@ -2219,6 +2233,112 @@ impl LibraryViews {
     }
 }
 
+/// One profile's remembered track choices per TV show. See [`Session::show_tracks`].
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct ShowTracks {
+    /// The Plex Home user's `uuid`, or **empty for the account owner**, as in [`SubtitleOffsets`].
+    pub user: String,
+    /// Oldest first: [`ShowTracks::remember`] moves a re-picked show to the end, and the cap
+    /// drops from the front.
+    #[serde(deserialize_with = "de_soft_vec")]
+    pub shows: Vec<ShowTrackEntry>,
+    #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
+    pub extensions: OpaqueExtensions,
+}
+
+/// One show's remembered audio and subtitle choice. Either half may be absent: a viewer who only
+/// ever changed the subtitle leaves the audio to the usual selection.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct ShowTrackEntry {
+    pub machine_id: String,
+    /// The show's ratingKey (an episode's `grandparentRatingKey`).
+    pub show_rk: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<TrackHint>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<TrackHint>,
+    #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
+    pub extensions: OpaqueExtensions,
+}
+
+/// What identifies "the same track" on another episode: the facts a viewer chooses by. Stream
+/// ids are per file, so they are deliberately not part of it.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct TrackHint {
+    /// Subtitles turned Off. Every other field is unused when this is set.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub off: bool,
+    /// ISO language code (`Stream.languageCode`), compared with `metadata::lang_matches`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub lang: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub codec: String,
+    #[serde(skip_serializing_if = "is_zero_i64")]
+    pub channels: i64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub forced: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub sdh: bool,
+    /// An audio description (commentary-style) track, which must not stand in for the main audio.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ad: bool,
+    /// An external subtitle file rather than a track inside the video.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub external: bool,
+    #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
+    pub extensions: OpaqueExtensions,
+}
+
+fn is_zero_i64(v: &i64) -> bool {
+    *v == 0
+}
+
+/// Which half of a [`ShowTrackEntry`] a pick updates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrackKind {
+    Audio,
+    Subtitle,
+}
+
+impl ShowTracks {
+    /// A household binges a modest number of shows; the cap keeps the public payload bounded the
+    /// same way [`SubtitleOffsets::CAP`] does.
+    pub const CAP: usize = 40;
+
+    /// This profile's remembered choice for one show, if it ever made one.
+    pub fn get(&self, machine_id: &str, show_rk: &str) -> Option<&ShowTrackEntry> {
+        if machine_id.is_empty() || show_rk.is_empty() {
+            return None;
+        }
+        self.shows.iter().find(|e| e.machine_id == machine_id && e.show_rk == show_rk)
+    }
+
+    /// Record one half of a show's choice as the most recent, keeping the other half. A show
+    /// with no machine id or ratingKey (a film, an unregistered server) is never recorded.
+    pub fn remember(&mut self, machine_id: &str, show_rk: &str, kind: TrackKind, hint: TrackHint) {
+        if machine_id.is_empty() || show_rk.is_empty() {
+            return;
+        }
+        let at = self.shows.iter().position(|e| e.machine_id == machine_id && e.show_rk == show_rk);
+        let mut entry = match at {
+            Some(i) => self.shows.remove(i),
+            None => ShowTrackEntry { machine_id: machine_id.to_string(), show_rk: show_rk.to_string(), ..Default::default() },
+        };
+        match kind {
+            TrackKind::Audio => entry.audio = Some(hint),
+            TrackKind::Subtitle => entry.subtitle = Some(hint),
+        }
+        self.shows.push(entry);
+        let excess = self.shows.len().saturating_sub(Self::CAP);
+        self.shows.drain(..excess);
+    }
+}
+
 /// One profile's remembered subtitle sync-timing corrections. See [`Session::subtitle_offsets`].
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
 #[serde(default)]
@@ -3096,6 +3216,32 @@ impl Session {
             }
         }
         self.library_views.retain(|views| !views.libs.is_empty());
+    }
+
+    /// One profile's remembered track choice for one show on one server, if any.
+    pub fn show_tracks_for(&self, user: &str, machine_id: &str, show_rk: &str) -> Option<&ShowTrackEntry> {
+        self.show_tracks.iter().find(|t| t.user == user).and_then(|t| t.get(machine_id, show_rk))
+    }
+
+    /// Every show this profile has a remembered choice for on one server: what a play request
+    /// carries to its resolve, which learns the show only once the item is fetched.
+    pub fn show_tracks_on(&self, user: &str, machine_id: &str) -> Vec<ShowTrackEntry> {
+        self.show_tracks.iter().find(|t| t.user == user)
+            .map(|t| t.shows.iter().filter(|e| e.machine_id == machine_id).cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Record one half of one show's choice for one profile, leaving every other profile alone.
+    pub fn remember_show_track(&mut self, user: &str, machine_id: &str, show_rk: &str, kind: TrackKind, hint: TrackHint) {
+        match self.show_tracks.iter_mut().find(|t| t.user == user) {
+            Some(slot) => slot.remember(machine_id, show_rk, kind, hint),
+            None => {
+                let mut fresh = ShowTracks { user: user.to_string(), ..Default::default() };
+                fresh.remember(machine_id, show_rk, kind, hint);
+                self.show_tracks.push(fresh);
+            }
+        }
+        self.show_tracks.retain(|t| !t.shows.is_empty());
     }
 
     /// One profile's remembered subtitle sync-timing correction for one item, `None` for a
@@ -5937,6 +6083,85 @@ mod deck_press_tests {
         assert!(DeckPress::Play.press_plays());
         for mode in DeckPress::LADDER {
             assert_eq!(DeckPress::from_index(mode.index()), mode);
+        }
+    }
+}
+
+/// `Session::show_tracks`: per profile, per server and show, bounded, both halves kept apart.
+#[cfg(test)]
+mod show_tracks_tests {
+    use super::*;
+
+    fn hint(lang: &str) -> TrackHint {
+        TrackHint { lang: lang.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn a_pick_is_kept_per_profile_server_and_show() {
+        let mut s = Session::default();
+        s.remember_show_track("", "m1", "100", TrackKind::Audio, hint("jpn"));
+        s.remember_show_track("kid", "m1", "100", TrackKind::Audio, hint("eng"));
+        assert_eq!(s.show_tracks_for("", "m1", "100").and_then(|e| e.audio.clone()), Some(hint("jpn")));
+        assert_eq!(s.show_tracks_for("kid", "m1", "100").and_then(|e| e.audio.clone()), Some(hint("eng")));
+        assert!(s.show_tracks_for("", "m2", "100").is_none(), "another server's show is another show");
+        assert!(s.show_tracks_for("", "m1", "101").is_none());
+        assert_eq!(s.show_tracks_on("", "m1").len(), 1);
+        assert!(s.show_tracks_on("", "m2").is_empty());
+    }
+
+    #[test]
+    fn audio_and_subtitle_are_two_halves_of_one_entry() {
+        let mut s = Session::default();
+        s.remember_show_track("", "m", "100", TrackKind::Subtitle, TrackHint { off: true, ..Default::default() });
+        s.remember_show_track("", "m", "100", TrackKind::Audio, hint("jpn"));
+        let e = s.show_tracks_for("", "m", "100").unwrap();
+        assert_eq!(e.audio, Some(hint("jpn")));
+        assert!(e.subtitle.as_ref().is_some_and(|h| h.off), "the audio pick kept the earlier subtitle Off");
+    }
+
+    #[test]
+    fn a_film_or_unknown_server_is_never_recorded_and_the_cap_drops_the_oldest() {
+        let mut s = Session::default();
+        s.remember_show_track("", "", "100", TrackKind::Audio, hint("jpn"));
+        s.remember_show_track("", "m", "", TrackKind::Audio, hint("jpn"));
+        assert!(s.show_tracks.is_empty());
+        for i in 0..(ShowTracks::CAP + 3) {
+            s.remember_show_track("", "m", &i.to_string(), TrackKind::Audio, hint("eng"));
+        }
+        assert_eq!(s.show_tracks_on("", "m").len(), ShowTracks::CAP);
+        assert!(s.show_tracks_for("", "m", "0").is_none(), "the oldest show fell off");
+        // Re-picking an old show makes it the newest again.
+        s.remember_show_track("", "m", "3", TrackKind::Subtitle, hint("eng"));
+        s.remember_show_track("", "m", "new", TrackKind::Audio, hint("eng"));
+        assert!(s.show_tracks_for("", "m", "3").is_some());
+        assert!(s.show_tracks_for("", "m", "4").is_none());
+    }
+
+    #[test]
+    fn it_round_trips_and_is_absent_while_empty() {
+        let empty = serde_json::to_string(&Session::default()).unwrap();
+        assert!(!empty.contains("show_tracks"), "{empty}");
+        let mut s = Session::default();
+        s.remember_show_track("", "m", "100", TrackKind::Audio,
+            TrackHint { lang: "jpn".into(), codec: "eac3".into(), channels: 6, title: "Main".into(), ..Default::default() });
+        s.remember_show_track("", "m", "100", TrackKind::Subtitle,
+            TrackHint { lang: "eng".into(), forced: true, sdh: true, external: true, ..Default::default() });
+        let round: Session = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(round.show_tracks, s.show_tracks);
+        let (public, protected) = split_canonical(&s).unwrap();
+        assert_eq!(join_canonical(&public, &protected).unwrap().show_tracks, s.show_tracks);
+        assert_eq!(public_session(&public).show_tracks, s.show_tracks);
+    }
+
+    #[test]
+    fn a_malformed_list_or_entry_is_dropped_not_fatal() {
+        for value in [
+            serde_json::json!({"show_tracks": null}),
+            serde_json::json!({"show_tracks": "x"}),
+            serde_json::json!({"show_tracks": [{"user": "", "shows": [7, {"machine_id": "m", "show_rk": "1", "audio": {"lang": "eng"}}]}]}),
+        ] {
+            let s: Session = serde_json::from_value(value.clone()).unwrap_or_else(|e| panic!("{value}: {e}"));
+            assert!(s.show_tracks.iter().all(|t| t.shows.iter().all(|e| !e.show_rk.is_empty())), "{value}");
         }
     }
 }

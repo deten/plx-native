@@ -7304,6 +7304,7 @@ impl ResolveEnv {
             preview: false,
             audio_enhancements: crate::player::audio_enhancements(),
             pass: plx_plex::plex::serverinfo::subscription_of(sid),
+            show_tracks: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
             dv_capability: None,
         }
@@ -7700,6 +7701,10 @@ fn request_play_inner(
     let mut env = ResolveEnv::snapshot(ps, meta.view(), sid, rk);
     env.omit_queue_continuous = plx_data::metadata::context_omits_queue_continuous(ctx);
     env.set_preview(request.preview);
+    // A new play (not a retry, not a preview) carries the profile's per-show track memory.
+    if retry.is_none() && !request.preview {
+        env.show_tracks = remembered_show_tracks(sid);
+    }
     if let Some(retry) = retry {
         apply_retry_enhancement(&mut env, retry);
         // `request_play` resets the live selection because that is correct for a new item.  A
@@ -7788,6 +7793,80 @@ fn reset_track_selection(sid: ServerId, rk: &str, retry: Option<RetryContext>) {
             }
         }
     }
+}
+
+/// This profile's remembered per-show track choices on `sid`'s server (`Session::show_tracks_on`).
+/// Empty when the server is not registered yet.
+fn remembered_show_tracks(sid: ServerId) -> Vec<plx_plex::plex::session::ShowTrackEntry> {
+    let Some(client) = plx_plex::plex::client_for(sid) else {
+        return Vec::new();
+    };
+    let machine_id = client.machine_id();
+    if machine_id.is_empty() {
+        return Vec::new();
+    }
+    plx_plex::plex::session::peek().show_tracks_on(&plx_plex::plex::session::current_profile_key(), machine_id)
+}
+
+/// The facts a track is remembered by (`TrackHint`), from the stream the viewer picked.
+pub fn track_hint(s: &plx_data::metadata::Stream) -> plx_plex::plex::session::TrackHint {
+    plx_plex::plex::session::TrackHint {
+        lang: s.lang_code.clone(),
+        title: s.title.clone(),
+        codec: s.codec.to_ascii_lowercase(),
+        channels: s.channels,
+        forced: s.forced,
+        sdh: s.sdh,
+        ad: s.ad,
+        external: s.external,
+        ..Default::default()
+    }
+}
+
+/// Remember the viewer's in-player audio or subtitle pick (`stream_id` 0 = subtitles Off) for the
+/// show the playing episode belongs to, so the next episode of that show starts with the matching
+/// track. Films (no show) and unknown streams are not recorded. Fire-and-forget on the storage
+/// worker, like [`persist_subtitle_offset`].
+pub fn remember_show_track_pick(
+    ps: &PlaybackSession,
+    item: Option<&plx_data::metadata::PlayingItem>,
+    kind: plx_plex::plex::session::TrackKind,
+    stream_id: i64,
+) {
+    let Some(item) = item.filter(|i| !i.show_rk.is_empty() && i.rk == cur_rk(ps)) else {
+        return;
+    };
+    let hint = match kind {
+        plx_plex::plex::session::TrackKind::Subtitle if stream_id == 0 => plx_plex::plex::session::TrackHint { off: true, ..Default::default() },
+        plx_plex::plex::session::TrackKind::Subtitle => match item.subs.iter().find(|s| s.id == stream_id) {
+            Some(s) => track_hint(s),
+            None => return,
+        },
+        plx_plex::plex::session::TrackKind::Audio => match item.audio.iter().find(|s| s.id == stream_id) {
+            Some(s) => track_hint(s),
+            None => return,
+        },
+    };
+    let Some(machine_id) = plx_plex::plex::client_for(cur_sid(ps)).map(|c| c.machine_id().to_string()) else {
+        return;
+    };
+    if machine_id.is_empty() {
+        return;
+    }
+    let user = plx_plex::plex::session::current_profile_key();
+    let show_rk = item.show_rk.clone();
+    plx_plex::plex::session::queue_update(move |current| {
+        let unchanged = current.show_tracks_for(&user, &machine_id, &show_rk).is_some_and(|e| match kind {
+            plx_plex::plex::session::TrackKind::Audio => e.audio.as_ref() == Some(&hint),
+            plx_plex::plex::session::TrackKind::Subtitle => e.subtitle.as_ref() == Some(&hint),
+        });
+        if unchanged {
+            return None;
+        }
+        let mut next = current.clone();
+        next.remember_show_track(&user, &machine_id, &show_rk, kind, hint);
+        Some(next)
+    });
 }
 
 /// This profile's remembered subtitle sync-timing correction for `rk` on `sid`'s server, if this

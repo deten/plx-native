@@ -1103,6 +1103,11 @@ pub struct ResolveEnv {
     /// `serverinfo::subscription_of(sid)` at the request — for the OFFERING of the enhancement only
     /// (I1/I8), never a flavour or profile input.
     pub pass: plx_plex::plex::serverinfo::Subscription,
+    /// This profile's remembered track choices for shows on this server
+    /// (`Session::show_tracks_on`), captured for a NEW play only. The resolve learns which show
+    /// the item belongs to once it is fetched, then applies the matching entry through
+    /// [`with_show_memory`].
+    pub show_tracks: Vec<plx_plex::plex::session::ShowTrackEntry>,
     /// Test-only replacement for the process cache. Capability is an explicit policy input in
     /// regressions; no test mutates the production `OnceLock` or makes the whole host a DV set.
     #[cfg(any(test, feature = "test-support"))]
@@ -1365,6 +1370,17 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
         .cached_item
         .clone()
         .or_else(|| plx_data::metadata::fetch_playing_item(env.sid, rk));
+    // The show's remembered audio/subtitle choice enters as if the viewer had just picked those
+    // tracks: an exact audio id and an explicit subtitle selection (Off included), so every route
+    // below (direct play, remux, re-encode) treats it like a carried pick.
+    let remembered_env = with_show_memory(env, plan.playing.as_ref());
+    if let Some(remembered) = remembered_env.as_ref() {
+        crate::player::log(&format!(
+            "route: show memory applied: audio sid {} subtitle {:?}",
+            remembered.audio_sid, remembered.subtitle_override
+        ));
+    }
+    let env = remembered_env.as_ref().unwrap_or(env);
     if let (Some(id), Some(item)) = (env.subtitle_override, plan.playing.as_mut()) {
         // The retry's explicit selection owns both embedded and sidecar restoration; a stale
         // server-side selection must not turn subtitles back on after the viewer chose Off.
@@ -2576,6 +2592,97 @@ pub(super) fn pick_dp_audio_pref(
     pick_dp_audio_mode(tracks, default_acodec, prefs, DirectPlayMode::Auto)
 }
 
+/// How well track `s` of a NEW episode matches a remembered [`TrackHint`], or `None` when it
+/// cannot stand in for it at all. Language is required (a hint with no language only matches a
+/// track with the same title); an audio description never stands in for main audio or the other
+/// way round; a forced-only subtitle never stands in for a full one or the other way round. Among
+/// the tracks that qualify, SDH, external file, codec, channel count and title break the tie.
+pub(super) fn hint_score(hint: &plx_plex::plex::session::TrackHint, s: &plx_data::metadata::Stream, subtitle: bool) -> Option<i32> {
+    if hint.lang.is_empty() {
+        if hint.title.is_empty() || !hint.title.eq_ignore_ascii_case(&s.title) {
+            return None;
+        }
+    } else if !lang_matches(&hint.lang, &s.lang_code) {
+        return None;
+    }
+    if subtitle {
+        if hint.forced != s.forced {
+            return None;
+        }
+    } else if hint.ad != s.ad {
+        return None;
+    }
+    let mut score = 0;
+    if subtitle {
+        if hint.sdh == s.sdh {
+            score += 4;
+        }
+        if hint.external == s.external {
+            score += 2;
+        }
+    } else if hint.channels > 0 && hint.channels == s.channels {
+        score += 2;
+    }
+    if !hint.codec.is_empty() && hint.codec.eq_ignore_ascii_case(&s.codec) {
+        score += 2;
+    }
+    if !hint.title.is_empty() && hint.title.eq_ignore_ascii_case(&s.title) {
+        score += 3;
+    }
+    Some(score)
+}
+
+/// The best stand-in for `hint` among `tracks` (earliest wins a tie), or `None`. Subtitles must be
+/// something the app can draw: an embedded codec it renders, or a sidecar it fetches.
+pub(super) fn best_remembered<'a>(
+    tracks: &'a [plx_data::metadata::Stream],
+    hint: &plx_plex::plex::session::TrackHint,
+    subtitle: bool,
+) -> Option<&'a plx_data::metadata::Stream> {
+    let mut best: Option<(i32, &plx_data::metadata::Stream)> = None;
+    for s in tracks {
+        if subtitle && !(if s.external { s.sidecar_renderable() } else { embedded_subtitle_renderable(&s.codec) }) {
+            continue;
+        }
+        if let Some(score) = hint_score(hint, s, subtitle) {
+            if best.is_none_or(|(b, _)| score > b) {
+                best = Some((score, s));
+            }
+        }
+    }
+    best.map(|(_, s)| s)
+}
+
+/// The resolve environment with the show's remembered choice applied, or `None` when nothing
+/// applies: a preview, a film, no memory for this show, or a pick already carried by the request
+/// (a retry's selection always wins). A remembered audio track that Forced direct play could not
+/// play is left to the usual selection rather than refusing playback; a remembered subtitle with
+/// no matching track on this episode is left to it too.
+pub(super) fn with_show_memory(env: &ResolveEnv, item: Option<&plx_data::metadata::PlayingItem>) -> Option<ResolveEnv> {
+    let item = item?;
+    if env.preview || item.show_rk.is_empty() {
+        return None;
+    }
+    let entry = env.show_tracks.iter().find(|e| e.show_rk == item.show_rk)?;
+    let mut out: Option<ResolveEnv> = None;
+    if env.audio_sid == 0 {
+        if let Some(s) = entry.audio.as_ref().and_then(|hint| best_remembered(&item.audio, hint, false)) {
+            if env.direct_play_mode != DirectPlayMode::Forced || audio_direct_plays(env.direct_play_mode, &s.codec, s.channels) {
+                out.get_or_insert_with(|| env.clone()).audio_sid = s.id;
+            }
+        }
+    }
+    if env.subtitle_override.is_none() && env.sub_sid == 0 {
+        let pick = entry.subtitle.as_ref().and_then(|hint| {
+            if hint.off { Some(0) } else { best_remembered(&item.subs, hint, true).map(|s| s.id) }
+        });
+        if let Some(id) = pick {
+            out.get_or_insert_with(|| env.clone()).subtitle_override = Some(id);
+        }
+    }
+    out
+}
+
 pub(super) fn audio_direct_plays(mode: DirectPlayMode, codec: &str, channels: i64) -> bool {
     if mode == DirectPlayMode::Forced {
         plx_plex::plex::DP_AUDIO_CODECS.split(',').any(|c| c.eq_ignore_ascii_case(codec))
@@ -3257,6 +3364,10 @@ mod quality_ceiling_tests;
 #[cfg(test)]
 #[path = "plan_track_selection_tests.rs"]
 mod track_selection_tests;
+
+#[cfg(test)]
+#[path = "plan_show_memory_tests.rs"]
+mod show_memory_tests;
 
 #[cfg(test)]
 #[path = "plan_dolby_vision_tests.rs"]

@@ -603,7 +603,19 @@ pub(crate) fn player_requests(
             // `repause_at` is an `App` field, which is exactly why this is a request.
             PlayerReq::CommitSeek(ns) => commit_seek(ns, repause_at),
             PlayerReq::More(action) => apply_more_action(ps, pa, bridge, action),
-            PlayerReq::CommitTrack(commit) => commit_track(ps, commit),
+            PlayerReq::CommitTrack(commit) => {
+                // A viewer's own audio or subtitle pick is remembered for the episode's show.
+                use plx_appkit::track_menu::TrackCommit;
+                let picked = match &commit {
+                    TrackCommit::Audio(audio) => Some((plx_plex::plex::session::TrackKind::Audio, audio.sid)),
+                    TrackCommit::Subtitle { stream_id, .. } => Some((plx_plex::plex::session::TrackKind::Subtitle, *stream_id)),
+                    _ => None,
+                };
+                commit_track(ps, commit);
+                if let Some((kind, stream_id)) = picked {
+                    plx_media::route::remember_show_track_pick(ps, bridge.metadata_view().playing(), kind, stream_id);
+                }
+            }
             PlayerReq::ArmInfoPress => {
                 press.begin_ctl(now);
                 *ok_armed = true;
