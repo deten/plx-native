@@ -638,6 +638,18 @@
     "value": "Normalize loudness",
     "description": "Audio panel of the player's track selector (Plex Pass only, issue #266). Toggle row label; the On/Off read-out comes from the row's own switch state, not this string."
   },
+  "widgets.tracks.auto_sync": {
+    "value": "Auto-sync",
+    "description": "Subtitles panel of the player's track selector (Plex Pass only). Toggle row label: asks the Plex server to re-time an external subtitle file to the film's dialogue. The On/Off read-out comes from the row's own switch state, not this string."
+  },
+  "widgets.tracks.auto_sync_note_synced": {
+    "value": "Timed to the dialogue by your Plex server.",
+    "description": "One-line note under the subtitle Auto-sync row when the server returned a re-timed subtitle file. No jargon."
+  },
+  "widgets.tracks.auto_sync_note_not_synced": {
+    "value": "Your Plex server couldn't sync this one, so it's shown as is.",
+    "description": "One-line note under the subtitle Auto-sync row when the server did not return a re-timed file and the original file is shown instead. No jargon."
+  },
   "widgets.tracks.enh_note_sidecar": {
     "value": "Subtitles won't change.",
     "description": "Issue #266/M7. One-line note under the ENABLED Boost dialog / Normalize loudness rows when the subtitle on screen is an external file the app draws itself — reassures the viewer that turning the toggle on leaves it untouched. No jargon: never say sidecar/remux/burn."

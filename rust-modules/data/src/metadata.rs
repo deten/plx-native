@@ -811,6 +811,12 @@ pub struct Stream {
     /// said so.
     #[serde(default, skip_serializing_if = "is_false")]
     pub can_normalize_loudness: bool,
+    /// Subtitle track only: PMS `Stream.canAutoSync`, the server can re-time this track against
+    /// the media's voice-activity data (`autoAdjustSubtitle=1`, docs/pms-api.md "Subtitle
+    /// auto-sync"). Kept off the wire while false for the same recorded-fixture reason as
+    /// `can_normalize_loudness`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_auto_sync: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -1502,6 +1508,10 @@ pub struct Detail {
     pub width: i64,               // stored frame size, not the resolution class (1918x802
     pub height: i64,              // is a 1080p scope movie) — badge off video_resolution
     pub bitrate: i64,             // kbps, whole-stream
+    /// `Media[0].hasVoiceActivity`: the server has analysed this version's speech, which subtitle
+    /// auto-sync needs. Absent from recordings made before the field, hence default and skip.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub has_voice_activity: bool,
     // ---- the rest of the primary version's technical record, added for `screens::tracks_panel` — and
     // since 2026-08-23 ON THE ROUTING PATH too: `route::source_kbps` takes `video`'s own bitrate
     // from here to judge a source against the user's quality ceiling, preferring it over the
@@ -2060,6 +2070,7 @@ fn fetch_detail(sid: plx_plex::plex::ServerId, rk: &str) -> Option<(Detail, Stri
         width: 0,
         height: 0,
         bitrate: 0,
+        has_voice_activity: false,
         // …as are the five below, which `parse_streams` fills from that same primary version — so
         // a show's borrowed technicals and its FILE column can never describe two different files.
         container: String::new(),
@@ -2218,6 +2229,7 @@ fn convert_streams(streams: &[plx_plex::plex::Stream]) -> Streams {
             // the server's current pick for this part (a track chosen on another client)
             selected: s.selected != 0,
             can_normalize_loudness: s.can_normalize_loudness,
+            can_auto_sync: s.can_auto_sync,
         };
         match s.stream_type {
             1 => {
@@ -2285,6 +2297,21 @@ mod convert_streams_tests {
     /// `canNormalizeLoudness` (issue #266) must survive the wire-DTO → app-model copy, both ways:
     /// a capable audio track stays capable, and an incapable one (or the video track, which never
     /// carries the flag) stays false rather than inheriting some other stream's value.
+    /// `canAutoSync` survives the wire-DTO to app-model copy on a subtitle track, and stays off the
+    /// recorded wire while false.
+    #[test]
+    fn convert_streams_carries_auto_sync_capability() {
+        let wire = [
+            plx_plex::plex::Stream { stream_type: 3, id: 1, key: "/library/streams/1".into(), can_auto_sync: true, ..Default::default() },
+            plx_plex::plex::Stream { stream_type: 3, id: 2, key: "/library/streams/2".into(), ..Default::default() },
+        ];
+        let st = convert_streams(&wire);
+        assert!(st.subs[0].can_auto_sync);
+        assert!(!st.subs[1].can_auto_sync);
+        let json = serde_json::to_string(&st.subs[1]).unwrap();
+        assert!(!json.contains("can_auto_sync"), "{json}");
+    }
+
     #[test]
     fn convert_streams_carries_loudness_capability() {
         let wire = [
@@ -2322,6 +2349,7 @@ fn parse_streams(it: &plx_plex::plex::Metadata, d: &mut Detail) {
         d.width = m.width;
         d.height = m.height;
         d.bitrate = m.bitrate;
+        d.has_voice_activity = m.has_voice_activity;
         d.container = m.container.clone();
         d.aspect_ratio = m.aspect_ratio;
     }
@@ -2383,6 +2411,9 @@ pub struct PlayingItem {
     /// stream's rate—when deciding whether a remote connection has enough headroom to carry the
     /// original file, because the transport also has to carry audio and container overhead.
     pub bitrate: i64,
+    /// `Media[0].hasVoiceActivity` of the played version: whether subtitle auto-sync can work for
+    /// it at all (see [`Stream::can_auto_sync`] for the track's half of the question).
+    pub has_voice_activity: bool,
     /// The played leaf's Dolby Vision layering — the direct-play gate's other refusal, beside the
     /// frame size above and for the same reason: the local fallback never asks PMS, so a file
     /// whose base layer we cannot display correctly (Profile 5, or a dual-layer Profile 7) would
@@ -2412,6 +2443,7 @@ impl PlayingItem {
             width: 0,
             height: 0,
             bitrate: 0,
+            has_voice_activity: false,
             dovi: Default::default(),
             markers: Vec::new(),
             chapters: Vec::new(),
@@ -2459,6 +2491,7 @@ fn cached_playing(state: &MetadataState, sid: plx_plex::plex::ServerId, rk: &str
             width: d.width,
             height: d.height,
             bitrate: d.bitrate,
+            has_voice_activity: d.has_voice_activity,
             dovi: d.dovi,
             markers: d.markers.clone(),
             chapters: d.chapters.clone(),
@@ -2497,10 +2530,10 @@ pub fn fetch_playing_item(sid: plx_plex::plex::ServerId, rk: &str) -> Option<Pla
         .unwrap_or_default();
     // the frame size rides the same PRIMARY version the streams come from (route.rs's
     // direct-play gate tests it against the device bound — see the field doc)
-    let (width, height, bitrate) = it
+    let (width, height, bitrate, has_voice_activity) = it
         .as_ref()
-        .and_then(|it| it.primary_media().map(|m| (m.width, m.height, m.bitrate)))
-        .unwrap_or((0, 0, 0));
+        .and_then(|it| it.primary_media().map(|m| (m.width, m.height, m.bitrate, m.has_voice_activity)))
+        .unwrap_or((0, 0, 0, false));
     let blur = it
         .as_ref()
         .and_then(|it| it.ultra_blur_colors)
@@ -2515,6 +2548,7 @@ pub fn fetch_playing_item(sid: plx_plex::plex::ServerId, rk: &str) -> Option<Pla
         width,
         height,
         bitrate,
+        has_voice_activity,
         dovi,
         markers,
         chapters,

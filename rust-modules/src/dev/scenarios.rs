@@ -1756,6 +1756,7 @@ fn subtiming_arm(app: &mut App, fr: &mut Frame) {
             stream_id,
             sidecar_key: None,
             sidecar_codec: String::new(),
+            sidecar_can_auto_sync: false,
         },
     );
 }

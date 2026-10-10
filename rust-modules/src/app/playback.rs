@@ -517,7 +517,7 @@ pub(crate) fn commit_track(
     match commit {
         TrackCommit::Audio(audio) => plx_media::route::commit_audio_selection(ps, audio),
         TrackCommit::AudioEnhancement(a) => plx_media::player::request_audio_enhancement(ps, a),
-        TrackCommit::Subtitle { render_ordinal, stream_id, sidecar_key, sidecar_codec } => {
+        TrackCommit::Subtitle { render_ordinal, stream_id, sidecar_key, sidecar_codec, sidecar_can_auto_sync } => {
             // What the client can draw itself — an embedded ordinal or an external sidecar — is
             // what an Original route (issue #266's candidate) can carry without a burn.
             let client_renderable = render_ordinal >= 0 || sidecar_key.is_some();
@@ -528,11 +528,14 @@ pub(crate) fn commit_track(
             // is silenced for as long as that is true, so selecting here is harmless and means
             // the line survives the playback going BACK to direct play.
             match sidecar_key {
-                Some(key) => plx_media::player::sidecar::select(plx_media::route::cur_sid(ps), stream_id, key, sidecar_codec),
+                Some(key) => plx_media::player::sidecar::select(
+                    plx_media::route::cur_sid(ps), stream_id, key, sidecar_codec, sidecar_can_auto_sync,
+                ),
                 None => plx_media::player::sidecar::deselect(),
             }
         }
         TrackCommit::SubtitleTone(tone) => plx_media::player::set_subtitle_tone(tone),
+        TrackCommit::SubtitleAutoSync(on) => plx_media::player::set_subtitle_auto_sync(on),
         // live first, persisted after, nothing republished on completion (`route::select_subtitle_size`)
         TrackCommit::SubtitleSize(size) => plx_media::route::select_subtitle_size(size, None),
         TrackCommit::SubtitlePosition(position) => plx_media::route::select_subtitle_position(position, None),

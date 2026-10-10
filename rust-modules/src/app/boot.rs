@@ -1006,6 +1006,7 @@ pub(crate) unsafe fn construct(
     // The subtitle tone rides the same file and the same moment: a preference, restored once.
     plx_media::player::restore_subtitle_tone(session.subtitle_tone());
     plx_media::player::restore_audio_enhancements(session.audio_enhancements());
+    plx_media::player::restore_subtitle_auto_sync(session.subtitle_auto_sync());
     // dev: /tmp/plxnative-audioenh=off|boost|loudness — force the PERSISTED enhancement
     // preference right after it was restored from whatever the install actually has saved, so a
     // harness case's starting preference never depends on what an earlier run's pick left behind.

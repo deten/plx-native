@@ -11,6 +11,51 @@ fn sidecar_key_allowed(key: &str) -> bool {
         && ext.len() <= 10 && ext.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
+/// One sidecar subtitle file as the server sent it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SidecarFile {
+    pub bytes: Vec<u8>,
+    /// The file came from an `autoAdjustSubtitle=1` request, i.e. the server was asked to re-time
+    /// it. Whether PMS actually moved any cue is not observable from the bytes.
+    pub synced: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SidecarAttempt {
+    label: &'static str,
+    path: String,
+    synced: bool,
+}
+
+/// The ordered requests for one sidecar. ASS/SSA never asks for SubRip (styles would be lost);
+/// other text formats ask for UTF-8 SubRip first. With `auto_sync`, the same requests carrying
+/// `autoAdjustSubtitle=1` go first and the plain ones remain as the fallback.
+fn sidecar_attempts(key: &str, codec: &str, auto_sync: bool) -> Vec<SidecarAttempt> {
+    let sep = if key.contains('?') { '&' } else { '?' };
+    let styled = codec.eq_ignore_ascii_case("ass") || codec.eq_ignore_ascii_case("ssa");
+    let mut attempts = Vec::with_capacity(5);
+    if auto_sync {
+        if !styled {
+            attempts.push(SidecarAttempt {
+                label: "srt+sync",
+                path: format!("{key}{sep}encoding=utf-8&format=srt&autoAdjustSubtitle=1"),
+                synced: true,
+            });
+        }
+        attempts.push(SidecarAttempt {
+            label: "utf8+sync",
+            path: format!("{key}{sep}encoding=utf-8&autoAdjustSubtitle=1"),
+            synced: true,
+        });
+    }
+    if !styled {
+        attempts.push(SidecarAttempt { label: "srt", path: format!("{key}{sep}encoding=utf-8&format=srt"), synced: false });
+    }
+    attempts.push(SidecarAttempt { label: "utf8", path: format!("{key}{sep}encoding=utf-8"), synced: false });
+    attempts.push(SidecarAttempt { label: "bare", path: key.to_string(), synced: false });
+    attempts
+}
+
 impl Client {
     /// GET /library/sections (D-3: spec-canonical is /library/sections/all; keep the
     /// known-working bare path). Read `.directory[]` for {kind, key}.
@@ -280,23 +325,26 @@ impl Client {
     /// (`HTTP 404 (0 bytes)`, `curl rc=28`, `empty body`, ...), joined with `; `. No URL, host or
     /// token appears in it, so a caller may log it.
     pub fn sidecar_subtitle_detailed(&self, key: &str, codec: &str) -> Result<Vec<u8>, String> {
+        self.sidecar_subtitle_fetch(key, codec, false).map(|file| file.bytes)
+    }
+
+    /// [`Self::sidecar_subtitle_detailed`], optionally asking the server to RE-TIME the file
+    /// against the media's voice-activity data first (`autoAdjustSubtitle=1`, docs/pms-api.md
+    /// "Subtitle auto-sync"). The synced attempts lead the ladder and the ordinary ones follow, so
+    /// a server that refuses or ignores the request still yields the file as it is today; the
+    /// answer says which kind it got ([`SidecarFile::synced`]).
+    pub fn sidecar_subtitle_fetch(&self, key: &str, codec: &str, auto_sync: bool) -> Result<SidecarFile, String> {
         if !sidecar_key_allowed(key) {
             // a key is server data: only ever the path this method is for
             return Err("key refused (not /library/streams/<id>[.ext])".into());
         }
-        let sep = if key.contains('?') { '&' } else { '?' };
-        let mut paths = Vec::with_capacity(3);
-        if !codec.eq_ignore_ascii_case("ass") && !codec.eq_ignore_ascii_case("ssa") {
-            paths.push(("srt", format!("{key}{sep}encoding=utf-8&format=srt")));
-        }
-        paths.push(("utf8", format!("{key}{sep}encoding=utf-8")));
-        paths.push(("bare", key.to_string()));
-        let mut why = Vec::with_capacity(paths.len());
-        for (label, path) in &paths {
-            match self.get_sidecar_bytes(path) {
-                Ok(body) if !body.is_empty() => return Ok(body),
-                Ok(_) => why.push(format!("{label}: empty body")),
-                Err(e) => why.push(format!("{label}: {e}")),
+        let attempts = sidecar_attempts(key, codec, auto_sync);
+        let mut why = Vec::with_capacity(attempts.len());
+        for attempt in &attempts {
+            match self.get_sidecar_bytes(&attempt.path) {
+                Ok(bytes) if !bytes.is_empty() => return Ok(SidecarFile { bytes, synced: attempt.synced }),
+                Ok(_) => why.push(format!("{}: empty body", attempt.label)),
+                Err(e) => why.push(format!("{}: {e}", attempt.label)),
             }
         }
         Err(why.join("; "))
@@ -458,6 +506,82 @@ mod tests {
             client.sidecar_subtitle_detailed("/library/streams/1?x=1", "srt").unwrap_err(),
             "key refused (not /library/streams/<id>[.ext])"
         );
+    }
+
+    #[test]
+    fn sidecar_ladder_without_auto_sync_is_unchanged() {
+        let plain: Vec<_> = sidecar_attempts("/library/streams/7", "srt", false)
+            .into_iter().map(|a| (a.label, a.path, a.synced)).collect();
+        assert_eq!(plain, vec![
+            ("srt", "/library/streams/7?encoding=utf-8&format=srt".to_string(), false),
+            ("utf8", "/library/streams/7?encoding=utf-8".to_string(), false),
+            ("bare", "/library/streams/7".to_string(), false),
+        ]);
+        let ass: Vec<_> = sidecar_attempts("/library/streams/7", "ASS", false)
+            .into_iter().map(|a| a.label).collect();
+        assert_eq!(ass, ["utf8", "bare"]);
+    }
+
+    #[test]
+    fn sidecar_ladder_with_auto_sync_asks_for_a_synced_file_first_and_keeps_the_fallback() {
+        let synced: Vec<_> = sidecar_attempts("/library/streams/7.srt", "srt", true)
+            .into_iter().map(|a| (a.label, a.path, a.synced)).collect();
+        assert_eq!(synced, vec![
+            ("srt+sync", "/library/streams/7.srt?encoding=utf-8&format=srt&autoAdjustSubtitle=1".to_string(), true),
+            ("utf8+sync", "/library/streams/7.srt?encoding=utf-8&autoAdjustSubtitle=1".to_string(), true),
+            ("srt", "/library/streams/7.srt?encoding=utf-8&format=srt".to_string(), false),
+            ("utf8", "/library/streams/7.srt?encoding=utf-8".to_string(), false),
+            ("bare", "/library/streams/7.srt".to_string(), false),
+        ]);
+        // a styled script is never converted, synced or not
+        let ass = sidecar_attempts("/library/streams/7", "ssa", true);
+        assert!(ass.iter().all(|a| !a.path.contains("format=srt")));
+        assert_eq!(ass[0].label, "utf8+sync");
+        assert!(ass[0].synced && ass.iter().filter(|a| a.synced).count() == 1);
+    }
+
+    #[cfg(feature = "devtriggers")]
+    #[test]
+    fn sidecar_auto_sync_falls_back_to_the_plain_file_when_the_server_refuses() {
+        use std::io::{Read, Write};
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while requests.len() < 3 && Instant::now() < deadline {
+                let Ok((mut socket, _)) = plx_base::testnet::accept(&listener) else {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                };
+                socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut request = [0; 8192];
+                let n = socket.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..n]).into_owned();
+                let (status, body): (&str, &[u8]) = if request.contains("autoAdjustSubtitle=1") {
+                    ("500 Internal Server Error", b"")
+                } else {
+                    ("200 OK", b"1\n00:00:01,000 --> 00:00:02,000\nHI\n")
+                };
+                write!(socket, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                socket.write_all(body).unwrap();
+                requests.push(request);
+            }
+            requests
+        });
+        let client = Client::new(
+            crate::plex::ServerId::UNSET, "fixture",
+            crate::plex::Origin::http("127.0.0.1", port as i32), "", "cid",
+        );
+        let file = client.sidecar_subtitle_fetch("/library/streams/42", "srt", true).unwrap();
+        let requests = server.join().unwrap();
+        assert!(!file.synced, "the plain fallback answered");
+        assert!(file.bytes.starts_with(b"1\n"));
+        assert_eq!(requests.len(), 3, "{requests:?}");
+        assert!(requests[0].contains("autoAdjustSubtitle=1") && requests[1].contains("autoAdjustSubtitle=1"));
+        assert!(!requests[2].contains("autoAdjustSubtitle"));
     }
 
     #[test]

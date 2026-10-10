@@ -147,6 +147,13 @@ also be flipped live, mid-run, with `POST /_mock/config` — JSON body
 `{"refuse_enhancements": true, "ignore_enhancements": false, "plex_pass": false}` — so one test
 case can resolve once, then refuse only from the next decision on.
 
+Subtitle auto-sync (off by default, so every existing response stays byte-identical):
+`--subtitle-auto-sync`, `serve(subtitle_auto_sync=True)` or `POST /_mock/config
+{"subtitle_auto_sync": true}` makes every item read as analysed for voice activity
+(`Media.hasVoiceActivity=1`) and every external subtitle stream as syncable (`canAutoSync: true`),
+and answers `GET /library/streams/<id>?autoAdjustSubtitle=1` with the SubRip file shifted
+`AUTO_SYNC_SHIFT_MS` later, so a client can tell the synced copy from the file as it is.
+
 Five fixed fixture movies (own section id 3, so ordinary section/rail counts and hashes over
 sections 1/2 are untouched, but each is reachable directly at its ratingKey) exercise the offering
 and fallback rules:
@@ -194,6 +201,8 @@ VERIFY_PARTS = {V1_RATING_KEY: 900101, V2_RATING_KEY: 900102}
 VERIFY_SIDECAR_ID = 901009
 # Subtitle search (`MockPms.subtitle_search`): candidate and installed stream ids live in their own
 # bands so neither can collide with a generated or verification stream.
+# How far the mock's auto-synced subtitle copy moves every cue (see the module doc).
+AUTO_SYNC_SHIFT_MS = 1000
 SUB_CANDIDATE_BASE, SUB_INSTALLED_BASE = 8_100_000, 8_200_000
 # The languages the mock agent "finds" subtitles in: 2-letter query -> (languageCode, language).
 # Any other well-formed code is an empty answer — the not-found case, which is not a failure.
@@ -1487,6 +1496,21 @@ def plaintext_only_lan_resources(lib, ip, http_port, fail_port, access_token):
 
 # ---------------------------------------------------------------- the server ----------------
 
+
+_SRT_TIME = re.compile(rb"(\d{2}):(\d{2}):(\d{2}),(\d{3})")
+
+
+def shift_srt(data, shift_ms):
+    """Every SubRip timestamp in `data` moved `shift_ms` later (never below zero)."""
+    def moved(match):
+        h, m, s, ms = (int(g) for g in match.groups())
+        total = max(0, ((h * 60 + m) * 60 + s) * 1000 + ms + shift_ms)
+        h, rest = divmod(total, 3_600_000)
+        m, rest = divmod(rest, 60_000)
+        s, ms = divmod(rest, 1000)
+        return b"%02d:%02d:%02d,%03d" % (h, m, s, ms)
+    return _SRT_TIME.sub(moved, data)
+
 class MockPms:
     def section_pad_hubs(self, key, kind, count, rows=12):
         """`count` synthetic hubs for `/hubs/sections/<key>` (#412), after the library's own.
@@ -1556,6 +1580,8 @@ class MockPms:
         # only then start refusing/ignoring.
         self.refuse_enhancements = False
         self.ignore_enhancements = False
+        # Subtitle auto-sync (module doc). Runtime-togglable through `POST /_mock/config`.
+        self.subtitle_auto_sync = False
         # `--transcode-fixture PATH`: serve this file (Range/206 supported) for every
         # /video/:/transcode/universal/start* request instead of the plain 404.
         self.transcode_fixture = None
@@ -1689,6 +1715,40 @@ class MockPms:
 
     def handle(self, method, path, body=b"", headers=None):
         """Returns (status, content_type, bytes)."""
+        result = self._handle(method, path, body, headers)
+        if not self.subtitle_auto_sync:
+            return result
+        return self._with_auto_sync(path, result)
+
+    def _with_auto_sync(self, path, result):
+        """Subtitle auto-sync on (module doc): mark items and external subtitles as syncable on
+        every JSON answer, and shift a sidecar asked for with `autoAdjustSubtitle=1`."""
+        status, content_type, data = result
+        u = urllib.parse.urlsplit(path)
+        q = urllib.parse.parse_qs(u.query)
+        segs = [s for s in u.path.split("/") if s]
+        if (status == 200 and len(segs) == 3 and segs[:2] == ["library", "streams"]
+                and q.get("autoAdjustSubtitle", [""])[-1] == "1"):
+            return (status, content_type, shift_srt(data, AUTO_SYNC_SHIFT_MS))
+        if status != 200 or content_type != "application/json":
+            return result
+        doc = json.loads(data)
+
+        def mark(node):
+            if isinstance(node, dict):
+                if "Part" in node:
+                    node["hasVoiceActivity"] = 1
+                if node.get("streamType") == 3 and node.get("key"):
+                    node["canAutoSync"] = True
+                for value in node.values():
+                    mark(value)
+            elif isinstance(node, list):
+                for value in node:
+                    mark(value)
+        mark(doc)
+        return (status, content_type, json.dumps(doc).encode())
+
+    def _handle(self, method, path, body=b"", headers=None):
         u = urllib.parse.urlsplit(path)
         p = u.path
         q = {k: v[-1] for k, v in urllib.parse.parse_qs(u.query, keep_blank_values=True).items()}
@@ -1723,7 +1783,7 @@ class MockPms:
                 return j({"error": "invalid JSON body"}, 400)
             if not isinstance(patch, dict):
                 return j({"error": "body must be a JSON object"}, 400)
-            allowed = {"refuse_enhancements", "ignore_enhancements", "plex_pass"}
+            allowed = {"refuse_enhancements", "ignore_enhancements", "plex_pass", "subtitle_auto_sync"}
             unknown = set(patch) - allowed
             if unknown:
                 return j({"error": f"unknown config key(s): {sorted(unknown)}"}, 400)
@@ -2297,7 +2357,7 @@ def serve(port, seed=1, host="127.0.0.1", verbose=False, movies=48, rail_fixture
           authorize_after=None, plex_pass=True, loudness_analysis=True,
           refuse_enhancements=False, ignore_enhancements=False, transcode_fixture=None,
           home_hubs=0, section_hubs=0, section_hubs_linked=0, decision_delay_ms=0,
-          home_users=1):
+          home_users=1, subtitle_auto_sync=False):
     """Start a mock PMS in a daemon thread; returns (server, pms). Loopback only by default: the
     app on the simulator is on this machine, and a LAN-facing listener would be one more thing
     the outbound guard has to reason about. `catalog` serves the demo library instead of a seed.
@@ -2335,6 +2395,7 @@ def serve(port, seed=1, host="127.0.0.1", verbose=False, movies=48, rail_fixture
     pms.section_hubs_linked = section_hubs_linked
     pms.refuse_enhancements = refuse_enhancements
     pms.ignore_enhancements = ignore_enhancements
+    pms.subtitle_auto_sync = subtitle_auto_sync
     pms.transcode_fixture = pathlib.Path(transcode_fixture) if transcode_fixture else None
     pms.decision_delay_ms = decision_delay_ms
     if authorize_after is None and plaintext_only_lan:
@@ -2781,6 +2842,10 @@ def main():
                     help="#266: a live boostDialog=1/normalizeLoudness=1 is accepted but the "
                          "audio decision stays \"copy\" — an old server that does not act on the "
                          "params; also flippable live via POST /_mock/config")
+    ap.add_argument("--subtitle-auto-sync", action="store_true",
+                    help="items read as analysed for voice activity, external subtitles as "
+                         "syncable, and autoAdjustSubtitle=1 answers a shifted copy; also "
+                         "flippable live via POST /_mock/config")
     ap.add_argument("--transcode-fixture", type=pathlib.Path,
                     help="#266: serve this file (Range/206 supported) for every "
                          "/video/:/transcode/universal/start* request instead of the plain 404")
@@ -2824,7 +2889,8 @@ def main():
                          transcode_fixture=a.transcode_fixture, home_hubs=a.home_hubs,
                          section_hubs=a.section_hubs,
                          section_hubs_linked=a.section_hubs_linked,
-                         decision_delay_ms=a.decision_delay_ms, home_users=a.home_users)
+                         decision_delay_ms=a.decision_delay_ms, home_users=a.home_users,
+                         subtitle_auto_sync=a.subtitle_auto_sync)
     except ValueError as e:
         ap.error(str(e))
     what = f"catalog={a.catalog}" if a.catalog else f"seed={a.seed}"

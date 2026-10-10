@@ -2681,6 +2681,7 @@ pub(crate) fn follow_auth_landing(pages: &mut Dispatcher<AppHost>, bridge: &mut 
         plx_media::route::restore_deck_press(saved.deck_press());
         plx_media::player::restore_subtitle_tone(saved.subtitle_tone());
         plx_media::player::restore_audio_enhancements(saved.audio_enhancements());
+        plx_media::player::restore_subtitle_auto_sync(saved.subtitle_auto_sync());
         let endpoints = super::boot::install_pms_owned(bridge, &c.origin,
             &c.address, &c.token, c.tier, c.pin.as_ref(), &c.install);
         execute_endpoint_outcomes(pages, endpoints);

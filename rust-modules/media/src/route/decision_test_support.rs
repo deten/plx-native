@@ -407,7 +407,7 @@ pub(super) fn fourk_item_with_subs(
         video_fps: 23.976,
         width: 3840,
         height: 2160,
-        bitrate: 48_000,
+        bitrate: 48_000, has_voice_activity: false,
         dovi: plx_data::metadata::Dovi::NONE,
         markers: Vec::new(),
         chapters: Vec::new(),

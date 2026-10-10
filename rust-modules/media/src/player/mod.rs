@@ -1814,6 +1814,33 @@ fn persist_audio_enhancements(a: plx_plex::plex::AudioEnhancements) {
     let _ = plx_base::storage_worker::submit_retained(move || plx_plex::plex::session::set_audio_enhancements(a));
 }
 
+/// The viewer's Plex Pass subtitle auto-sync preference (`Session::subtitle_auto_sync`): on unless
+/// turned off. A PREFERENCE like [`SUBTITLE_TONE`], so it outlives a playback. Read when a sidecar
+/// subtitle is fetched ([`sidecar::select`]); it reaches the wire only as `autoAdjustSubtitle=1`
+/// on that fetch, and only for a track and film the server says it can sync.
+static SUBTITLE_AUTO_SYNC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// The current preference (see [`SUBTITLE_AUTO_SYNC`]).
+pub fn subtitle_auto_sync() -> bool {
+    SUBTITLE_AUTO_SYNC.load(Relaxed)
+}
+
+/// Restore the persisted preference without writing it back: boot and the credentials handoff,
+/// the same two places [`restore_subtitle_tone`] is called from.
+pub fn restore_subtitle_auto_sync(on: bool) {
+    SUBTITLE_AUTO_SYNC.store(on, Relaxed);
+}
+
+/// **The Subtitles menu's Auto-sync row lands here**: store and persist the preference, then
+/// fetch the selected sidecar again under it, so the change is seen on the current film rather
+/// than on the next one. MAIN THREAD.
+pub fn set_subtitle_auto_sync(on: bool) {
+    SUBTITLE_AUTO_SYNC.store(on, Relaxed);
+    let _ = plx_base::storage_worker::submit_retained(move || plx_plex::plex::session::set_subtitle_auto_sync(on));
+    sidecar::reapply_auto_sync();
+    plx_machine::idle::invalidate();
+}
+
 /// Restore the persisted preference without writing it back (boot, and the credentials handoff
 /// after a fresh sign-in — the two places `route::restore_quality` is called from).
 pub fn restore_subtitle_tone(tone: plx_plex::plex::session::SubtitleTone) {

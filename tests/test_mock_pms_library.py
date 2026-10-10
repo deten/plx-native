@@ -636,7 +636,8 @@ class Enhancement266(unittest.TestCase):
             "POST", "/_mock/config", json.dumps({"refuse_enhancements": True}).encode())
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {
-            "refuse_enhancements": True, "ignore_enhancements": False, "plex_pass": True})
+            "refuse_enhancements": True, "ignore_enhancements": False, "plex_pass": True,
+            "subtitle_auto_sync": False})
         self.assertIs(pms.refuse_enhancements, True)
         self.assertIs(pms.ignore_enhancements, False)
 
@@ -701,6 +702,45 @@ class Enhancement266(unittest.TestCase):
     def test_missing_transcode_fixture_file_is_rejected(self):
         with self.assertRaises(ValueError):
             serve(0, movies=0, transcode_fixture=pathlib.Path("/no/such/fixture.mkv"))
+
+
+class SubtitleAutoSync(unittest.TestCase):
+    """The opt-in auto-sync mode: off changes nothing, on marks items and shifts a synced copy."""
+
+    def _external_sidecar(self, pms):
+        item = get(pms, f"/library/metadata/{ENHANCEMENT_EXTERNAL_SRT_RK}")["Metadata"][0]
+        media = item["Media"][0]
+        stream = next(s for s in media["Part"][0]["Stream"] if s.get("streamType") == 3 and s.get("key"))
+        return media, stream
+
+    def test_off_by_default_and_byte_identical(self):
+        pms = MockPms(Library(seed=1))
+        path = f"/library/metadata/{ENHANCEMENT_EXTERNAL_SRT_RK}"
+        before = pms.handle("GET", path)
+        media, stream = self._external_sidecar(pms)
+        self.assertNotIn("hasVoiceActivity", media)
+        self.assertNotIn("canAutoSync", stream)
+        pms.subtitle_auto_sync = True
+        pms.subtitle_auto_sync = False
+        self.assertEqual(pms.handle("GET", path), before)
+
+    def test_on_marks_items_and_streams_and_shifts_only_the_synced_copy(self):
+        pms = MockPms(Library(seed=1))
+        status, _, data = pms.handle("POST", "/_mock/config", json.dumps({"subtitle_auto_sync": True}).encode())
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(data)["subtitle_auto_sync"])
+        media, stream = self._external_sidecar(pms)
+        self.assertEqual(media["hasVoiceActivity"], 1)
+        self.assertIs(stream["canAutoSync"], True)
+        lib = pms.lib
+        if getattr(lib, "sidecars", None) is None:
+            lib.sidecars = {}
+        lib.sidecars[stream["id"]] = b"1\n00:00:01,000 --> 00:00:04,000\nHI\n"
+        key = stream["key"]
+        _, _, plain = pms.handle("GET", key + "?encoding=utf-8&format=srt")
+        _, _, synced = pms.handle("GET", key + "?encoding=utf-8&format=srt&autoAdjustSubtitle=1")
+        self.assertEqual(plain, b"1\n00:00:01,000 --> 00:00:04,000\nHI\n")
+        self.assertEqual(synced, b"1\n00:00:02,000 --> 00:00:05,000\nHI\n")
 
 
 # The fields the detail page draws that the demo catalog can supply (docs: the S1a stage of the

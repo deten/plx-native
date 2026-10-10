@@ -8205,6 +8205,11 @@ fn apply_plan(ps: &mut PlaybackSession, meta: &mut plx_data::stores::metadata::M
     // start contract, so timeline reports and later audio/quality transcodes keep this pick.
     // Also over a plain remux: the server carries no subtitle there, so the app draws the sidecar
     // (`side_subs_allowed`). Every other transcode keeps the server's burn and no client sidecar.
+    // Whether this film's speech has been analysed decides whether a sidecar can be auto-synced
+    // (`player::sidecar`), for the restore below and for any pick made during the playback.
+    crate::player::sidecar::set_media_voice_activity(
+        meta.view().playing().is_some_and(|p| p.has_voice_activity),
+    );
     if plan.sub_render_ordinal.is_none()
         && (!is_transcoding(ps) || (ps.cur_contract.remux && original_remux_shape(ps)))
     {

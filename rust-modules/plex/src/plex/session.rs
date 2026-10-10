@@ -708,6 +708,17 @@ pub struct Session {
     /// credentials.
     #[serde(default, deserialize_with = "de_soft_audio_enhancements", skip_serializing_if = "crate::plex::AudioEnhancements::is_none")]
     pub audio_enhancements: crate::plex::AudioEnhancements,
+    /// **Plex Pass subtitle auto-sync, stored inverted.** `false` (the default, and what every
+    /// session written before the field reads as) means ON: the server is asked to re-time a
+    /// subtitle against the film's voice-activity data (`autoAdjustSubtitle=1`, docs/pms-api.md
+    /// "Subtitle auto-sync") wherever it can. Stored as an OFF flag rather than an on flag because
+    /// `Session` derives `Default` and a derived `bool` is `false`, the trap
+    /// [`CanonicalSessionPreferences`]'s manual `Default` documents for `trailer_autoplay`.
+    /// Skipped on write while `false`, so a session that never turned it off round-trips
+    /// byte-identical. Install-wide like [`Session::subtitle_tone`]. Read through
+    /// [`Session::subtitle_auto_sync`].
+    #[serde(default, deserialize_with = "de_soft_bool", skip_serializing_if = "std::ops::Not::not")]
+    pub subtitle_auto_sync_off: bool,
     #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
     pub extensions: OpaqueExtensions,
 
@@ -771,6 +782,8 @@ struct CanonicalSessionPreferences {
     server_key_pins: Vec<ServerKeyPin>,
     #[serde(default, deserialize_with = "de_soft_audio_enhancements", skip_serializing_if = "crate::plex::AudioEnhancements::is_none")]
     audio_enhancements: crate::plex::AudioEnhancements,
+    #[serde(default, deserialize_with = "de_soft_bool", skip_serializing_if = "std::ops::Not::not")]
+    subtitle_auto_sync_off: bool,
     /// Parsed only so a future preference does not make the known fields disappear. The shipping
     /// adapter merges these opaque keys from the current DB8 public payload before every rewrite;
     /// they are not promoted into the Session domain object.
@@ -807,6 +820,7 @@ impl Default for CanonicalSessionPreferences {
             plaintext_consent: Vec::new(),
             server_key_pins: Vec::new(),
             audio_enhancements: crate::plex::AudioEnhancements::NONE,
+            subtitle_auto_sync_off: false,
             extensions: BTreeMap::new(),
         }
     }
@@ -860,6 +874,7 @@ fn split_public(session: &Session) -> Result<plx_platform::storage::state::Publi
         plaintext_consent: session.plaintext_consent.clone(),
         server_key_pins: session.server_key_pins.clone(),
         audio_enhancements: session.audio_enhancements,
+        subtitle_auto_sync_off: session.subtitle_auto_sync_off,
         extensions: BTreeMap::new(),
     })
     .map_err(|_| ())?;
@@ -935,6 +950,7 @@ pub fn join_canonical(
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
         audio_enhancements: preferences.audio_enhancements,
+        subtitle_auto_sync_off: preferences.subtitle_auto_sync_off,
         profiles,
         extensions: auth.extensions,
     })
@@ -969,6 +985,7 @@ fn public_session(public: &plx_platform::storage::state::PublicPayload) -> Sessi
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
         audio_enhancements: preferences.audio_enhancements,
+        subtitle_auto_sync_off: preferences.subtitle_auto_sync_off,
         home_pins, recent_searches,
         ..Default::default()
     }
@@ -1091,6 +1108,17 @@ pub fn set_audio_enhancements(enhancements: crate::plex::AudioEnhancements) -> b
             return None;
         }
         Some(cur.with_audio_enhancements(enhancements))
+    })
+}
+
+/// Persist the Plex Pass subtitle auto-sync preference through [`update`], merging with the
+/// current disk record: the same door as [`set_audio_enhancements`].
+pub fn set_subtitle_auto_sync(on: bool) -> bool {
+    update(|cur| {
+        if cur.subtitle_auto_sync() == on {
+            return None;
+        }
+        Some(cur.with_subtitle_auto_sync(on))
     })
 }
 
@@ -2693,6 +2721,17 @@ impl Session {
     pub fn with_audio_enhancements(&self, enhancements: crate::plex::AudioEnhancements) -> Self {
         let mut next = self.clone();
         next.audio_enhancements = enhancements;
+        next
+    }
+
+    /// Whether the viewer wants the server to auto-sync subtitles. On unless turned off.
+    pub fn subtitle_auto_sync(&self) -> bool {
+        !self.subtitle_auto_sync_off
+    }
+
+    pub fn with_subtitle_auto_sync(&self, on: bool) -> Self {
+        let mut next = self.clone();
+        next.subtitle_auto_sync_off = !on;
         next
     }
 
@@ -6240,5 +6279,56 @@ mod server_key_pin_tests {
         plx_base::storage_worker::drain_for_test();
         let _ = peek();
         assert_eq!(plx_net::net::keypin::pin_for_test(&key), None, "the late probe did not repopulate it");
+    }
+}
+
+/// `Session::subtitle_auto_sync`: on by default, persisted only when turned off.
+#[cfg(test)]
+mod subtitle_auto_sync_tests {
+    use super::*;
+
+    #[test]
+    fn absent_key_is_on() {
+        let session: Session = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(session.subtitle_auto_sync());
+        assert!(Session::default().subtitle_auto_sync());
+        assert!(CanonicalSessionPreferences::default().subtitle_auto_sync_off == false);
+    }
+
+    #[test]
+    fn garbage_is_on_and_never_fails_the_session() {
+        for value in [
+            serde_json::json!({"subtitle_auto_sync_off": null}),
+            serde_json::json!({"subtitle_auto_sync_off": "yes"}),
+            serde_json::json!({"subtitle_auto_sync_off": 3}),
+        ] {
+            let session: Session = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{value}: must not fail the session: {e}"));
+            assert!(session.subtitle_auto_sync(), "{value}");
+        }
+    }
+
+    #[test]
+    fn on_is_not_serialized_and_off_round_trips() {
+        let on = serde_json::to_string(&Session::default()).unwrap();
+        assert!(!on.contains("subtitle_auto_sync"), "{on}");
+        let off = Session::default().with_subtitle_auto_sync(false);
+        assert!(!off.subtitle_auto_sync());
+        let json = serde_json::to_string(&off).unwrap();
+        assert!(json.contains("\"subtitle_auto_sync_off\":true"), "{json}");
+        let back: Session = serde_json::from_str(&json).unwrap();
+        assert!(!back.subtitle_auto_sync());
+        assert!(back.with_subtitle_auto_sync(true).subtitle_auto_sync());
+    }
+
+    #[test]
+    fn the_public_payload_carries_it_through_split_and_join() {
+        let off = Session::default().with_subtitle_auto_sync(false);
+        let public = split_public(&off).expect("split");
+        assert_eq!(public.preferences["subtitle_auto_sync_off"], serde_json::json!(true));
+        assert!(!public_session(&public).subtitle_auto_sync());
+        let on = split_public(&Session::default()).expect("split");
+        assert!(on.preferences.get("subtitle_auto_sync_off").is_none());
+        assert!(public_session(&on).subtitle_auto_sync());
     }
 }

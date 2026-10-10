@@ -72,6 +72,12 @@ struct Selection {
     stream_id: i64,
     key: String,
     codec: String,
+    /// The server says it can re-time this track (`Stream::can_auto_sync`). Kept so a change of
+    /// the viewer's preference can fetch the same track again ([`reapply_auto_sync`]).
+    can_auto_sync: bool,
+    /// The fetch asks for a server re-timed copy. Part of the identity: the synced and the
+    /// as-is file are two different downloads, and switching between them must fetch again.
+    auto_sync: bool,
 }
 
 enum Content {
@@ -86,7 +92,12 @@ struct State {
     running: bool,
     /// The complete selected file, kept across Off→On so re-picking is instant.
     loaded: Option<(Selection, Content)>,
+    /// The loaded file came from an auto-sync request the server answered.
+    loaded_synced: bool,
     failed: Option<(Selection, Failure, Instant)>,
+    /// The playing film's speech has been analysed (`Media.hasVoiceActivity`), published by the
+    /// route when a playback starts. Without it the server has nothing to sync against.
+    media_voice: bool,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -95,7 +106,9 @@ static STATE: Mutex<State> = Mutex::new(State {
     pending: None,
     running: false,
     loaded: None,
+    loaded_synced: false,
     failed: None,
+    media_voice: false,
 });
 
 /// How long a [`Failure`] stays on screen.
@@ -108,28 +121,50 @@ fn state() -> std::sync::MutexGuard<'static, State> {
 }
 
 /// Select the sidecar `stream_id`, fetching `key` from `server` unless that file is already
-/// loaded. MAIN THREAD.
-pub fn select(server: plx_plex::plex::ServerId, stream_id: i64, key: String, codec: String) {
-    select_with_fetch(server, stream_id, key, codec, |server, key, codec| {
+/// loaded. `can_auto_sync` is the track's own `Stream::can_auto_sync`; together with the viewer's
+/// preference and the film's voice-activity data it decides whether the server is asked for a
+/// re-timed copy. MAIN THREAD.
+pub fn select(server: plx_plex::plex::ServerId, stream_id: i64, key: String, codec: String, can_auto_sync: bool) {
+    select_inner(server, stream_id, key, codec, can_auto_sync, |server, key, codec, auto_sync| {
         let Some(client) = plx_plex::plex::client_for(server) else {
             super::log("sidecar: no client for the playing server");
             return None;
         };
-        client.sidecar_subtitle_detailed(key, codec)
+        client.sidecar_subtitle_fetch(key, codec, auto_sync)
+            .map(|file| (file.bytes, file.synced))
             .map_err(|why| super::log(&format!("sidecar: fetch failed: {why}")))
             .ok()
     });
 }
 
+/// Ask for a synced copy? The viewer's preference, the track's capability and the film's
+/// voice-activity data must all agree, which is the same test Plex Web applies before it offers
+/// its "Auto Sync Subtitles" switch.
+pub fn auto_sync_applies(preference: bool, can_auto_sync: bool, media_voice: bool) -> bool {
+    preference && can_auto_sync && media_voice
+}
+
+/// Test seam with the pre-auto-sync fetch shape: never asks for a synced copy.
+#[cfg(test)]
 fn select_with_fetch(
     server: plx_plex::plex::ServerId, stream_id: i64, key: String, codec: String,
     fetch: impl Fn(plx_plex::plex::ServerId, &str, &str) -> Option<Vec<u8>> + Send + 'static,
+) {
+    select_inner(server, stream_id, key, codec, false, move |server, key, codec, _| {
+        fetch(server, key, codec).map(|bytes| (bytes, false))
+    });
+}
+
+fn select_inner(
+    server: plx_plex::plex::ServerId, stream_id: i64, key: String, codec: String, can_auto_sync: bool,
+    fetch: impl Fn(plx_plex::plex::ServerId, &str, &str, bool) -> Option<(Vec<u8>, bool)> + Send + 'static,
 ) {
     if stream_id <= 0 || key.is_empty() {
         deselect();
         return;
     }
-    let selection = Selection { server, stream_id, key, codec: codec.to_ascii_lowercase() };
+    let auto_sync = auto_sync_applies(super::subtitle_auto_sync(), can_auto_sync, state().media_voice);
+    let selection = Selection { server, stream_id, key, codec: codec.to_ascii_lowercase(), can_auto_sync, auto_sync };
     {
         let mut st = state();
         st.generation = st.generation.wrapping_add(1);
@@ -155,10 +190,14 @@ fn select_with_fetch(
         };
         let stream_id = selection.stream_id;
         super::log(&format!("sidecar: fetching stream {stream_id}"));
-        let body = fetch(selection.server, &selection.key, &selection.codec);
+        let body = fetch(selection.server, &selection.key, &selection.codec, selection.auto_sync);
+        let synced = body.as_ref().is_some_and(|(_, synced)| *synced);
+        if selection.auto_sync {
+            super::log(&format!("sidecar: stream {stream_id} auto-sync {}", if synced { "answered" } else { "not answered, as-is file" }));
+        }
         let outcome = match body {
             None => Err(Failure::Fetch),
-            Some(bytes) => decode(bytes, &selection.codec),
+            Some((bytes, _)) => decode(bytes, &selection.codec),
         };
         let mut st = state();
         if st.generation != gen {
@@ -171,6 +210,7 @@ fn select_with_fetch(
                     Content::Ass { .. } => super::log(&format!("sidecar: stream {stream_id} ready, styled ASS")),
                 }
                 st.loaded = Some((selection, content));
+                st.loaded_synced = synced;
             }
             Err(why) => {
                 super::log(&format!("sidecar: stream {stream_id} FAILED ({why:?})"));
@@ -213,7 +253,27 @@ pub fn select_without_fetch_for_test(stream_id: i64) {
     st.pending = None;
     st.want = Some(Selection {
         server: plx_plex::plex::ServerId::UNSET, stream_id, key: String::new(), codec: String::new(),
+        can_auto_sync: false, auto_sync: false,
     });
+    st.failed = None;
+}
+
+/// Mark `stream_id` as the selected, already-loaded sidecar with the given auto-sync capability,
+/// for tests of what the Subtitles menu offers; no file, no fetch. `synced` is what the server is
+/// pretended to have answered.
+#[cfg(any(test, feature = "test-support"))]
+pub fn select_loaded_for_test(stream_id: i64, can_auto_sync: bool, synced: bool) {
+    let mut st = state();
+    st.generation = st.generation.wrapping_add(1);
+    st.pending = None;
+    let auto_sync = auto_sync_applies(super::subtitle_auto_sync(), can_auto_sync, st.media_voice);
+    let selection = Selection {
+        server: plx_plex::plex::ServerId::UNSET, stream_id, key: String::new(), codec: String::new(),
+        can_auto_sync, auto_sync,
+    };
+    st.want = Some(selection.clone());
+    st.loaded = Some((selection, Content::Plain(Vec::new())));
+    st.loaded_synced = synced && auto_sync;
     st.failed = None;
 }
 
@@ -224,7 +284,55 @@ pub fn reset() {
     st.pending = None;
     st.want = None;
     st.loaded = None;
+    st.loaded_synced = false;
     st.failed = None;
+    st.media_voice = false;
+}
+
+/// Publish whether the starting film has voice-activity data (`Media.hasVoiceActivity`). Called
+/// by the route once the playing item is installed, before any sidecar is restored. MAIN THREAD.
+pub fn set_media_voice_activity(on: bool) {
+    state().media_voice = on;
+}
+
+/// What the Subtitles menu shows for auto-sync, for the selected sidecar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoSyncStatus {
+    /// The server cannot sync this track or this film (no capability, or no voice-activity data).
+    Unavailable,
+    /// Possible, and the viewer has it turned off.
+    Off,
+    /// Asked for; the file has not arrived yet.
+    Pending,
+    /// The server answered the synced request.
+    Synced,
+    /// Asked for, but only the as-is file could be fetched.
+    NotSynced,
+}
+
+/// The auto-sync state of the selected sidecar, or `None` when no sidecar is selected.
+pub fn auto_sync_status() -> Option<AutoSyncStatus> {
+    let st = state();
+    let want = st.want.as_ref()?;
+    if !(want.can_auto_sync && st.media_voice) {
+        return Some(AutoSyncStatus::Unavailable);
+    }
+    if !want.auto_sync {
+        return Some(AutoSyncStatus::Off);
+    }
+    Some(match &st.loaded {
+        Some((source, _)) if source == want => if st.loaded_synced { AutoSyncStatus::Synced } else { AutoSyncStatus::NotSynced },
+        _ => AutoSyncStatus::Pending,
+    })
+}
+
+/// The viewer flipped the auto-sync preference: select the current sidecar again, which fetches
+/// it under the new preference unless that exact download is already loaded. MAIN THREAD.
+pub fn reapply_auto_sync() {
+    let want = state().want.clone();
+    if let Some(w) = want {
+        select(w.server, w.stream_id, w.key, w.codec, w.can_auto_sync);
+    }
 }
 
 /// **Honour a sidecar the SERVER already has selected for this part** — picked here in an earlier
@@ -235,7 +343,7 @@ pub fn restore_server_selection(server: plx_plex::plex::ServerId, meta: plx_data
     let item = meta.playing()?;
     if let Some(s) = plx_data::metadata::server_selected_sidecar(item) {
         super::log(&format!("server-selected sidecar subtitle: sid={}", s.id));
-        select(server, s.id, s.key.clone(), s.codec.clone());
+        select(server, s.id, s.key.clone(), s.codec.clone(), s.can_auto_sync);
         return Some(s.id);
     }
     None
@@ -516,6 +624,76 @@ mod tests {
         let plain_caption = active(2_000_000_000, false);
         reset();
         assert_eq!(plain_caption, None, "styled ASS belongs to its native renderer");
+    }
+
+    #[test]
+    fn auto_sync_needs_preference_track_and_voice_data() {
+        assert!(auto_sync_applies(true, true, true));
+        for (pref, track, voice) in [(false, true, true), (true, false, true), (true, true, false)] {
+            assert!(!auto_sync_applies(pref, track, voice), "{pref} {track} {voice}");
+        }
+    }
+
+    #[test]
+    fn auto_sync_is_requested_reported_and_refetched_when_the_preference_changes() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        finish_download();
+        super::super::restore_subtitle_auto_sync(true);
+        set_media_voice_activity(true);
+        let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let fetch = {
+            let asked = asked.clone();
+            move |_: plx_plex::plex::ServerId, _: &str, _: &str, auto_sync: bool| {
+                asked.lock().unwrap().push(auto_sync);
+                let text = if auto_sync { "synced" } else { "as is" };
+                Some((format!("00:00:01 --> 00:00:03\n{text}\n").into_bytes(), auto_sync))
+            }
+        };
+        let sid = plx_plex::plex::ServerId::from_raw(0);
+        select_inner(sid, 7, "/library/streams/7".into(), "srt".into(), true, fetch.clone());
+        finish_download();
+        assert_eq!(active(2_000_000_000, false).as_deref(), Some("synced"));
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::Synced));
+
+        // the viewer turns it off: the same track is fetched again, as it is on disk
+        super::super::restore_subtitle_auto_sync(false);
+        select_inner(sid, 7, "/library/streams/7".into(), "srt".into(), true, fetch.clone());
+        finish_download();
+        assert_eq!(active(2_000_000_000, false).as_deref(), Some("as is"));
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::Off));
+        assert_eq!(*asked.lock().unwrap(), vec![true, false]);
+
+        // a track the server cannot sync never asks, whatever the preference
+        super::super::restore_subtitle_auto_sync(true);
+        select_inner(sid, 8, "/library/streams/8".into(), "srt".into(), false, fetch.clone());
+        finish_download();
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::Unavailable));
+        assert_eq!(asked.lock().unwrap().last(), Some(&false));
+
+        // a new film without voice-activity data never asks either
+        reset();
+        assert!(!state().media_voice, "a new item forgets the previous film's voice data");
+        select_inner(sid, 7, "/library/streams/7".into(), "srt".into(), true, fetch);
+        finish_download();
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::Unavailable));
+        assert_eq!(asked.lock().unwrap().last(), Some(&false));
+        reset();
+    }
+
+    #[test]
+    fn a_refused_sync_request_is_reported_as_not_synced() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        finish_download();
+        super::super::restore_subtitle_auto_sync(true);
+        set_media_voice_activity(true);
+        select_inner(plx_plex::plex::ServerId::from_raw(0), 9, "/library/streams/9".into(), "srt".into(), true,
+            |_, _, _, _| Some((b"00:00:01 --> 00:00:03\nplain\n".to_vec(), false)));
+        finish_download();
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::NotSynced));
+        assert_eq!(active(2_000_000_000, false).as_deref(), Some("plain"), "the as-is file still draws");
+        reset();
     }
 
     #[test]

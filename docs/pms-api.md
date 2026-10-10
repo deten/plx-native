@@ -1225,6 +1225,56 @@ is immediate; the real one is asynchronous, as above. It also models the discard
 (`discard_deselected_downloads`: the stream leaves the part, its `/library/streams/<id>` is a 404, selecting
 it is a 400).
 
+### Subtitle auto-sync: `autoAdjustSubtitle=1`
+
+**UNVERIFIED against a live server: derived from the Plex Web client (4.162.1) and from the
+community OpenAPI description of PMS, not from a request this project has sent to a real server.**
+
+Plex Pass servers can re-time a subtitle against the film's voice-activity data. A client asks for
+it with the query flag `autoAdjustSubtitle=1`; nothing else changes about the request.
+
+| Request | Where the flag goes |
+|---|---|
+| a sidecar file | `GET /library/streams/{id}[.{ext}]?encoding=utf-8&format=srt&autoAdjustSubtitle=1` |
+| a transcode | on `/video/:/transcode/universal/decision` and `start`, beside the other transcoder options |
+| a subtitle-only transcode | `/{transcodeType}/:/transcode/universal/subtitles`, and Plex Web's direct-play subtitle URL `/subtitles/:/transcode/universal/start` |
+
+The answer is the subtitle itself, already moved: the request is synchronous and there is no job to
+poll and no new stream id. The OpenAPI description words the stream flag as "whether the server
+should attempt to automatically adjust the subtitle timestamps to match the media", and the
+transcoder flag as "adjust subtitles based on Voice Activity Data".
+
+When it can work, as the server reports it:
+
+- `Media.hasVoiceActivity`: the server has analysed this version's speech. Lenient bool.
+- `Stream.canAutoSync`: the server can sync this subtitle track. Present on library streams and on
+  subtitle search candidates (`canAutoSync` in the search rows above).
+- Plex Web additionally requires the account feature `auto-sub-offsets` and a server whose
+  `ownerFeatures` include `auto-sub-offsets` (or the feature id
+  `d4b4e08a-9201-4c99-9a52-8f2de8ff25cd`), hides the switch on a cloud server and on Live TV, and
+  enables it only while `hasVoiceActivity` and the selected stream's `canAutoSync` are both true.
+  Its tooltips read "The current video file has not been analyzed for voice activity data yet." and
+  "The selected subtitle track is not compatible with Auto-Sync Subtitles."
+- Plex Web's preference `autoSyncSubtitles` defaults to on, and turning it during playback restarts
+  the playback decision at the current position.
+
+What this app does with it: on a client-drawn sidecar (direct play, or over a remux) the fetch asks
+for the synced copy first when the viewer's preference is on, the track says `canAutoSync` and the
+film says `hasVoiceActivity`, and falls back to the ordinary requests when the server refuses
+(`plex::library::sidecar_attempts`). It does not check the account or server feature ids itself:
+it relies on the server's own `canAutoSync` and `hasVoiceActivity`, and a server that ignores the
+flag simply answers the file as it is. Embedded text tracks (drawn from the demuxer) and subtitles
+the server burns into a transcode are not synced yet.
+
+`tests/mock_pms.py --subtitle-auto-sync` models it: every item reads as analysed, every external
+subtitle as syncable, and a request carrying the flag answers the file `AUTO_SYNC_SHIFT_MS` later.
+
+Sources: `https://app.plex.tv/desktop/js/main-8792-e21a32ad76ad9fa8dc08-plex-4.162.1-87b128e.js`
+(the transcoder options, `resolveSubtitlesUrl`, the "Auto Sync Subtitles" switch and its gates),
+and the operations `getStreamsStream`, `makeDecision`, `startTranscodeSession` and
+`transcodeSubtitles` in the community OpenAPI description used by the generated Plex SDKs
+(for example `github.com/LukasParke/plexjava`).
+
 ---
 
 ## App data-layer summary
