@@ -1147,6 +1147,12 @@ pub fn allot(budget: usize, want: &[usize]) -> Vec<usize> {
 /// 2. **Every other shelf**, source by source in roster order — the owned server's first, then each
 ///    shared server's, contiguously, because adjacency is the grouping device.
 ///
+///    **Unless the profile has a library display order** ([`BrowseScope::order`], every production
+///    scope once a section is discovered): then every Recently Added shelf whose library is in it
+///    comes first, one per library in that order, then any other Recently Added shelf, then the
+///    rest (the recommendation shelves) in the order above ([`home_shelf_order`]). The budget does
+///    not change with it — which shelves publish is still decided source by source.
+///
 /// A source that has never answered contributes nothing at all: no heading, no empty shelf, no
 /// placeholder row. One that answered and has since failed keeps the shelves it last had, which is
 /// the other half of the same rule — a transient failure must not blank a populated Home, and a
@@ -1201,6 +1207,36 @@ fn bound_overflow(srcs: &[Src], scope: &BrowseScope, build: &HubBuild) -> (usize
     let published_shelves = build.1.len() - usize::from(deck.is_some());
     let published_cards: usize = build.1.iter().map(|hub| hub.len).sum::<usize>() - deck.map_or(0, |h| h.len);
     (offered_shelves - published_shelves, offered_cards - published_cards)
+}
+
+/// The library a Recently Added shelf lists, by its own section key: a per-library
+/// `<type>.recentlyadded.<id>` identifier names it, a whole-server `home.<type>.recent` hub carries
+/// it as `sectionID=` in its key when PMS minted one per library, and otherwise the rows say
+/// (`librarySectionID`). `None` when nothing does.
+fn shelf_library(shelf: &Shelf, items: &[&Arc<PmsMovie>]) -> Option<i64> {
+    let from_id = ["movie.recentlyadded.", "show.recentlyadded.", "tv.recentlyadded."].iter()
+        .find_map(|prefix| shelf.hub_id.strip_prefix(prefix))
+        .and_then(|id| id.parse::<i64>().ok());
+    let from_key = || shelf.key.split(['?', '&']).find_map(|pair| pair.strip_prefix("sectionID="))
+        .and_then(|id| id.parse::<i64>().ok());
+    let from_rows = || items.iter().map(|m| m.sec).find(|&sec| sec != 0);
+    from_id.or_else(from_key).or_else(from_rows).filter(|&sec| sec > 0)
+}
+
+/// Where a shelf goes on Home under the profile's library display order, as a sort key:
+/// `(0, rank)` for a Recently Added shelf of a library in `order` (its position there), `(1, 0)` for
+/// any other Recently Added shelf, `(2, 0)` for everything else. With no order at all every shelf
+/// is `(2, 0)`, so a stable sort keeps the household's own order untouched.
+fn home_shelf_order(order: &[(ServerId, i64)], shelf: &Shelf, items: &[&Arc<PmsMovie>]) -> (u8, usize) {
+    if order.is_empty() || !plx_plex::plex::hub_title::is_recently_added_hub(&shelf.hub_id) {
+        return (2, 0);
+    }
+    let rank = items.first().map(|m| m.sid).zip(shelf_library(shelf, items))
+        .and_then(|(sid, sec)| order.iter().position(|&(s, k)| s == sid && k == sec));
+    match rank {
+        Some(rank) => (0, rank),
+        None => (1, 0),
+    }
 }
 
 /// Approximate resident bytes of a catalog: each card's struct plus the heap its strings own.
@@ -1277,6 +1313,10 @@ fn merge_with_scope(srcs: &[Src], scope: &BrowseScope) -> HubBuild {
         .collect();
     let rows_for = allot(HOME_CARDS_MAX - new_cat.len(), &row_want);
 
+    // Which shelves publish is decided per source exactly as before (the budget and the
+    // whole-shelf rule below never look at the display order); only the ORDER they are emitted in
+    // is then the profile's, through `home_shelf_order`.
+    let mut admitted: Vec<(&str, &Shelf, &Vec<&Arc<PmsMovie>>)> = Vec::new();
     for (i, (handle, b)) in live.iter().enumerate() {
         let mut rows_left = rows_for[i];
         for (sh, items) in b.shelves.iter().zip(&publishable[i]) {
@@ -1289,23 +1329,32 @@ fn merge_with_scope(srcs: &[Src], scope: &BrowseScope) -> HubBuild {
             if items.is_empty() {
                 continue;
             }
-            let start = new_cat.len();
-            for m in items {
-                new_cat.push(Arc::clone(m));
-                row_handle.push(handle);
-            }
             rows_left -= cost;
-            new_hubs.push(HubRow {
-                title: sh.title.clone(),
-                hub_id: sh.hub_id.clone(),
-                key: sh.key.clone(),
-                source: (*handle).to_string(),
-                total: sh.total,
-                start,
-                len: new_cat.len() - start,
-                offset: sh.offset, more: sh.more,
-            });
+            admitted.push((handle, sh, items));
         }
+    }
+    let ranks: Vec<(u8, usize)> = admitted.iter()
+        .map(|(_, sh, items)| home_shelf_order(&scope.order, sh, items))
+        .collect();
+    let mut emit: Vec<usize> = (0..admitted.len()).collect();
+    emit.sort_by_key(|&i| ranks[i]); // stable: equal keys keep the household's own order
+    for i in emit {
+        let (handle, sh, items) = admitted[i];
+        let start = new_cat.len();
+        for m in items {
+            new_cat.push(Arc::clone(m));
+            row_handle.push(handle);
+        }
+        new_hubs.push(HubRow {
+            title: sh.title.clone(),
+            hub_id: sh.hub_id.clone(),
+            key: sh.key.clone(),
+            source: handle.to_string(),
+            total: sh.total,
+            start,
+            len: new_cat.len() - start,
+            offset: sh.offset, more: sh.more,
+        });
     }
 
     // ---- 3. the rotating hero pool ----
@@ -1654,15 +1703,23 @@ fn feeds_home(sid: ServerId, pinned: &[ServerId], known: &[ServerId]) -> bool {
 struct BrowseScope {
     sections_gen: u32,
     pins: Vec<(ServerId, i64, bool)>,
+    /// Every known library in the profile's display order (`DirectoryView::ordered_libraries`):
+    /// what ranks Home's Recently Added shelves ([`home_shelf_order`]). Empty for a standalone
+    /// fixture, which keeps the household's own shelf order.
+    order: Vec<(ServerId, i64)>,
 }
 
 impl BrowseScope {
     fn standalone() -> Self {
-        Self { sections_gen: 0, pins: Vec::new() }
+        Self { sections_gen: 0, pins: Vec::new(), order: Vec::new() }
     }
 
     fn retained(directory: crate::stores::browse::DirectoryView<'_>) -> Self {
-        Self { sections_gen: directory.sections_gen(), pins: directory.favorite_sections().to_vec() }
+        Self {
+            sections_gen: directory.sections_gen(),
+            pins: directory.favorite_sections().to_vec(),
+            order: directory.ordered_libraries(),
+        }
     }
 
     /// Semantic pin-table identity. Browse generations are owner-local, so two independent stores
@@ -1685,6 +1742,11 @@ impl BrowseScope {
             fold(&sid.raw().to_le_bytes());
             fold(&section.to_le_bytes());
             fold(&[*pinned as u8]);
+        }
+        // The display order is part of what Home is built from: a reorder must re-merge.
+        for (sid, section) in &self.order {
+            fold(&sid.raw().to_le_bytes());
+            fold(&section.to_le_bytes());
         }
         hash
     }

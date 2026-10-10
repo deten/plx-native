@@ -335,6 +335,10 @@ struct DirectoryData {
     sources: Vec<(ServerId, super::SrcGroup)>,
     sections: Vec<SectionView>,
     favorites: Vec<(ServerId, i64, bool)>,
+    /// Every index of `sections`, in the profile's library display order
+    /// (`BrowseState::display_order`). `sections` itself stays in table order: its indices are
+    /// addresses.
+    order: Vec<usize>,
 }
 
 /// Retained by the Bridge-owned `BrowseStore` and captured from its `BrowseState`, never a new
@@ -387,6 +391,7 @@ impl DirectorySnapshot {
                         key: section.key, kind: section.kind, row,
                     }).collect(),
                 favorites: state.favorite_sections(),
+                order: state.display_order(),
             });
             self.stamp = Some(stamp);
         }
@@ -416,6 +421,7 @@ impl DirectorySnapshot {
                 sources: vec![(sid, source)],
                 sections: Vec::new(),
                 favorites: Vec::new(),
+                order: Vec::new(),
             }),
             source: Some(0),
             source_fetch: fetch,
@@ -434,6 +440,18 @@ impl DirectorySnapshot {
             && self.tabs_gen == other.tabs_gen
             && self.preferred == other.preferred
             && self.kind_fetch == other.kind_fetch
+    }
+    /// This fixture with a profile display order over its sections (indices, every one once).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_display_order(mut self, order: Vec<usize>) -> Self {
+        let data = &self.data;
+        self.data = Arc::new(DirectoryData {
+            sources: data.sources.clone(),
+            sections: data.sections.clone(),
+            favorites: data.favorites.clone(),
+            order,
+        });
+        self
     }
     /// The single builder behind both `fixture` and the selector matrix suite: a section table
     /// AND the source table `library_label` reads a handle from. `fixture` used to hardcode
@@ -454,6 +472,7 @@ impl DirectorySnapshot {
             section.sid.map(|sid| (sid, section.key, section.row.pinned))
         }).collect();
         let source_count = sources.len();
+        let order = (0..sections.len()).collect();
         Self {
             preferred,
             kind_fetch: [SecFetch::Ready; 2],
@@ -462,6 +481,7 @@ impl DirectorySnapshot {
                 sources,
                 sections,
                 favorites,
+                order,
             }),
             source: None,
             source_fetch: SecFetch::Ready,
@@ -506,6 +526,15 @@ impl<'a> DirectoryView<'a> {
     #[allow(dead_code)]
     pub fn favorite_sections(self) -> &'a [(ServerId, i64, bool)] {
         &self.0.data.favorites
+    }
+    /// Every addressable library as `(server, section key)`, in the profile's display order —
+    /// Home's Recently Added shelves are ranked by position in this list.
+    pub fn ordered_libraries(self) -> Vec<(ServerId, i64)> {
+        let sections = self.sections();
+        self.display_order().into_iter()
+            .filter_map(|index| sections.get(index))
+            .filter_map(|section| section.sid.map(|sid| (sid, section.key)))
+            .collect()
     }
     #[allow(dead_code)]
     pub fn tab_kind(self, tab: usize) -> Option<super::SecKind> {
@@ -576,11 +605,26 @@ impl<'a> DirectoryView<'a> {
     pub fn discovery(self) -> SecFetch {
         self.0.discovery
     }
+    /// Every section index in the profile's library display order — the order Home's Recently
+    /// Added shelves, the Library's same-type pills and the Library order page all follow. A
+    /// snapshot whose order does not cover the table (a fixture) answers table order.
+    pub fn display_order(self) -> Vec<usize> {
+        let order = &self.0.data.order;
+        let len = self.0.data.sections.len();
+        if order.len() == len {
+            order.clone()
+        } else {
+            (0..len).collect()
+        }
+    }
+    /// The libraries of `section`'s kind a selector offers (the favourites), in display order.
     /// Press-time section, not necessarily the committed one during a page fade.
     pub fn rows_for(self, section: usize) -> impl Iterator<Item = &'a super::SrcRow> {
         let kind = self.sections().get(section).map(|s| s.kind);
-        self.sections()
-            .iter()
+        let sections = self.sections();
+        self.display_order()
+            .into_iter()
+            .filter_map(move |index| sections.get(index))
             .filter(move |s| Some(s.kind) == kind && s.row.pinned)
             .map(|s| &s.row)
     }

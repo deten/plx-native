@@ -735,6 +735,16 @@ pub struct BrowseState {
     /// cleared with it on a reset, so a profile switch can never open one person's library in
     /// another's view.
     view_memory: plx_plex::plex::session::LibraryViews,
+    /// This profile's custom library display order
+    /// ([`plx_plex::plex::session::Session::library_order`]) — the Home shelf order and the
+    /// same-type selector order both read this. Loaded and cleared beside
+    /// [`remembered`](Self::remembered), for the same reason.
+    library_order: plx_plex::plex::session::LibraryOrder,
+    /// The profile of this run's last queued [`set_library_order`](Self::set_library_order) write
+    /// and whether that write has settled. While it has not, [`load_remembered`](Self::load_remembered)
+    /// keeps the local order rather than reloading one from a session snapshot older than the
+    /// write. Shared like [`PinWrite`], so a cloned snapshot reads the same settlement.
+    order_write: Option<(String, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
     recorded: Option<plx_plex::plex::session::HomePins>,
     pending_pins: Option<(String, std::sync::Arc<std::sync::Mutex<PinWrite>>)>,
 }
@@ -824,6 +834,8 @@ impl Default for BrowseState {
             retry_cd: 0,
             remembered: Vec::new(),
             view_memory: Default::default(),
+            library_order: Default::default(),
+            order_write: None,
             recorded: None,
             pending_pins: None,
             session_generation: plx_plex::plex::session::visible_generation(),
@@ -1636,6 +1648,84 @@ impl BrowseState {
                 last_pinned: last && section.pinned, current: index == current,
             }).collect()
     }
+    /// **The profile's library DISPLAY order**: every section index, the ones this profile ranked
+    /// ([`Session::library_order`](plx_plex::plex::session::Session::library_order)) first in their
+    /// rank, then every unranked one in table (discovery) order. A stable sort, so with no custom
+    /// order at all this is exactly `0..len`.
+    ///
+    /// The table itself is never reordered — section indices are addresses every other reader
+    /// holds — so this is a PERMUTATION the readers apply: Home's shelf order, the Library's
+    /// same-type pills and Sources menu, and the reorder page.
+    pub(crate) fn display_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.sections.len()).collect();
+        if !self.library_order.libs.is_empty() {
+            order.sort_by_key(|&index| {
+                let section = &self.sections[index];
+                let machine = self.sources.get(section.src).map_or("", |s| s.machine_id.as_str());
+                self.library_order.rank(machine, section.key).unwrap_or(usize::MAX)
+            });
+        }
+        order
+    }
+    /// Record `order` — section indices of THIS table epoch, in the order the viewer wants them —
+    /// as the profile's library order, locally at once and in the session through the queue.
+    ///
+    /// Every section the list does not name keeps its relative place after the named ones (its
+    /// current display position decides), so a page that lists only favourites never loses the
+    /// rank of an unpinned library. A stale epoch, or an order naming no section of this table,
+    /// changes nothing. Bumps the sections generation, which is what re-captures the directory and
+    /// moves Home's scope, so both re-read the order on the next frame.
+    fn set_library_order(&mut self, epoch: u32, order: &[usize]) -> bool {
+        if epoch != self.table_epoch() {
+            return false;
+        }
+        let mut indices: Vec<usize> = Vec::with_capacity(self.sections.len());
+        for &index in order {
+            if index < self.sections.len() && !indices.contains(&index) {
+                indices.push(index);
+            }
+        }
+        if indices.is_empty() {
+            return false;
+        }
+        for index in self.display_order() {
+            if !indices.contains(&index) {
+                indices.push(index);
+            }
+        }
+        let libs: Vec<(String, i64)> = indices.iter().filter_map(|&index| {
+            let section = self.sections.get(index)?;
+            let machine = self.sources.get(section.src)?.machine_id.clone();
+            (!machine.is_empty()).then_some((machine, section.key))
+        }).collect();
+        let mut next = self.library_order.clone();
+        next.set_order(libs.clone());
+        if next.libs == self.library_order.libs {
+            return false;
+        }
+        let user = plx_plex::plex::session::current_profile_key();
+        next.user = user.clone();
+        self.library_order = next;
+        let settled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.order_write = Some((user.clone(), std::sync::Arc::clone(&settled)));
+        plx_plex::plex::session::queue_update_settled(
+            move |current| {
+                let unchanged = current.library_order_for(&user)
+                    .is_some_and(|stored| stored.libs.iter().map(|l| (l.machine_id.as_str(), l.key))
+                        .eq(libs.iter().map(|(machine, key)| (machine.as_str(), *key))));
+                if unchanged {
+                    return None;
+                }
+                let mut next = current.clone();
+                next.set_library_order(&user, libs);
+                Some(next)
+            },
+            move |_| settled.store(true, std::sync::atomic::Ordering::Release),
+        );
+        self.bump_sections_gen();
+        plx_machine::idle::invalidate();
+        true
+    }
     fn all_source_rows(&self) -> Vec<SrcRow> {
         self.rows_where(|_| true)
     }
@@ -1686,6 +1776,12 @@ impl BrowseState {
                     .map(|kind| (kind, target.machine_id.clone(), target.key))
             }).collect()).unwrap_or_default();
         self.view_memory = session.views_for(user).cloned().unwrap_or_default();
+        let pending = self.order_write.as_ref().is_some_and(|(writer, settled)|
+            writer == user && !settled.load(std::sync::atomic::Ordering::Acquire));
+        if !pending {
+            self.order_write = None;
+            self.library_order = session.library_order_for(user).cloned().unwrap_or_default();
+        }
     }
     /// The pin rules' view of the section table.
     ///
@@ -2039,6 +2135,8 @@ impl BrowseState {
         self.recorded = None;
         self.remembered = Vec::new();
         self.view_memory = Default::default();
+        self.library_order = Default::default();
+        self.order_write = None;
         self.tab_shape = u32::MAX;
         self.cur = 0;
         self.retry_cd = 0;
@@ -2213,6 +2311,9 @@ impl BrowseState {
             BrowseCmd::ApplyPins(edits) => {
                 self.apply_pins(&edits);
                 true
+            }
+            BrowseCmd::SetLibraryOrder { epoch, sections } => {
+                self.set_library_order(epoch, &sections)
             }
             BrowseCmd::RetryDiscovery => {
                 self.retry_discovery();

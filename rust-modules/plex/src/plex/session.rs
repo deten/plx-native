@@ -532,6 +532,21 @@ pub struct Session {
     #[serde(rename = "library_sorts", default, deserialize_with = "de_soft_vec",
         skip_serializing_if = "Vec::is_empty")]
     pub library_views: Vec<LibraryViews>,
+    /// This profile's custom DISPLAY order for libraries: the order Home's per-library "Recently
+    /// Added" shelves appear in, and the order the Library screen's same-type selector lists
+    /// libraries in (the Movies tab's and the TV Shows tab's own list share this one rail,
+    /// each filtered to its own [`SecKind`]). Keyed like [`Session::last_library`]: by profile,
+    /// and by (machine id, section key) — never a section INDEX, which the table renumbers on
+    /// every `browse::reset` and on a re-discovery that appends.
+    ///
+    /// A library with no entry here sorts AFTER every listed one, in the server's own discovery
+    /// order — so a freshly-added library appears at the end rather than nowhere, and nothing
+    /// needs seeding on first run.
+    ///
+    /// Soft-parsed for the reason every list in this struct is; omitted while empty so a session
+    /// that never reordered anything serializes exactly as it did before the field existed.
+    #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
+    pub library_order: Vec<LibraryOrder>,
     /// **The sync-timing correction a profile last tuned for an item**, per profile, keyed by
     /// (machine id, ratingKey) — never a track id: within one playback a track CHANGE still zeros
     /// the live offset (`route::commit_subtitle_selection`'s own doc), so by the time this is
@@ -731,6 +746,8 @@ struct CanonicalSessionPreferences {
         skip_serializing_if = "Vec::is_empty")]
     library_views: Vec<LibraryViews>,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
+    library_order: Vec<LibraryOrder>,
+    #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
     subtitle_offsets: Vec<SubtitleOffsets>,
     #[serde(default, deserialize_with = "de_soft_hero_blur")]
     last_hero_blur: Option<[[f32; 3]; 4]>,
@@ -777,6 +794,7 @@ impl Default for CanonicalSessionPreferences {
             auto_sign_in: false,
             last_library: Vec::new(),
             library_views: Vec::new(),
+            library_order: Vec::new(),
             subtitle_offsets: Vec::new(),
             last_hero_blur: None,
             trailer_autoplay: true,
@@ -829,6 +847,7 @@ fn split_public(session: &Session) -> Result<plx_platform::storage::state::Publi
         auto_sign_in: session.auto_sign_in,
         last_library: session.last_library.clone(),
         library_views: session.library_views.clone(),
+        library_order: session.library_order.clone(),
         subtitle_offsets: session.subtitle_offsets.clone(),
         last_hero_blur: session.last_hero_blur,
         trailer_autoplay: session.trailer_autoplay,
@@ -903,6 +922,7 @@ pub fn join_canonical(
         auto_sign_in: preferences.auto_sign_in,
         last_library: preferences.last_library,
         library_views: preferences.library_views,
+        library_order: preferences.library_order,
         subtitle_offsets: preferences.subtitle_offsets,
         last_hero_blur: preferences.last_hero_blur,
         trailer_autoplay: preferences.trailer_autoplay,
@@ -936,6 +956,7 @@ fn public_session(public: &plx_platform::storage::state::PublicPayload) -> Sessi
         auto_sign_in: preferences.auto_sign_in,
         last_library: preferences.last_library,
         library_views: preferences.library_views,
+        library_order: preferences.library_order,
         subtitle_offsets: preferences.subtitle_offsets,
         last_hero_blur: preferences.last_hero_blur,
         trailer_autoplay: preferences.trailer_autoplay,
@@ -1930,6 +1951,51 @@ impl LastLibrary {
     }
 }
 
+/// One profile's custom library display order. See [`Session::library_order`].
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct LibraryOrder {
+    /// The Plex Home user's `uuid`, or **empty for the account owner** — [`LastLibrary`]'s
+    /// convention, and for the same reason.
+    pub user: String,
+    /// The libraries in DISPLAY order, position IS rank. One list across every library kind —
+    /// the Movies tab and the TV Shows tab each filter it down to their own [`SecKind`] rather
+    /// than keeping two separate rails, so moving a library in one place moves it everywhere
+    /// that reads this order.
+    #[serde(deserialize_with = "de_soft_vec")]
+    pub libs: Vec<OrderedLib>,
+    #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
+    pub extensions: OpaqueExtensions,
+}
+
+/// One library's address in a [`LibraryOrder`] list, the same (machine id, section key) identity
+/// [`TypedLib`] and [`LibraryView`] use — never a section INDEX, which is unstable across
+/// `browse::reset` and re-discovery.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct OrderedLib {
+    pub machine_id: String,
+    pub key: i64,
+    #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
+    pub extensions: OpaqueExtensions,
+}
+
+impl LibraryOrder {
+    /// This profile's custom rank for `(machine_id, key)` — lower sorts first. `None` for a
+    /// library with no custom rank; the caller sorts those after every ranked one, in whatever
+    /// order they were already in (stable sort), which is the server's own discovery order.
+    pub fn rank(&self, machine_id: &str, key: i64) -> Option<usize> {
+        self.libs.iter().position(|l| l.machine_id == machine_id && l.key == key)
+    }
+    /// Replace the whole order with `libs`, in the caller's intended display order. An empty
+    /// `libs` clears the customization entirely (every library falls back to discovery order).
+    pub fn set_order(&mut self, libs: Vec<(String, i64)>) {
+        self.libs = libs.into_iter()
+            .map(|(machine_id, key)| OrderedLib { machine_id, key, extensions: Default::default() })
+            .collect();
+    }
+}
+
 /// One profile's remembered library views. See [`Session::library_views`].
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
 #[serde(default)]
@@ -2868,6 +2934,24 @@ impl Session {
     /// One profile's remembered library views — `None` for a profile that never changed one.
     pub fn views_for(&self, user: &str) -> Option<&LibraryViews> {
         self.library_views.iter().find(|views| views.user == user)
+    }
+
+    /// One profile's custom library display order — `None` for a profile that never reordered
+    /// anything, which reads as "every library in discovery order" at the call site.
+    pub fn library_order_for(&self, user: &str) -> Option<&LibraryOrder> {
+        self.library_order.iter().find(|order| order.user == user)
+    }
+
+    /// Record one profile's whole library order, replacing any existing one. Call through
+    /// [`update`] like every other per-field session write — this does not persist by itself.
+    pub fn set_library_order(&mut self, user: &str, libs: Vec<(String, i64)>) {
+        if let Some(order) = self.library_order.iter_mut().find(|order| order.user == user) {
+            order.set_order(libs);
+        } else {
+            let mut order = LibraryOrder { user: user.to_string(), libs: Vec::new(), extensions: Default::default() };
+            order.set_order(libs);
+            self.library_order.push(order);
+        }
     }
 
     /// Record one library's view for one profile (a view that is the default forgets the entry —

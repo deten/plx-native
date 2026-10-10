@@ -5,6 +5,84 @@ use super::*;
 #[allow(unused_imports)]
 use super::test_support::*;
 
+/// **The library display order is a permutation its readers apply — never a reorder of the
+/// table.** Section indices are addresses (the listing, the pins, a pending press all hold one),
+/// so `set_library_order` leaves `sections` exactly where it was and only `display_order`, the
+/// directory's `rows_for` and Home's scope see the new order. Libraries the write does not name
+/// keep their relative place after the named ones, a stale epoch is refused, and the record is
+/// the profile's, by (machine id, key), reloaded from the session as the same order.
+#[test]
+fn library_order_reorders_the_display_never_the_table() {
+    let _g = plx_base::testlock::serial();
+    let t = TempPins::new("library-order");
+    t.watching("u-owner");
+    let mut browse = TestBrowse::default();
+    seed_two_servers(&mut browse);
+    browse.state.apply_pins(&[(2, true)]);
+    // 0 Movies (mac-mini 1), 1 TV Shows (mac-mini 2), 2 Film Club (nas-home 1)
+    assert_eq!(browse.state.display_order(), vec![0, 1, 2], "no custom order is table order");
+
+    let epoch = browse.state.table_epoch();
+    assert!(!browse.state.set_library_order(epoch.wrapping_add(1), &[2, 0]), "a stale epoch changes nothing");
+    let generation = browse.state.sections_gen();
+    assert!(browse.state.set_library_order(epoch, &[2, 0]));
+    assert_ne!(browse.state.sections_gen(), generation, "a reorder must re-capture and re-merge");
+    assert_eq!(browse.state.display_order(), vec![2, 0, 1], "the unnamed library keeps its place after");
+    assert_eq!(browse.state.sections[2].title, "Film Club", "the table itself never moves");
+    assert!(!browse.state.set_library_order(epoch, &[2, 0, 1]), "the same order again writes nothing");
+
+    let mut directory = super::view::DirectorySnapshot::default();
+    directory.capture_from(&mut browse.state);
+    let view = directory.view();
+    assert_eq!(view.sections()[0].row.title, "Movies", "the directory keeps table order");
+    assert_eq!(view.display_order(), vec![2, 0, 1]);
+    let movies: Vec<&str> = view.rows_for(0).map(|row| row.title.as_str()).collect();
+    assert_eq!(movies, ["Film Club", "Movies"], "the Movies selector follows the order");
+    assert_eq!(view.rows_for(1).count(), 1, "each kind is its own filtered list");
+
+    plx_base::storage_worker::drain_for_test();
+    let session = plx_plex::plex::session::peek();
+    let user = plx_plex::plex::session::current_profile_key();
+    let stored: Vec<(String, i64)> = session.library_order_for(&user).expect("recorded")
+        .libs.iter().map(|lib| (lib.machine_id.clone(), lib.key)).collect();
+    assert_eq!(stored, [("nas-home".to_string(), 1), ("mac-mini".to_string(), 1), ("mac-mini".to_string(), 2)]);
+
+    let mut reloaded = TestBrowse::default();
+    seed_two_servers(&mut reloaded);
+    reloaded.state.load_remembered(&session, &user);
+    assert_eq!(reloaded.state.display_order(), vec![2, 0, 1], "the session's order reloads as the same order");
+}
+
+/// **A queued order write is not undone by a session snapshot older than it.** A pin reconcile
+/// reloads the profile's remembered state from whatever session it holds; until this run's own
+/// write has settled, that snapshot cannot know the order, and reloading from it would put the
+/// libraries back for a frame — or for good, if nothing reloaded again.
+#[test]
+fn a_pending_library_order_survives_an_older_snapshot() {
+    let _g = plx_base::testlock::serial();
+    let t = TempPins::new("library-order-pending");
+    t.watching("u-owner");
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let _blocker = plx_base::storage_worker::submit(move || {
+        entered_tx.send(()).unwrap();
+        let _ = release_rx.recv();
+    }).unwrap();
+    entered_rx.recv().unwrap();
+    let mut browse = TestBrowse::default();
+    seed_two_servers(&mut browse);
+    let user = plx_plex::plex::session::current_profile_key();
+    let epoch = browse.state.table_epoch();
+    assert!(browse.state.set_library_order(epoch, &[1, 0]));
+    let older = plx_plex::plex::session::Session::default();
+    browse.state.load_remembered(&older, &user);
+    assert_eq!(browse.state.display_order(), vec![1, 0, 2], "the queued order stands");
+    release_tx.send(()).unwrap();
+    plx_base::storage_worker::drain_for_test();
+    browse.state.load_remembered(&plx_plex::plex::session::peek(), &user);
+    assert_eq!(browse.state.display_order(), vec![1, 0, 2], "and is what the session says once settled");
+}
+
 #[test]
 fn a_pending_pin_choice_survives_a_directory_refresh() {
     pin_choice_survives_refresh(false);

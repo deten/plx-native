@@ -74,6 +74,9 @@ pub enum SettingsPage {
     AudioSubtitles,
     /// Favorite libraries — the onboard screen in Settings mode.
     Favourites,
+    /// Library order — the profile's favourite libraries arranged into the order Home's Recently
+    /// Added shelves and the Library's selectors follow (`screens::library_order`).
+    LibraryOrder,
     /// Privacy & data — the consent screen in Settings mode.
     Privacy,
     /// The Legal index.
@@ -150,6 +153,7 @@ impl ScreenArg for SettingsPage {
             SettingsPage::Preview(_) => 106,
             SettingsPage::ConsentStage(_) => 107,
             SettingsPage::Picker(_) => 112,
+            SettingsPage::LibraryOrder => 113,
         })
     }
     fn title(&self) -> Option<&str> {
@@ -183,6 +187,7 @@ impl LogicalState for SettingsPage {
             | SettingsPage::Playback
             | SettingsPage::AudioSubtitles
             | SettingsPage::Favourites
+            | SettingsPage::LibraryOrder
             | SettingsPage::Privacy
             | SettingsPage::Legal
             | SettingsPage::About => 0,
@@ -198,6 +203,7 @@ impl LogicalState for SettingsPage {
             SettingsPage::Playback => "playback",
             SettingsPage::AudioSubtitles => "audio-subtitles",
             SettingsPage::Favourites => "favourites",
+            SettingsPage::LibraryOrder => "library-order",
             SettingsPage::Privacy => "privacy",
             SettingsPage::Legal => "legal",
             SettingsPage::About => "about",
@@ -356,6 +362,7 @@ mod tests {
             SettingsPage::Playback,
             SettingsPage::AudioSubtitles,
             SettingsPage::Favourites,
+            SettingsPage::LibraryOrder,
             SettingsPage::Privacy,
             SettingsPage::Legal,
             SettingsPage::About,

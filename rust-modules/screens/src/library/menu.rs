@@ -124,15 +124,30 @@ fn stamp_tier(stamp: &mut Stamp, tier: Option<plx_plex::plex::probe::Location>) 
     });
 }
 
+#[cfg(test)]
 fn source_draft(
     epoch: u32,
     current: usize,
     groups: &[SrcGroup],
     sections: &[plx_data::browse::view::SectionView],
 ) -> MenuDraft {
+    let order: Vec<usize> = (0..sections.len()).collect();
+    source_draft_ordered(epoch, current, groups, sections, &order)
+}
+
+/// The Sources menu, its libraries listed in `order` — the profile's library display order
+/// (`DirectoryView::display_order`), the same order the pill strip and Home follow.
+fn source_draft_ordered(
+    epoch: u32,
+    current: usize,
+    groups: &[SrcGroup],
+    sections: &[plx_data::browse::view::SectionView],
+    order: &[usize],
+) -> MenuDraft {
     let kind = sections.get(current).map(|section| section.kind);
-    let source_rows: Vec<SrcRow> = sections
+    let source_rows: Vec<SrcRow> = order
         .iter()
+        .filter_map(|&index| sections.get(index))
         .filter(|section| Some(section.kind) == kind && section.row.pinned)
         .map(|section| section.row.clone())
         .collect();
@@ -468,11 +483,12 @@ impl LibraryMenu {
                         .iter()
                         .map(|(_, group)| group.clone())
                         .collect();
-                    return source_draft(
+                    return source_draft_ordered(
                         directory.epoch().unwrap_or(0),
                         current,
                         &groups,
                         directory.sections(),
+                        &directory.display_order(),
                     );
                 }
                 section = choice(

@@ -15,6 +15,26 @@
     "value": "Which libraries this television shows.",
     "description": "Settings, account, onboarding or privacy UI: settings.libraries.detail"
   },
+  "settings.library_order.title": {
+    "value": "Library order",
+    "description": "Settings, account, onboarding or privacy UI: settings.library_order.title — the page that arranges favorite libraries"
+  },
+  "settings.library_order.detail": {
+    "value": "The order of Home's shelves and the Library's lists.",
+    "description": "Settings, account, onboarding or privacy UI: settings.library_order.detail"
+  },
+  "settings.library_order.copy": {
+    "value": "Select a library to pick it up, move it with Up and Down, then select it again to put it down. Home shows each library's Recently Added shelf in this order, before its recommendations.",
+    "description": "Settings, account, onboarding or privacy UI: settings.library_order.copy — the Library order page's instructions"
+  },
+  "settings.library_order.moving": {
+    "value": "Moving",
+    "description": "Settings, account, onboarding or privacy UI: settings.library_order.moving — trailing word on the row being moved"
+  },
+  "settings.library_order.empty": {
+    "value": "No favorite libraries yet.",
+    "description": "Settings, account, onboarding or privacy UI: settings.library_order.empty"
+  },
   "settings.privacy.section": {
     "value": "Privacy",
     "description": "Settings, account, onboarding or privacy UI: settings.privacy.section"

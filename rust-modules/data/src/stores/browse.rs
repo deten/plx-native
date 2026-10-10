@@ -78,6 +78,13 @@ pub enum BrowseCmd {
     /// though it were a decision (`plex::pins::answers`). An EMPTY list is still a commit — the
     /// question was put and every default was left alone.
     ApplyPins(Vec<(usize, bool)>),
+    /// The Library order page's write: section indices of table `epoch`, in the order the viewer
+    /// arranged them. Libraries it does not name keep their relative place after the named ones.
+    /// The order Home's Recently Added shelves and the Library's same-type selector follow.
+    SetLibraryOrder {
+        epoch: u32,
+        sections: Vec<usize>,
+    },
     RetryDiscovery,
     /// The profile/account switch: wipe everything and supersede everything in flight.
     Reset,

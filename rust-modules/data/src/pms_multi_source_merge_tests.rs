@@ -6,6 +6,53 @@ use super::*;
 use super::test_support::*;
 use super::test_support::land;
 
+/// **Home under the profile's library display order**: Continue Watching, then one Recently Added
+/// shelf per library in that order — across servers and kinds — then any Recently Added shelf of
+/// a library the order does not name, then every other shelf in the household's own order. Each
+/// shelf's library is read from its per-library identifier, its key's `sectionID=`, or its rows,
+/// whichever says. With no order (a standalone fixture) nothing moves, and a reorder is part of
+/// the scope's identity, so it re-merges.
+#[test]
+fn recently_added_shelves_follow_the_library_display_order() {
+    let top_rated = shelf_in(0, 1, "Top Rated", "movie.toprated", &["r1"]);
+    let movies = shelf_in(0, 1, "Recently Added Movies", "home.movies.recent", &["m1"]);
+    let mut tv = shelf_in(0, 0, "Recently Added TV", "home.television.recent", &["t1"]);
+    tv.key = "/hubs/home/recentlyAdded?type=2&sectionID=2".into();
+    let elsewhere = shelf_in(1, 9, "Recently Added in Elsewhere", "movie.recentlyadded.9", &["e1"]);
+    let kids = shelf_in(1, 0, "Recently Added in Kids", "movie.recentlyadded.7", &["k1"]);
+    let srcs = [
+        src(0, "", HubState::Ready, Some(built(0, &[(5, "cw")], vec![top_rated, movies, tv]))),
+        src(1, "friend", HubState::Ready, Some(built(1, &[], vec![elsewhere, kids]))),
+    ];
+    let titles = |scope: &BrowseScope| {
+        let (_, hubs, _) = merge_with_scope(&srcs, scope);
+        hubs.iter().map(|hub| hub.title.clone()).collect::<Vec<_>>()
+    };
+    let deck = plx_platform::i18n::msg::browse_home_continue_watching();
+    assert_eq!(titles(&BrowseScope::standalone()),
+        [deck, "Top Rated", "Recently Added Movies", "Recently Added TV",
+         "Recently Added in Elsewhere", "Recently Added in Kids"],
+        "no order: the household's own order");
+
+    let ordered = BrowseScope {
+        sections_gen: 0,
+        pins: vec![(sid(0), 1, true)],
+        order: vec![(sid(1), 7), (sid(0), 2), (sid(0), 1)],
+    };
+    assert_eq!(titles(&ordered),
+        [deck, "Recently Added in Kids", "Recently Added TV", "Recently Added Movies",
+         "Recently Added in Elsewhere", "Top Rated"]);
+
+    let reordered = BrowseScope { order: vec![(sid(0), 1), (sid(0), 2), (sid(1), 7)], ..ordered };
+    assert_eq!(titles(&reordered)[1..4], ["Recently Added Movies", "Recently Added TV", "Recently Added in Kids"]);
+    let ordered = BrowseScope {
+        sections_gen: 0,
+        pins: vec![(sid(0), 1, true)],
+        order: vec![(sid(1), 7), (sid(0), 2), (sid(0), 1)],
+    };
+    assert_ne!(ordered.cache_key(), reordered.cache_key(), "a reorder moves the scope, so Home re-merges");
+}
+
 #[test]
 fn home_group_identity_uses_provider_and_server_not_title_or_position() {
     let id = "home.movies.recent";
@@ -944,6 +991,7 @@ fn an_unpinned_library_spends_no_card_budget() {
     let scope = BrowseScope {
         sections_gen: 0,
         pins: vec![(sid(0), 1, true), (sid(1), 1, false)],
+        order: Vec::new(),
     };
     let (items, hubs, _) = merge_with_scope(&srcs, &scope);
     assert!(hubs.iter().all(|h| h.source.is_empty()), "nothing of the unpinned library is drawn");

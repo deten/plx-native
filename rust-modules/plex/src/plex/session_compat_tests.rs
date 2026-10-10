@@ -427,6 +427,39 @@ fn remembered_library_sorts_survive_the_canonical_split() {
     assert_eq!(joined.views_for("u-sorter").map(|views| views.libs.len()), Some(1));
 }
 
+/// The profile's library display order lives in the PUBLIC preferences half beside the views:
+/// absent until a profile reorders, carried through `split_public` → `join_canonical` and the
+/// plaintext file per profile, replaced whole by a second write, and a malformed entry costs only
+/// itself.
+#[test]
+fn library_order_survives_the_canonical_split_per_profile() {
+    let mut session = Session::default();
+    assert!(split_public(&session).unwrap().preferences.get("library_order").is_none(),
+        "a session that never reordered grows no key");
+    session.set_library_order("u-kid", vec![("m".into(), 4), ("m".into(), 2)]);
+    session.set_library_order("", vec![("m".into(), 1)]);
+    session.set_library_order("u-kid", vec![("m".into(), 2), ("m".into(), 4), ("n".into(), 9)]);
+    assert_eq!(session.library_order.len(), 2, "a second write replaces the profile's own record");
+    let public = split_public(&session).unwrap();
+    let joined = join_canonical(&public, MINIMAL_PROTECTED_AUTH).unwrap();
+    let file: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+    for restored in [&joined, &public_session(&public), &file] {
+        let kid = restored.library_order_for("u-kid").expect("the kid profile's order");
+        assert_eq!(kid.rank("m", 2), Some(0));
+        assert_eq!(kid.rank("m", 4), Some(1));
+        assert_eq!(kid.rank("n", 9), Some(2));
+        assert_eq!(kid.rank("m", 1), None, "the owner's library is not ranked for another profile");
+        assert_eq!(restored.library_order_for("").and_then(|o| o.rank("m", 1)), Some(0));
+    }
+    let mut public = public;
+    public.preferences["library_order"][0]["libs"].as_array_mut().unwrap()
+        .push(serde_json::json!({"machine_id": 7}));
+    public.preferences["library_order"].as_array_mut().unwrap().push(serde_json::json!("bad"));
+    let joined = join_canonical(&public, MINIMAL_PROTECTED_AUTH).unwrap();
+    assert_eq!(joined.library_order.len(), 2);
+    assert_eq!(joined.library_order_for("u-kid").map(|o| o.libs.len()), Some(3));
+}
+
 /// A `library_sorts` entry written before #441 (the sort and nothing else) loads as a view that
 /// is that sort and defaults for every field added since, and serializes back byte for byte —
 /// the compatibility gate for both an upgrade and a rollback. Written as a literal blob, because

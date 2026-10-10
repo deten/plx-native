@@ -1007,6 +1007,7 @@ fn settings_boot_arm(app: &mut App, fr: &mut Frame) {
             let page = match app.scenarios.dev.settings_boot.as_deref().map(str::trim).unwrap_or("root") {
                 "" | "root" => plx_screens::family::SettingsPage::Root,
                 "home" => plx_screens::family::SettingsPage::Favourites,
+                "library-order" => plx_screens::family::SettingsPage::LibraryOrder,
                 "privacy" => plx_screens::family::SettingsPage::Privacy,
                 "legal" => plx_screens::family::SettingsPage::Legal,
                 "language" => plx_screens::family::SettingsPage::Language,

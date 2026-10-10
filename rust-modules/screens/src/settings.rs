@@ -456,6 +456,7 @@ fn mount_page(
             Box::new(super::consent::ConsentPage::first_run(entry, i, cx, fx))
         }
         SettingsPage::Favourites => Box::new(super::onboard::OnboardScreen::settings(entry, cx.views)),
+        SettingsPage::LibraryOrder => Box::new(super::library_order::LibraryOrderPage::new(entry, cx.views)),
         SettingsPage::Picker(kind) => Box::new(super::preferences::PickerPage::new(entry, kind)),
     }
 }
@@ -501,6 +502,8 @@ fn mount_page(
 ///    first-run instance, whether it currently HAS an action band (the group set the engine is
 ///    reasoning about, cached at `rebuild` for the reason that field's own doc gives), and the
 ///    whole draft pin list.
+///  * `LibraryOrderPage` (Library order) → `OrderState`: the focused row's `RowKey`, the whole
+///    local order (section indices) and which library is picked up, if any.
 ///  * `DocumentPage` (the six Legal documents and About) → `DocState`: WHICH document, and its
 ///    reading position in whole `document_reader::STEP`s.
 ///  * `PreviewPage` (the five Privacy previews) → `PreviewState`: which preview. **Its reading
@@ -949,6 +952,7 @@ struct ServerMachineId(String);
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum RootId {
     Favourites,
+    LibraryOrder,
     Playback,
     AudioSubtitles,
     Language,
@@ -977,6 +981,7 @@ impl FormId for RootId {
             RootId::Privacy => 7,
             RootId::Legal => 8,
             RootId::About => 9,
+            RootId::LibraryOrder => 10,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1101,6 +1106,14 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Row::new(plx_platform::i18n::msg::settings_libraries_title())
                 .detail(plx_platform::i18n::msg::settings_libraries_detail())
                 .value(plx_platform::i18n::msg::settings_libraries_count(inputs.library_count))
+                .chevron(true),
+        )
+        .item(
+            RootId::LibraryOrder,
+            RowKind::Nav(SettingsPage::LibraryOrder),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::settings_library_order_title())
+                .detail(plx_platform::i18n::msg::settings_library_order_detail())
                 .chevron(true),
         );
     let playback = FormSection::new(plx_platform::i18n::msg::settings_playback_section())
