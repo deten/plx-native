@@ -357,6 +357,9 @@ pub struct PlaybackSession {
     /// is a GL texture); that belongs to the overlay, and `apply_plan` deliberately warms only
     /// `up_next`'s.
     queue: Vec<plx_plex::plex::QueueRow>,
+    /// The shuffled queue the viewer is playing through, if any (`request_shuffle`). Survives
+    /// from one row's playback to the next; a play of anything outside it ends it.
+    shuffle: Option<ShuffleQueue>,
     /// **This frame's millisecond stamp, mirrored from [`crate::player::machine::Player::now_ms`]**
     /// (spec §4.1), whose `set_now` is its ONLY writer — the loop calls it once per iteration from
     /// the same `fr.now` every other phase of the frame reads.
@@ -454,6 +457,7 @@ impl PlaybackSession {
         ctxline: [0; 96],
         up_next: None,
         queue: Vec::new(),
+        shuffle: None,
         now_ms: 0,
         preview: false,
         resolved_as_preview: false,
@@ -527,6 +531,8 @@ impl PlaybackSession {
             up_next,
             now_ms,
             queue: _,
+            // Unbounded rows like `queue`, and read only here.
+            shuffle: _,
             preview: _,
             resolved_as_preview,
         } = self;
@@ -580,6 +586,7 @@ impl PlaybackSession {
             up_next: up_next.clone(),
             now_ms: *now_ms,
             queue: Vec::new(),
+            shuffle: None,
             // A screen copy is not the live preview. The loop reads the real session.
             preview: false,
             resolved_as_preview: *resolved_as_preview,
@@ -7305,6 +7312,7 @@ impl ResolveEnv {
             audio_enhancements: crate::player::audio_enhancements(),
             pass: plx_plex::plex::serverinfo::subscription_of(sid),
             show_tracks: Vec::new(),
+            shuffle: None,
             #[cfg(any(test, feature = "test-support"))]
             dv_capability: None,
         }
@@ -7705,6 +7713,12 @@ fn request_play_inner(
     if retry.is_none() && !request.preview {
         env.show_tracks = remembered_show_tracks(sid);
     }
+    // A row of the viewer's shuffled queue (an Up Next advance, a retry, the first row) reuses that
+    // queue; playing anything else ends the shuffle.
+    env.shuffle = ps.shuffle.as_ref().filter(|q| q.index_of(sid, rk).is_some()).cloned();
+    if env.shuffle.is_none() && !request.preview {
+        ps.shuffle = None;
+    }
     if let Some(retry) = retry {
         apply_retry_enhancement(&mut env, retry);
         // `request_play` resets the live selection because that is correct for a new item.  A
@@ -7793,6 +7807,86 @@ fn reset_track_selection(sid: ServerId, rk: &str, retry: Option<RetryContext>) {
             }
         }
     }
+}
+
+/// The one shuffle request in flight, if any: its answer and the server it was asked of.
+/// A newer request replaces an older one, whose answer is then dropped unread.
+static SHUFFLE_PENDING: Mutex<Option<std::sync::mpsc::Receiver<Option<ShuffleQueue>>>> = Mutex::new(None);
+
+/// Ask the server, off the frame thread, for a SHUFFLED queue of every episode under
+/// `container_rk` (a show, or one season). [`take_landed_shuffle`] collects the answer. False when
+/// no worker could be started. MAIN THREAD.
+pub fn request_shuffle(sid: ServerId, container_rk: &str) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let container_rk = container_rk.to_owned();
+    let spawned = plx_base::task::spawn_off_frame("shuffle", move |_off| {
+        let _ = tx.send(fetch_shuffle(sid, &container_rk));
+        plx_machine::present::wake_from_worker();
+    });
+    if spawned {
+        *SHUFFLE_PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(rx);
+    }
+    spawned
+}
+
+/// Whether a shuffle request is waiting for its answer.
+pub fn shuffle_pending() -> bool {
+    SHUFFLE_PENDING.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+}
+
+/// The answer to the pending shuffle request, once it has landed: `Some(Some(queue))` for a queue
+/// to play, `Some(None)` when the server could not make one, `None` while still waiting (or with
+/// nothing pending). Taking an answer clears the request.
+pub fn take_landed_shuffle() -> Option<Option<ShuffleQueue>> {
+    let mut slot = SHUFFLE_PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    let answer = match slot.as_ref()?.try_recv() {
+        Ok(answer) => answer,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+    };
+    *slot = None;
+    Some(answer)
+}
+
+/// The worker half of [`request_shuffle`].
+fn fetch_shuffle(sid: ServerId, container_rk: &str) -> Option<ShuffleQueue> {
+    let client = plx_plex::plex::client_for(sid)?;
+    let known = client.machine_id().to_string();
+    let machine_id = if known.is_empty() { client.machine_identity().unwrap_or_default() } else { known };
+    if machine_id.is_empty() {
+        crate::player::log("shuffle: no machineIdentifier");
+        return None;
+    }
+    let q = client.create_shuffled_play_queue(&machine_id, container_rk, &new_sess(container_rk))?;
+    let start = q.items.iter().position(|r| r.item_id == q.selected_item_id && r.item_id > 0).unwrap_or(0);
+    let mut queue = ShuffleQueue { sid, id: q.id, rows: q.items.into_iter().skip(start).collect() };
+    // The POST answers with a window; read further so a long show keeps going.
+    if let Some(first) = queue.rows.first().map(|r| (r.rk.clone(), r.item_id)) {
+        if let Some(window) = client.play_queue_window(queue.id, first.1, SHUFFLE_WINDOW) {
+            if window.len() > queue.rows.len() {
+                queue.extend_from(sid, &first.0, window);
+            }
+        }
+    }
+    crate::player::log(&format!("shuffle: id={} rows={} for {container_rk}", queue.id, queue.rows.len()));
+    (queue.id > 0 && queue.rows.first().is_some_and(|r| !r.rk.is_empty() && !r.part.is_empty())).then_some(queue)
+}
+
+/// Install a landed shuffled queue on the session, so the play of its first row (and every
+/// advance after it) reuses it. MAIN THREAD.
+pub fn begin_shuffle(ps: &mut PlaybackSession, queue: ShuffleQueue) {
+    ps.shuffle = Some(queue);
+}
+
+/// The first row of a landed shuffled queue as the Up Next descriptor the episode-play path takes
+/// (`request_play_up_next`), or `None` when it is not an episode.
+pub fn shuffle_first(queue: &ShuffleQueue) -> Option<UpNext> {
+    queue.rows.first().and_then(up_next_of)
+}
+
+/// Whether the playing item came from a shuffled queue.
+pub fn shuffle_active(ps: &PlaybackSession) -> bool {
+    ps.shuffle.is_some()
 }
 
 /// This profile's remembered per-show track choices on `sid`'s server (`Session::show_tracks_on`).
@@ -8312,6 +8406,7 @@ fn apply_plan(ps: &mut PlaybackSession, meta: &mut plx_data::stores::metadata::M
             ctxline,
             up_next: plan.up_next.map(std::sync::Arc::new),
             queue: plan.queue,
+            shuffle: plan.shuffle,
             // The frame tick is the MACHINE's, not the plan's: a landing replaces the session's
             // contents and must not rewind the stamp `Player::set_now` wrote this iteration.
             now_ms,
@@ -10403,6 +10498,10 @@ mod trial_flight_tests;
 #[cfg(test)]
 #[path = "decision_next_episode_tests.rs"]
 mod next_episode_tests;
+
+#[cfg(test)]
+#[path = "decision_shuffle_tests.rs"]
+mod shuffle_tests;
 
 #[cfg(test)]
 #[path = "decision_skip_interval_tests.rs"]

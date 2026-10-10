@@ -1547,6 +1547,22 @@ class MockPms:
                              "more": False, "Metadata": recent})
         return hubs
 
+    @staticmethod
+    def leaves_of(lib, cont):
+        """The playable items under a container, in (season, episode) order: a show's episodes, a
+        season's, or the item itself."""
+        if cont is None:
+            return []
+        if cont["type"] == "show":
+            out = [x for x in lib.items.values()
+                   if x["type"] == "episode" and x.get("grandparentRatingKey") == cont["ratingKey"]]
+        elif cont["type"] == "season":
+            out = [x for x in lib.items.values()
+                   if x["type"] == "episode" and x.get("parentRatingKey") == cont["ratingKey"]]
+        else:
+            return [cont]
+        return sorted(out, key=lambda x: (x.get("parentIndex", 0), x.get("index", 0)))
+
     def __init__(self, lib):
         self.lib = lib
         # `--home-hubs N` (#395): `/hubs` answers exactly N hubs; 0 keeps the library's own.
@@ -1559,6 +1575,9 @@ class MockPms:
         self.requests = []  # (path, status) in arrival order, for the harness
         self.unknown = []
         self.writes = []
+        # Shuffled show/season queues by playQueueID, so `GET /playQueues/<id>` can page them.
+        self.play_queues = {}
+        self.next_play_queue_id = 100
         # Set by `serve` after binding the listener; ordinary sign-in advertises only this mock.
         self.account_resource = None
         # The specialized TLS-failure reproduction overrides ordinary resource discovery.
@@ -2079,6 +2098,25 @@ class MockPms:
                         it["viewOffset"] = int(t)
                         it["lastViewedAt"] = int(time.time())
             return j(self.container())
+        if p == "/playQueues" and q.get("uri", "").endswith("/children"):
+            # A whole show or one season (`.../metadata/<rk>/children`): every episode under it,
+            # shuffled when `shuffle=1` (seeded by the container, so a test can predict the order).
+            crk = q["uri"].rsplit("/", 2)[-2]
+            cont = lib.items.get(int(crk)) if crk.isdigit() else None
+            leaves = self.leaves_of(lib, cont)
+            if q.get("shuffle") == "1":
+                random.Random(int(crk)).shuffle(leaves)
+            with self.lock:
+                qid = self.next_play_queue_id
+                self.next_play_queue_id += 1
+                rows = [dict(x, playQueueItemID=qid * 1000 + n) for n, x in enumerate(leaves, start=1)]
+                self.play_queues[qid] = rows
+            # The POST answers a short window, as PMS does, so the client must page for the rest.
+            first = rows[:3]
+            return j(self.container(Metadata=first, playQueueID=qid,
+                                    playQueueSelectedItemID=rows[0]["playQueueItemID"] if rows else 0,
+                                    playQueueSelectedItemOffset=0, playQueueTotalCount=len(rows),
+                                    playQueueShuffled=q.get("shuffle") == "1", playQueueVersion=1))
         if p == "/playQueues":
             uri = q.get("uri", "")
             rk = uri.rsplit("/", 1)[-1]
@@ -2096,7 +2134,21 @@ class MockPms:
                                     playQueueSelectedItemOffset=0, playQueueTotalCount=len(rows),
                                     playQueueVersion=1))
         if segs[:1] == ["playQueues"] and len(segs) == 2:
-            return j(self.container(Metadata=[], playQueueID=int(segs[1]) if segs[1].isdigit() else 1))
+            qid = int(segs[1]) if segs[1].isdigit() else 1
+            rows = self.play_queues.get(qid)
+            if rows is None:
+                return j(self.container(Metadata=[], playQueueID=qid))
+            # `center` (a playQueueItemID) and `window` rows after it, the center included when
+            # `includeBefore=0`; the selected item stays the queue's first.
+            ids = [r["playQueueItemID"] for r in rows]
+            center = int(q.get("center", ids[0] if ids else 0))
+            at = ids.index(center) if center in ids else 0
+            window = int(q.get("window", 50))
+            start = at if q.get("includeBefore") == "0" else max(0, at - window)
+            page = rows[start:at + window + 1]
+            return j(self.container(Metadata=page, playQueueID=qid, playQueueSelectedItemID=ids[0],
+                                    playQueueSelectedItemOffset=0, playQueueTotalCount=len(rows),
+                                    playQueueVersion=1))
         if p.startswith("/library/parts/"):
             part_id = int(segs[2]) if len(segs) > 2 and segs[2].isdigit() else -1
             if method == "PUT":

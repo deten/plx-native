@@ -295,6 +295,14 @@
     "value": "Remove from Deck",
     "description": "browse menu remove_deck"
   },
+  "browse.menu.shuffle_season": {
+    "value": "Shuffle Season",
+    "description": "Item menu row on a season: play this season's episodes in a random order."
+  },
+  "browse.menu.shuffle_show": {
+    "value": "Shuffle Show",
+    "description": "Item menu row on a show (and on the show page's season tabs): play every episode of the show, across all seasons, in a random order."
+  },
   "browse.login.deleted": {
     "value": "Local data deleted",
     "description": "browse login deleted"

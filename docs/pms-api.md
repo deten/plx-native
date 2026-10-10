@@ -723,6 +723,27 @@ subsequent direct-play need, so the feature costs zero extra round-trips.
   show returns `playQueueTotalCount: 1`, i.e. no successor. A movie behaves the same way.
 - The POST needs an `X-Plex-Client-Identifier`; without it PMS answers with an empty body.
 
+### Shuffle a show or season (UNVERIFIED against a live server)
+
+Derived from python-plexapi's `PlayQueue.create` / `PlayQueue.get` (`plexapi/playqueue.py`) and
+from Plex Web 4.162.1, whose show and season menus and pre-play page offer Shuffle
+(`isShuffleVisible`, `preplay-shuffle`). Not yet measured against a real PMS.
+
+| Step | Request |
+|---|---|
+| create | `POST /playQueues?type=video&uri=server://{machineIdentifier}/com.plexapp.plugins.library/library/metadata/{rk}/children&shuffle=1&repeat=0&continuous=0` |
+| read further | `GET /playQueues/{playQueueID}?window=200&center={playQueueItemID}&includeBefore=0` |
+
+- `{rk}` is the SHOW's or the SEASON's ratingKey. The `/children` key is the form python-plexapi
+  builds for a container; the server expands nested containers to their leaves (its own tests
+  show a music collection expanding to the album's tracks), so a show yields every episode of
+  every season.
+- The POST answers a window of rows starting at the selected item; `playQueueTotalCount` is the
+  whole queue. `center` and `window` page the rest without moving the selected item.
+- The app keeps the queue for the length of the shuffle and reuses it for each Up Next advance
+  (`route::ShuffleQueue`), reporting the next row's `playQueueItemID` instead of creating a new,
+  in-order queue for every episode.
+
 ### Show chain (verified against a show, ratingKey 1857)
 
 ```

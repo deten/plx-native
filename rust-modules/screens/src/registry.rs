@@ -348,8 +348,9 @@ pub enum ItemMenuKind {
     /// `ep_state` that draws the still's own state line, so the tile and the menu opened on it
     /// cannot describe one episode two ways.
     Episode { mark: plx_ui::widgets::PosterMark },
-    /// The detail page's season tabs.
-    Season { mark: plx_ui::widgets::PosterMark },
+    /// The detail page's season tabs. `show_rk` is the page's own show, which the menu's Shuffle
+    /// Show row plays.
+    Season { mark: plx_ui::widgets::PosterMark, show_rk: String },
 }
 
 /// **Identity, not contents.** `PmsMovie` is a wire DTO with no `PartialEq` of its own, and one
@@ -363,7 +364,7 @@ impl PartialEq for ItemMenuKind {
             (Self::Card { row: a, from_deck: da }, Self::Card { row: b, from_deck: db }) =>
                 da == db && a.sid == b.sid && a.rk == b.rk && a.kind == b.kind,
             (Self::Episode { mark: a }, Self::Episode { mark: b }) => a == b,
-            (Self::Season { mark: a }, Self::Season { mark: b }) => a == b,
+            (Self::Season { mark: a, show_rk: sa }, Self::Season { mark: b, show_rk: sb }) => a == b && sa == sb,
             _ => false,
         }
     }
@@ -386,7 +387,7 @@ impl plx_machine::machine::LogicalState for ItemMenuArg {
         match &self.kind {
             ItemMenuKind::Card { row, from_deck } => { c.u32(0).bool(*from_deck).u32(row.kind as u32); }
             ItemMenuKind::Episode { mark } => { c.u32(1).u32(*mark as u32); }
-            ItemMenuKind::Season { mark } => { c.u32(2).u32(*mark as u32); }
+            ItemMenuKind::Season { mark, show_rk } => { c.u32(2).u32(*mark as u32).str(show_rk); }
         }
         c.u32(self.host.0);
         c.option(self.focus, |c, key| { c.u32(key.entry.0).u32(key.elem); });

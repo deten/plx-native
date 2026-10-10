@@ -86,6 +86,49 @@ impl Client {
             rating_key,
         ))
     }
+
+    /// POST /playQueues for a whole show or one season, SHUFFLED: every episode under the
+    /// container, in an order the server picks, starting at the first of them. The container is
+    /// named by its children key (`/library/metadata/{rk}/children`), the form python-plexapi's
+    /// `PlayQueue.create` uses for a show or season; the server expands nested containers down to
+    /// their episodes. `continuous` is off because the queue already holds everything.
+    pub fn create_shuffled_play_queue(
+        &self,
+        machine_id: &str,
+        container_rk: &str,
+        session: &str,
+    ) -> Option<PlayQueueResult> {
+        let uri = format!(
+            "server://{machine_id}/com.plexapp.plugins.library/library/metadata/{container_rk}/children"
+        );
+        let q = QueryBuilder::new("/playQueues")
+            .str("type", "video")
+            .str("uri", &uri)
+            .int("shuffle", 1)
+            .int("repeat", 0)
+            .int("continuous", 0)
+            .str("X-Plex-Session-Identifier", session);
+        let q = self.playback_identity(q);
+        Some(PlayQueueResult::of(self.post_json(&q.build())?, self.id(), ""))
+    }
+
+    /// GET /playQueues/{id}: up to `window` rows AFTER the row `center` (a playQueueItemID), the
+    /// row itself included. The window and center parameters are python-plexapi's `PlayQueue.get`.
+    /// Used to read further into a long shuffled queue than the POST's own window reached; the
+    /// queue's selected item does not move.
+    pub fn play_queue_window(&self, queue_id: i64, center: i64, window: i64) -> Option<Vec<QueueRow>> {
+        if queue_id <= 0 {
+            return None;
+        }
+        let q = QueryBuilder::new(&format!("/playQueues/{queue_id}"))
+            .int("window", window)
+            .int("center", center)
+            .int("includeBefore", 0);
+        let q = self.playback_identity(q);
+        let mc = self.get_json(&q.build())?;
+        let sid = self.id();
+        Some(mc.metadata.into_iter().map(|m| QueueRow::of(m, sid)).collect())
+    }
 }
 
 /// One retained row of the play queue: everything a queue list draws, plus everything

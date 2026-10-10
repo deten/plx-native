@@ -4,6 +4,7 @@ import io
 import json
 import hashlib
 import pathlib
+import random
 import re
 import shutil
 import socket
@@ -741,6 +742,56 @@ class SubtitleAutoSync(unittest.TestCase):
         _, _, synced = pms.handle("GET", key + "?encoding=utf-8&format=srt&autoAdjustSubtitle=1")
         self.assertEqual(plain, b"1\n00:00:01,000 --> 00:00:04,000\nHI\n")
         self.assertEqual(synced, b"1\n00:00:02,000 --> 00:00:05,000\nHI\n")
+
+
+class ShuffledQueues(unittest.TestCase):
+    """A show or season queue (`.../children`) holds every episode under it, shuffled on request,
+    answers a short POST window and pages the rest through `GET /playQueues/<id>`."""
+
+    @staticmethod
+    def _container(pms, kind):
+        return next(x for x in pms.lib.items.values() if x["type"] == kind)
+
+    def _post(self, pms, rk, shuffle=1):
+        uri = f"server://m/com.plexapp.plugins.library/library/metadata/{rk}/children"
+        status, _, data = pms.handle("POST", f"/playQueues?type=video&uri={uri}&shuffle={shuffle}&continuous=0")
+        self.assertEqual(status, 200)
+        return json.loads(data)["MediaContainer"]
+
+    def test_a_show_queue_holds_every_episode_and_pages_the_rest(self):
+        pms = MockPms(Library(seed=1))
+        show = self._container(pms, "show")
+        episodes = MockPms.leaves_of(pms.lib, show)
+        self.assertGreater(len(episodes), 3, "premise: a show longer than the POST window")
+        mc = self._post(pms, show["ratingKey"])
+        self.assertEqual(mc["playQueueTotalCount"], len(episodes))
+        self.assertEqual(len(mc["Metadata"]), 3, "the POST answers a window")
+        first = mc["Metadata"][0]["playQueueItemID"]
+        self.assertEqual(mc["playQueueSelectedItemID"], first)
+        page = get(pms, f"/playQueues/{mc['playQueueID']}?window=200&center={first}&includeBefore=0")["Metadata"]
+        self.assertEqual(sorted(r["ratingKey"] for r in page), sorted(e["ratingKey"] for e in episodes))
+        self.assertEqual(page[0]["playQueueItemID"], first, "the window starts at its center")
+        shuffled = list(episodes)
+        random.Random(int(show["ratingKey"])).shuffle(shuffled)
+        self.assertEqual([r["ratingKey"] for r in page], [e["ratingKey"] for e in shuffled])
+
+    def test_a_season_queue_holds_only_that_season(self):
+        pms = MockPms(Library(seed=1))
+        season = self._container(pms, "season")
+        mc = self._post(pms, season["ratingKey"])
+        first = mc["Metadata"][0]["playQueueItemID"]
+        page = get(pms, f"/playQueues/{mc['playQueueID']}?window=200&center={first}&includeBefore=0")["Metadata"]
+        self.assertTrue(page)
+        self.assertTrue(all(r["parentRatingKey"] == season["ratingKey"] for r in page))
+
+    def test_without_shuffle_the_order_is_the_shows_own(self):
+        pms = MockPms(Library(seed=1))
+        show = self._container(pms, "show")
+        mc = self._post(pms, show["ratingKey"], shuffle=0)
+        first = mc["Metadata"][0]["playQueueItemID"]
+        page = get(pms, f"/playQueues/{mc['playQueueID']}?window=200&center={first}&includeBefore=0")["Metadata"]
+        self.assertEqual([r["ratingKey"] for r in page],
+                         [e["ratingKey"] for e in MockPms.leaves_of(pms.lib, show)])
 
 
 # The fields the detail page draws that the demo catalog can supply (docs: the S1a stage of the

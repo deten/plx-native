@@ -1016,6 +1016,46 @@ pub struct UpNext {
 }
 
 
+/// A shuffled play queue the viewer started on a show or a season (`route::request_shuffle`):
+/// the server's queue id and the rows it returned, in the shuffled order. Kept on the playback
+/// session while the viewer plays its rows, so each Up Next advance reuses this queue instead of
+/// creating an in-order one that would undo the shuffle after one episode.
+#[derive(Clone, Default)]
+pub struct ShuffleQueue {
+    pub sid: ServerId,
+    pub id: i64,
+    pub rows: Vec<plx_plex::plex::QueueRow>,
+}
+
+impl ShuffleQueue {
+    /// Where `rk` on `sid` sits in the retained rows.
+    pub fn index_of(&self, sid: ServerId, rk: &str) -> Option<usize> {
+        if sid != self.sid || rk.is_empty() {
+            return None;
+        }
+        self.rows.iter().position(|r| r.rk == rk)
+    }
+
+    /// The row after `rk` in the shuffled order, if the retained rows reach that far.
+    pub fn next_after(&self, sid: ServerId, rk: &str) -> Option<&plx_plex::plex::QueueRow> {
+        self.rows.get(self.index_of(sid, rk)? + 1)
+    }
+
+    /// Splice a window read from the server (starting AT the row `rk`) over the rows from `rk`
+    /// on, keeping the rows before it. A window that does not start at `rk` is ignored.
+    pub fn extend_from(&mut self, sid: ServerId, rk: &str, window: Vec<plx_plex::plex::QueueRow>) {
+        let Some(at) = self.index_of(sid, rk) else { return };
+        if window.first().is_none_or(|r| r.rk != rk) {
+            return;
+        }
+        self.rows.truncate(at);
+        self.rows.extend(window);
+    }
+}
+
+/// How many rows one read of a shuffled queue asks for (python-plexapi's `window` parameter).
+pub const SHUFFLE_WINDOW: i64 = 200;
+
 /// Build the Up Next descriptor from a queue row. Episodes only: `continuous=1` on a movie
 /// returns just the movie itself (verified live — total count 1), and "up next" is a show idea.
 /// The gate belongs HERE, on the one-item control — the retained row list is deliberately not
@@ -1103,6 +1143,9 @@ pub struct ResolveEnv {
     /// `serverinfo::subscription_of(sid)` at the request — for the OFFERING of the enhancement only
     /// (I1/I8), never a flavour or profile input.
     pub pass: plx_plex::plex::serverinfo::Subscription,
+    /// The viewer's shuffled queue, when this item is one of its rows (`PlaybackSession::shuffle`).
+    /// The resolve then reuses it in place of creating a new in-order PlayQueue.
+    pub shuffle: Option<ShuffleQueue>,
     /// This profile's remembered track choices for shows on this server
     /// (`Session::show_tracks_on`), captured for a NEW play only. The resolve learns which show
     /// the item belongs to once it is fetched, then applies the matching entry through
@@ -1293,6 +1336,9 @@ pub struct Plan {
     pub up_next: Option<UpNext>,
     /// that same PlayQueue's whole returned window, projected on the worker (see `queue`)
     pub queue: Vec<plx_plex::plex::QueueRow>,
+    /// The shuffled queue this item was played from, carried forward (possibly with more rows
+    /// read from the server) so the next advance can reuse it; `None` for an ordinary play.
+    pub shuffle: Option<ShuffleQueue>,
 }
 
 
@@ -1349,7 +1395,31 @@ pub(super) fn build_stream(off: &plx_base::task::OffFrame, rk: &str, part: &str,
     // a PlayQueue so the server tracks this as a real player with a playQueueItemID.
     let session = new_sess(rk);
     plan.sess = session.clone();
-    if !rk.is_empty() && !env.preview {
+    let shuffled = env.shuffle.as_ref().filter(|q| q.index_of(env.sid, rk).is_some());
+    if let (Some(queue), false) = (shuffled, env.preview) {
+        // A row of the viewer's shuffled queue: reuse that queue, reading further into it when the
+        // retained rows end at this one.
+        let mut queue = queue.clone();
+        if queue.next_after(env.sid, rk).is_none() {
+            let center = queue.index_of(env.sid, rk).map_or(0, |i| queue.rows[i].item_id);
+            if let Some(window) = client.play_queue_window(queue.id, center, SHUFFLE_WINDOW) {
+                queue.extend_from(env.sid, rk, window);
+            }
+        }
+        let row = queue.index_of(env.sid, rk).map(|i| &queue.rows[i]);
+        plan.pq_id = queue.id.to_string();
+        plan.pq_item_id = row.map(|r| r.item_id).filter(|&id| id > 0).map(|id| id.to_string()).unwrap_or_default();
+        plan.up_next = queue.next_after(env.sid, rk).and_then(up_next_of);
+        plan.queue = queue.rows.clone();
+        crate::player::log(&format!(
+            "playqueue: shuffled id={} item={} rows={} next={}",
+            queue.id,
+            plan.pq_item_id,
+            queue.rows.len(),
+            plan.up_next.as_ref().map(|u| format!("S{}E{} {}", u.season, u.index, u.rk)).unwrap_or_else(|| "-".into())
+        ));
+        plan.shuffle = Some(queue);
+    } else if !rk.is_empty() && !env.preview {
         let q = resolve_playqueue(
             client,
             rk,

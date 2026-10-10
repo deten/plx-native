@@ -140,6 +140,8 @@ pub enum Icon {
     /// [`Icon::Restart`] before reconciling them — they were reconciled once, on 2026-08-21, and it
     /// was wrong.
     PlayStart,
+    /// Two crossing arrows: play in a random order (the item menu's Shuffle Show / Shuffle Season).
+    Shuffle,
     /// An X — "remove this" (the item menu's Remove from Continue Watching row).
     Close,
     /// A horizontal ellipsis — "more options". The player transport's third control disc, which
@@ -293,6 +295,7 @@ fn src(id: Icon) -> &'static str {
         Icon::Show => include_str!("../../../assets/icons/show.svg"),
         Icon::Collection => include_str!("../../../assets/icons/collection.svg"),
         Icon::PlayStart => include_str!("../../../assets/icons/play-start.svg"),
+        Icon::Shuffle => include_str!("../../../assets/icons/shuffle.svg"),
         Icon::Close => include_str!("../../../assets/icons/close.svg"),
         Icon::More => include_str!("../../../assets/icons/more.svg"),
         Icon::Search => include_str!("../../../assets/icons/search.svg"),

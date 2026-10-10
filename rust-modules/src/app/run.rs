@@ -2306,6 +2306,11 @@ pub(crate) unsafe fn update(app: &mut App, fr: &mut Frame) {
             menu_play_tick(&mut app.player.session, &mut app.adapters.player,
                 &mut app.pages, &mut app.bridge, &mut app.menu_play_await, fr.now);
         }
+        // An item menu's Shuffle: play the first episode once the server's shuffled queue lands.
+        if plx_media::route::shuffle_pending() {
+            super::input::shuffle_tick(&mut app.player.session, &mut app.adapters.player,
+                &mut app.pages, &mut app.bridge);
+        }
         // Server-side view-state WRITES (Mark as Watched / Unwatched, Remove from Deck): send
         // the next queued one, land the last one's answer and kick the refresh it owes. Route-
         // unconditional for the same reason as the two pumps around it — the user can walk off
@@ -4605,6 +4610,40 @@ mod lifecycle_regression_tests {
         let _skips = SkipGuard::set(plx_media::route::MarkerSkip::Manual, plx_media::route::MarkerSkip::Automatic);
         let _t = playing_inside_final_credits(&mut rig);
         assert!(plx_media::route::play_pending(), "the successor is requested with no countdown");
+    }
+
+    /// **Shuffle Show**, end to end through the frame loop's continuation: the server's shuffled
+    /// queue lands, its first row plays, and the resolve REUSES that queue (no second
+    /// `POST /playQueues`), so Up Next is the queue's own next row and the shuffle stays on.
+    #[test]
+    fn a_shuffle_plays_its_first_row_and_keeps_its_queue_for_up_next() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED a_shuffle_plays_its_first_row_and_keeps_its_queue_for_up_next: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        assert!(plx_media::route::request_shuffle(rig.sid, "100"));
+        // The fixture holds its first request (the shuffle POST) until released.
+        rig.entered.recv_timeout(Duration::from_secs(3)).unwrap();
+        rig.release.send(()).unwrap();
+        poll_until("the shuffled queue did not land", || {
+            unsafe {
+                super::super::input::shuffle_tick(&mut rig.app.player.session, &mut rig.app.adapters.player,
+                    &mut rig.app.pages, &mut rig.app.bridge);
+            }
+            !plx_media::route::shuffle_pending()
+        });
+        poll_until("the first row's plan did not land", || {
+            plx_media::route::pump_play(&mut rig.app.player.session, rig.app.bridge.metadata_mut()).is_some()
+        });
+        let session = &rig.app.player.session;
+        assert!(plx_media::route::shuffle_active(session), "the shuffle survives the first landing");
+        assert_eq!(plx_media::route::up_next(session).map(|u| u.rk.clone()), Some("2".to_string()));
+        let requests = rig.requests.lock().unwrap().clone();
+        let posts: Vec<_> = requests.iter().filter(|l| l.starts_with("POST /playQueues")).collect();
+        assert_eq!(posts.len(), 1, "the resolve reused the shuffled queue: {posts:?}");
+        assert!(posts[0].contains("shuffle=1") && posts[0].contains("%2Fchildren"), "{}", posts[0]);
     }
 
     /// **Next episode: After credits.** The credits of an episode with a successor queued arm no

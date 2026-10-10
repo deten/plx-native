@@ -304,6 +304,43 @@ pub(crate) unsafe fn menu_play_tick(
     play_loaded_hero(ps, pa, pages, bridge, sid, expect, hud_ms);
 }
 
+/// The continuation of an item menu's Shuffle: once the server's shuffled queue lands, install it
+/// on the session and play its first episode, the way the trailer row starts its play (held until
+/// any preview releases the engine). Run every frame while a request is pending (`app/run.rs`).
+pub(crate) unsafe fn shuffle_tick(
+    ps: &mut plx_media::route::PlaybackSession,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
+    bridge: &mut super::bridge::Bridge,
+) {
+    let Some(answer) = plx_media::route::take_landed_shuffle() else { return };
+    let Some(queue) = answer else {
+        plx_media::player::log("shuffle: the server made no queue");
+        return;
+    };
+    let Some(first) = plx_media::route::shuffle_first(&queue) else { return };
+    let sid = queue.sid;
+    let resume_ns = plx_data::metadata::resume_ns(first.resume_ms, first.dur_ms);
+    let intent = plx_screens::registry::PlayIntent::Item {
+        sid,
+        rk: first.rk.clone(),
+        part: first.part.clone(),
+        vcodec: first.vcodec.clone(),
+        acodec: first.acodec.clone(),
+        title: if first.show_title.is_empty() { first.ep_title.clone() } else { first.show_title.clone() },
+        context: plx_ui::fmt::episode_kicker(first.season, first.index, &first.ep_title),
+    };
+    plx_media::route::begin_shuffle(ps, queue);
+    if !super::content::clear_engine_for_play(ps, pa, super::bridge::player(pages).is_some()) {
+        super::content::hold_feature(intent, resume_ns, None);
+        return;
+    }
+    if !super::content::request_play_intent(ps, bridge.metadata_mut(), &intent) {
+        return;
+    }
+    start_playback(ps, pa, resume_ns, Origin::Here, HUD_LINGER_MS, None, pages, bridge);
+}
+
 /// The end of a settled [`MenuPlayAwait`]: play the loaded item's hero (a show's next episode, or
 /// `episodes[0]` of the selected season), or open its page when nothing is playable.
 unsafe fn play_loaded_hero(
@@ -683,6 +720,11 @@ pub(super) unsafe fn apply_item_action<R: super::playback::PlaybackResources>(
             if let Some(mm) = item.as_ref().filter(|m| m.rk == rk) {
                 playback.captured_card(ps, pa, mm, true, pages, bridge);
             }
+        }
+        // Shuffle Show / Shuffle Season: ask the server for a shuffled queue of the container's
+        // episodes; `shuffle_tick` plays its first row when it lands.
+        Action::Shuffle(rk) => {
+            plx_media::route::request_shuffle(sid, &rk);
         }
         Action::PlayTrailer {
             rk,

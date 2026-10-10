@@ -73,6 +73,8 @@
   "browse.menu.go_season": "Ir a la temporada",
   "browse.menu.go_movie": "Ir a la película",
   "browse.menu.remove_deck": "Quitar de Continuar viendo",
+  "browse.menu.shuffle_season": "Temporada aleatoria",
+  "browse.menu.shuffle_show": "Serie aleatoria",
   "browse.login.deleted": "Datos locales eliminados",
   "browse.login.deleted_detail": "Se han eliminado las credenciales, las preferencias, la telemetría y los diagnósticos locales.",
   "browse.login.partial": "Sesión cerrada y la mayoría de los datos locales eliminados",

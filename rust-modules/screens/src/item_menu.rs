@@ -96,6 +96,9 @@ pub enum Action {
         acodec: String,
         title: String,
     },
+    /// play every episode under this show or season in a shuffled order (a server PlayQueue
+    /// created with `shuffle=1`, reused for each advance)
+    Shuffle(String),
     /// hide this item from the Continue Watching deck — the server-side
     /// `removeFromContinueWatching`. **Keeps the resume point**: it is a hide, not a reset, so
     /// playing the item again picks up where it left off (see
@@ -130,6 +133,7 @@ impl Action {
             | Action::MarkUnwatched(rk)
             | Action::Play(rk)
             | Action::PlayFromStart(rk)
+            | Action::Shuffle(rk)
             | Action::RemoveFromDeck(rk) => rk,
             Action::PlayTrailer { rk, .. } => rk,
         }
@@ -146,6 +150,7 @@ impl Action {
             Action::RemoveFromDeck(_) => 6,
             Action::PlayTrailer { .. } => 7,
             Action::Play(_) => 8,
+            Action::Shuffle(_) => 9,
         };
         c.u32(tag).str(self.rk());
         if let Action::GoToShow(_, season) = self {
@@ -201,6 +206,8 @@ pub enum ItemRow {
     PlayTrailer,
     RemoveFromDeck,
     Play,
+    ShuffleSeason,
+    ShuffleShow,
 }
 
 impl ItemRow {
@@ -222,6 +229,8 @@ impl FormId for ItemRow {
             ItemRow::PlayTrailer => 6,
             ItemRow::RemoveFromDeck => 7,
             ItemRow::Play => 8,
+            ItemRow::ShuffleSeason => 9,
+            ItemRow::ShuffleShow => 10,
         })
     }
 }
@@ -314,6 +323,12 @@ fn build_with(
     if had_nav {
         sec = sec.separator();
     }
+
+    // ---- shuffle: a show plays every episode, a season its own, in a random order ----
+    sec = shuffle_rows(sec, (m.kind == 2).then_some(m.rk.as_str()), match m.kind {
+        1 => Some(m.rk.as_str()),
+        _ => None,
+    });
 
     // ---- state ----
     // The row set comes from the shared `widgets::row_watch_state`, over the catalog row this menu
@@ -451,8 +466,36 @@ fn build_episode(rk: &str, mark: PosterMark) -> ItemForm {
 /// would have to pick a leaf, which is a second decision the row does not state. Starting a season
 /// from its beginning is what the first episode's own tile does, exactly and visibly. So
 /// `leaf: false` — the same flag [`build`] passes for a show, for the same reason.
-fn build_season(rk: &str, mark: PosterMark) -> ItemForm {
-    Form::new().section(state_rows(FormSection::new(""), rk, mark, false, None, ""))
+fn build_season(rk: &str, show_rk: &str, mark: PosterMark) -> ItemForm {
+    // Shuffle first: the season tab is on the show page, so it offers this season and the whole
+    // show (Plex's show and season pages both carry Shuffle).
+    let sec = shuffle_rows(FormSection::new(""), Some(rk), (!show_rk.is_empty()).then_some(show_rk));
+    Form::new().section(state_rows(sec, rk, mark, false, None, ""))
+}
+
+/// The Shuffle rows: this season's episodes, and/or every episode of the show, each in an order
+/// the server shuffles. A row whose container is unknown is absent.
+fn shuffle_rows(
+    sec: FormSection<ItemRow, Action, Infallible>,
+    season_rk: Option<&str>,
+    show_rk: Option<&str>,
+) -> FormSection<ItemRow, Action, Infallible> {
+    let season_rk = season_rk.filter(|rk| !rk.is_empty());
+    let show_rk = show_rk.filter(|rk| !rk.is_empty());
+    sec.item_if(
+        season_rk.is_some(),
+        ItemRow::ShuffleSeason,
+        RowKind::Button,
+        Action::Shuffle(season_rk.unwrap_or_default().to_string()),
+        Row::new(plx_platform::i18n::msg::browse_menu_shuffle_season()).licon(Icon::Shuffle),
+    )
+    .item_if(
+        show_rk.is_some(),
+        ItemRow::ShuffleShow,
+        RowKind::Button,
+        Action::Shuffle(show_rk.unwrap_or_default().to_string()),
+        Row::new(plx_platform::i18n::msg::browse_menu_shuffle_show()).licon(Icon::Shuffle),
+    )
 }
 
 /// Beside the card, never over it: to its RIGHT by default, flipped to its LEFT when that would run
@@ -545,7 +588,7 @@ impl ItemMenuScreen {
                 build_with(row, *from_deck, plx_media::route::deck_press(), trailer.as_ref())
             }
             ItemMenuKind::Episode { mark } => build_episode(&self.arg.rk, *mark),
-            ItemMenuKind::Season { mark } => build_season(&self.arg.rk, *mark),
+            ItemMenuKind::Season { mark, show_rk } => build_season(&self.arg.rk, show_rk, *mark),
         };
         // a short list of one-line actions — BODY labels, not menu-size HEADLINE
         self.form.table.compact = true;
@@ -893,7 +936,10 @@ mod tests {
         built(super::build_episode(rk, mark))
     }
     fn build_season(rk: &str, mark: PosterMark) -> Built {
-        built(super::build_season(rk, mark))
+        built(super::build_season(rk, "", mark))
+    }
+    fn build_season_on_show(rk: &str, show_rk: &str, mark: PosterMark) -> Built {
+        built(super::build_season(rk, show_rk, mark))
     }
     impl Built {
         /// The row ids in drawn order (the separator is not a row).
@@ -1086,7 +1132,7 @@ mod tests {
         let menu = build(&item(1, PosterMark::InProgress), false);
         assert_eq!(
             labels(&menu),
-            ["Go to Show", "—", "Mark as Watched", "Mark as Unwatched"]
+            ["Go to Show", "—", "Shuffle Show", "Mark as Watched", "Mark as Unwatched"]
         );
         assert_eq!(
             menu.action(ItemRow::MarkWatched).watch_write(),
@@ -1100,10 +1146,10 @@ mod tests {
         // a show whose every leaf is seen is DONE, and offering to mark it watched again was the
         // old row set's other wrong answer (it read `!unwatched`, which cannot tell the two apart)
         let menu = build(&item(1, PosterMark::Watched), false);
-        assert_eq!(labels(&menu), ["Go to Show", "—", "Mark as Unwatched"]);
+        assert_eq!(labels(&menu), ["Go to Show", "—", "Shuffle Show", "Mark as Unwatched"]);
         // …and one nobody has opened offers only the way forward
         let menu = build(&item(1, PosterMark::None), false);
-        assert_eq!(labels(&menu), ["Go to Show", "—", "Mark as Watched"]);
+        assert_eq!(labels(&menu), ["Go to Show", "—", "Shuffle Show", "Mark as Watched"]);
     }
 
     #[test]
@@ -1123,7 +1169,7 @@ mod tests {
         let mut s = item(2, PosterMark::None);
         s.show_rk.clear();
         let menu = build(&s, false);
-        assert_eq!(labels(&menu), ["Mark as Watched"]);
+        assert_eq!(labels(&menu), ["Shuffle Season", "Mark as Watched"]);
     }
 
     /// **Remove from Continue Watching** is gated on the SHELF, not on the item: only a card that
@@ -1220,7 +1266,7 @@ mod tests {
         assert!(matches!(opening(build_episode("77", PosterMark::Watched)),
             Action::PlayFromStart(_)), "a watched episode opened on Mark as Unwatched");
         assert!(matches!(opening(build_season("78", PosterMark::Watched)),
-            Action::MarkUnwatched(_)), "the only row is the one on offer");
+            Action::Shuffle(_)), "a watched season opens on Shuffle Season, not Mark as Unwatched");
         assert!(matches!(opening(build_episode("79", PosterMark::None)),
             Action::MarkWatched(_)));
         let menu = build(&item(3, PosterMark::None), true);
@@ -1330,17 +1376,17 @@ mod tests {
             |extra: &str| format!(r#"{{"ratingKey":"14","type":"show","leafCount":10{extra}}}"#);
         assert_eq!(
             set(&show("")),
-            ["Go to Show", "—", "Mark as Watched"],
+            ["Go to Show", "—", "Shuffle Show", "Mark as Watched"],
             "no leaf viewed"
         );
         assert_eq!(
             set(&show(r#","viewedLeafCount":3"#)),
-            ["Go to Show", "—", "Mark as Watched", "Mark as Unwatched"],
+            ["Go to Show", "—", "Shuffle Show", "Mark as Watched", "Mark as Unwatched"],
             "3 of 10: neither watched nor unwatched, so BOTH verbs — the case `viewCount > 0` misses"
         );
         assert_eq!(
             set(&show(r#","viewedLeafCount":10"#)),
-            ["Go to Show", "—", "Mark as Unwatched"],
+            ["Go to Show", "—", "Shuffle Show", "Mark as Unwatched"],
             "all 10"
         );
 
@@ -1953,6 +1999,38 @@ mod tests {
         }
     }
 
+    /// A show card shuffles the whole show and a season card its own season; leaves offer neither.
+    #[test]
+    fn shuffle_rows_follow_the_item_kind() {
+        let show = build(&item(1, PosterMark::None), false);
+        assert!(show.offers(ItemRow::ShuffleShow) && !show.offers(ItemRow::ShuffleSeason));
+        assert_eq!(show.action(ItemRow::ShuffleShow), Action::Shuffle("42".into()), "the show's own key");
+
+        let season = build(&item(2, PosterMark::None), false);
+        assert!(season.offers(ItemRow::ShuffleSeason) && !season.offers(ItemRow::ShuffleShow));
+        assert_eq!(season.action(ItemRow::ShuffleSeason), Action::Shuffle("42".into()), "the season's own key");
+
+        for kind in [0, 3] {
+            let leaf = build(&item(kind, PosterMark::None), false);
+            assert!(!leaf.offers(ItemRow::ShuffleShow) && !leaf.offers(ItemRow::ShuffleSeason), "kind {kind}");
+        }
+        let episode = build_episode("5", PosterMark::None);
+        assert!(!episode.offers(ItemRow::ShuffleShow) && !episode.offers(ItemRow::ShuffleSeason));
+    }
+
+    /// The show page's season tab offers this season and the whole show, season first, ahead of
+    /// the watch-state rows; without a known show only the season.
+    #[test]
+    fn a_season_tab_offers_season_then_show_shuffle() {
+        let tab = build_season_on_show("78", "7", PosterMark::None);
+        let ids = tab.ids();
+        assert_eq!(&ids[..2], &[ItemRow::ShuffleSeason, ItemRow::ShuffleShow], "{ids:?}");
+        assert_eq!(tab.action(ItemRow::ShuffleSeason), Action::Shuffle("78".into()));
+        assert_eq!(tab.action(ItemRow::ShuffleShow), Action::Shuffle("7".into()));
+        let alone = build_season("78", PosterMark::None);
+        assert!(alone.offers(ItemRow::ShuffleSeason) && !alone.offers(ItemRow::ShuffleShow));
+    }
+
     /// **Every action row of every item menu fits its panel, in every shipped language.** The
     /// panel grows to its content ([`panel_at`] clamps `measured_width` between [`MENU_MIN_W`] and
     /// [`MENU_MAX_W`]), so what this guards is the CEILING: no verb may be longer than the widest
@@ -1986,6 +2064,7 @@ mod tests {
             for mark in marks {
                 menus.push((format!("episode {mark:?}"), build_episode("1", mark)));
                 menus.push((format!("season {mark:?}"), build_season("1", mark)));
+                menus.push((format!("season tab {mark:?}"), build_season_on_show("1", "7", mark)));
             }
             menus
         };
