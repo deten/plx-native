@@ -116,9 +116,9 @@ before `SDL_Init` (§5).
 | Code | Field | Where | What it does |
 | --- | --- | --- | --- |
 | `75 \| 1<<30` | `sym` | `page_dir`, Library route only | page the grid up |
-| `78 \| 1<<30` | `sym` | `page_dir`, Library route only | page the grid down |
+| `78 \| 1<<30` | `sym` | `page_dir`, Library route only | page the grid down; above the grid, jump to its first row |
 | `300` | `wcode` | `page_dir`, Library route only | CH▲ pages up (evdev 402 `KEY_CHANNELUP`) |
-| `301` | `wcode` | `page_dir`, Library route only | CH▼ pages down (evdev 403 `KEY_CHANNELDOWN`) |
+| `301` | `wcode` | `page_dir`, Library route only | CH▼ pages down (evdev 403 `KEY_CHANNELDOWN`); from the library pills, the view switcher, a shelf or the toolbar it jumps to the grid's first row |
 | `8` | `sym` | `screens::search::SearchScreen::step`, while editing | backspace |
 | `156 \| 1<<30` | `sym` | `screens::search::SearchScreen::step`, while editing | the panel's **Clear all**. **Not producible from the evdev table** — it reaches us through the fork's own text/IME path, which is why it is measured but has no evdev provenance. |
 | `48..=57` | `sym` | `screens::profiles`, PIN keypad | type that digit into the PIN. `screens::profiles::digit_of` also reads the range out of `wcode`, where it is **not** a digit — §9. |

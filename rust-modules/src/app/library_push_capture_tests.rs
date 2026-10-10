@@ -85,7 +85,9 @@ fn push_trace(case: Case) -> Vec<Row> {
     }
     let mut rows = Vec::new();
     nav_tab(&mut d, &mut rig, tab, None, None);
-    for _ in 0..22 {
+    // Long enough to see past the held image: the page comes to rest once its view switcher's
+    // selection plate has faded in, as a library row's does.
+    for _ in 0..40 {
         step(&mut d, &mut rig, Some(&mut rows));
     }
     assert!(d.top_arg() == Some(&AppArg::Library), "premise: the push committed");

@@ -4,10 +4,10 @@ use plx_ui::fixture::{FixtureArg, FixtureMeasure};
 use plx_ui::focus::{FocusEngine, Outcome};
 use plx_machine::machine::{Host, InputOwner, Tick};
 
-struct TestHost;
+pub(super) struct TestHost;
 
 #[derive(Clone, Copy)]
-struct Views<'a> {
+pub(super) struct Views<'a> {
     listing: plx_data::stores::browse::ListingView<'a>,
     directory: plx_data::stores::browse::DirectoryView<'a>,
     hubs: plx_data::stores::browse::HubsView<'a>,
@@ -32,18 +32,18 @@ impl LibraryLike for TestHost {
         cx.views.hubs
     }
 }
-const ENTRY: EntryId = EntryId(81);
-const OWNER: InputOwner = InputOwner::Entry(ENTRY);
-struct Fixture {
-    _stores: plx_data::stores::Stores,
-    listing: plx_data::stores::browse::ListingSnapshot,
-    directory: plx_data::stores::browse::DirectorySnapshot,
-    hubs: plx_data::stores::browse::HubsSnapshot,
-    sections: Vec<plx_data::stores::browse::SectionView>,
-    epoch: u32,
+pub(super) const ENTRY: EntryId = EntryId(81);
+pub(super) const OWNER: InputOwner = InputOwner::Entry(ENTRY);
+pub(super) struct Fixture {
+    pub(super) _stores: plx_data::stores::Stores,
+    pub(super) listing: plx_data::stores::browse::ListingSnapshot,
+    pub(super) directory: plx_data::stores::browse::DirectorySnapshot,
+    pub(super) hubs: plx_data::stores::browse::HubsSnapshot,
+    pub(super) sections: Vec<plx_data::stores::browse::SectionView>,
+    pub(super) epoch: u32,
 }
 impl Fixture {
-    fn new(libraries: usize, items: usize, shelves: usize) -> Self {
+    pub(super) fn new(libraries: usize, items: usize, shelves: usize) -> Self {
         let stores = plx_data::stores::Stores::default();
         stores.browse.borrow_mut().seed_two_source_table_for_test();
         stores.browse_run(BrowseCmd::SetCur(0));
@@ -86,7 +86,7 @@ impl Fixture {
         fixture.publish(0, items);
         fixture
     }
-    fn publish(&mut self, current: usize, items: usize) {
+    pub(super) fn publish(&mut self, current: usize, items: usize) {
         let sid = plx_plex::plex::ServerId::UNSET;
         let kind = if self
             .sections
@@ -121,7 +121,7 @@ impl Fixture {
         )
         .with_section(self.epoch, current as i64 + 1);
     }
-    fn cx(&self, engine: &FocusEngine<u32>) -> Cx<'_, TestHost> {
+    pub(super) fn cx(&self, engine: &FocusEngine<u32>) -> Cx<'_, TestHost> {
         Cx {
             views: Views {
                 listing: self.listing.view(),
@@ -135,12 +135,12 @@ impl Fixture {
             owner: OWNER,
         }
     }
-    fn screen(&self) -> LibraryScreen {
+    pub(super) fn screen(&self) -> LibraryScreen {
         let mut page = LibraryScreen::new(ENTRY, InstanceId(19), SecKind::Movie);
         page.sync(&self.cx(&FocusEngine::new()));
         page
     }
-    fn step(
+    pub(super) fn step(
         &self,
         page: &mut LibraryScreen,
         engine: &mut FocusEngine<u32>,
@@ -174,7 +174,7 @@ impl Fixture {
         }
         apps
     }
-    fn direction(&self, page: &mut LibraryScreen, engine: &mut FocusEngine<u32>, dir: Dir) {
+    pub(super) fn direction(&self, page: &mut LibraryScreen, engine: &mut FocusEngine<u32>, dir: Dir) {
         let mut links = Vec::new();
         <LibraryScreen as Screen<TestHost>>::links(page, &mut links);
         if let Outcome::Moved { from, to, by } =
@@ -376,6 +376,11 @@ fn source_controls_and_document_groups_match_bare_shelves_full_and_failed_conten
         let mut expected = Vec::new();
         if libraries > 1 {
             expected.push(LIBRARY_GROUP);
+        }
+        // The view switcher names the selected library, one or many; the failed read-out keeps
+        // the head it always had.
+        if libraries > 0 && !failed {
+            expected.push(VIEWS_GROUP);
         }
         expected.extend(page.shelves.iter().map(|shelf| shelf.group));
         assert_eq!(page.shelves.len(), shelves);

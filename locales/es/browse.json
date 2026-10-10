@@ -58,6 +58,8 @@
   "browse.library.unwatched_only": "Solo no vistos",
   "browse.library.genre": "Género",
   "browse.library.all": "Todos",
+  "browse.library.view.recommended": "Recomendado",
+  "browse.library.view.all": "Todos",
   "browse.library.all_genres": "Todos los géneros",
   "browse.library.libraries": "Bibliotecas",
   "browse.library.check_shares": "Buscar nuevas bibliotecas compartidas",

@@ -35,6 +35,30 @@
     "value": "No favorite libraries yet.",
     "description": "Settings, account, onboarding or privacy UI: settings.library_order.empty"
   },
+  "settings.library_opens.title": {
+    "value": "Library opens on",
+    "description": "Settings row title and picker title: which view a library shows when it opens, its Recommended shelves (browse.library.view.recommended) or its full list (browse.library.view.all)"
+  },
+  "settings.library_opens.detail": {
+    "value": "Which view a library shows first.",
+    "description": "Settings row detail line under settings.library_opens.title"
+  },
+  "settings.library_opens.default": {
+    "value": "Default",
+    "description": "Library opens on picker option (the default): every library opens on Recommended, its shelves above the full list"
+  },
+  "settings.library_opens.all": {
+    "value": "All",
+    "description": "Library opens on picker option: every library opens on its full list (All), with the Recommended shelves hidden"
+  },
+  "settings.library_opens.last": {
+    "value": "Last",
+    "description": "Library opens on picker option: each library reopens on the view (Recommended or All) the viewer last chose for it"
+  },
+  "settings.library_opens.copy": {
+    "value": "Default opens every library on Recommended. All opens every library on its full list. Last reopens each library on the view you last chose for it.",
+    "description": "Explanation under the title of the Library opens on picker. It names the three options by their picker labels (Default, All, Last); keep those words identical to settings.library_opens.default, .all and .last, and the view names identical to browse.library.view.recommended."
+  },
   "settings.privacy.section": {
     "value": "Privacy",
     "description": "Settings, account, onboarding or privacy UI: settings.privacy.section"

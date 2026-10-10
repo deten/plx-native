@@ -263,7 +263,7 @@ fn library_sweep_visits_the_whole_document_and_reverses_at_its_ends() {
     }
     assert_eq!(
         visited,
-        ["library", "shelf", "toolbar", "grid"]
+        ["library", "views", "shelf", "toolbar", "grid"]
             .into_iter()
             .collect(),
         "{path:?}"

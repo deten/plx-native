@@ -112,7 +112,11 @@ impl LibraryScreen {
             // The remembered row owns its full caption before clamping the saved viewport.
             // Clamping against an all-collapsed document loses the last row's 74px on return.
             self.relayout(Some(self.key(elem)));
-            let scroll = if index == slot {
+            // The bookmark's scroll is a Recommended-document position (the view a bookmark is
+            // trusted in): All, or a section last left in All, reveals the remembered row instead.
+            let left_in_all = self.viewports.iter().any(|view| Some(view.epoch) == self.epoch
+                && Some(&view.section) == self.section.as_ref() && view.all);
+            let scroll = if index == slot && !self.view.is_all() && !left_in_all {
                 cursor.scroll
             } else {
                 self.target_layout.row_reveal(index / self.layout.cols())

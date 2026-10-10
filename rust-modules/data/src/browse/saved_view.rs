@@ -104,8 +104,21 @@ pub(super) fn merge(
         listing: snap.listing.wire().to_string(),
         listing_sort,
         listing_desc,
+        // The view switcher's choice is not a toolbar edit: no toolbar change touches it.
+        all: stored.all,
         extensions: stored.extensions.clone(),
     }
+}
+
+/// The record a view-switcher choice leaves for library (`machine`, `key`): what is `stored`, with
+/// only the switcher's field changed. Choosing Recommended back on an entry that held nothing else
+/// is the default view, which [`plx_plex::plex::session::LibraryViews::set`] forgets.
+pub(super) fn with_page(stored: Option<&LibraryView>, machine: &str, key: i64, all: bool) -> LibraryView {
+    let mut view = stored.cloned().unwrap_or_default();
+    view.machine_id = machine.to_string();
+    view.key = key;
+    view.all = all;
+    view
 }
 
 fn pair(sort: &Option<(String, bool)>) -> (String, bool) {
@@ -240,6 +253,22 @@ mod tests {
         assert_eq!(merge(Some(&stored()), "m", 1, &genre, ViewField::Genre).genre, "12");
         assert!(merge(Some(&stored()), "m", 1, &default_sort, ViewField::Genre).genre.is_empty(),
             "choosing no genre is a choice");
+    }
+
+    #[test]
+    fn a_toolbar_edit_keeps_the_switchers_choice_and_the_switcher_keeps_the_toolbars() {
+        let before = LibraryView { all: true, ..stored() };
+        let snap = ViewSnapshot { genre_resolved: true, ..after_a_failed_restore(true) };
+        assert!(merge(Some(&before), "m", 1, &snap, ViewField::Unwatched).all,
+            "an Unwatched toggle is not a view choice");
+        let switched = with_page(Some(&stored()), "m", 1, true);
+        assert!(switched.all);
+        assert_eq!(switched.primary_sort(), Some(("viewCount", true)), "the sort is untouched");
+        assert_eq!(switched.genre, "28");
+        let fresh = with_page(None, "m", 7, true);
+        assert_eq!((fresh.machine_id.as_str(), fresh.key, fresh.all), ("m", 7, true));
+        assert!(with_page(Some(&fresh), "m", 7, false).is_default(),
+            "Recommended back on an All-only entry is the forgotten view");
     }
 
     #[test]

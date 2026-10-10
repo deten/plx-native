@@ -26,6 +26,7 @@ fn overflowing(page: &str, table: &TableView, out: &mut Vec<String>) {
 fn base_root_inputs() -> RootInputs {
     RootInputs {
         signed_in: true, multi_user: false, library_count: 0,
+        library_opens: plx_plex::plex::session::LibraryOpens::Default,
         auto_sign_in: false, trailer_autoplay: true,
         language: plx_platform::i18n::Preference::System, plaintext: Vec::new(),
     }
@@ -69,6 +70,11 @@ fn every_settings_row_fits_its_column_in_every_language() {
         for &library_count in &[0i64, 1, 88] {
             overflowing_root(&format!("{tag} library_count={library_count}"),
                 &RootInputs { library_count, ..base_root_inputs() }, &mut out);
+        }
+        // Library opens on: each choice as the row's read-out, beside its label and detail.
+        for library_opens in plx_plex::plex::session::LibraryOpens::LADDER {
+            overflowing_root(&format!("{tag} library_opens={library_opens:?}"),
+                &RootInputs { library_opens, ..base_root_inputs() }, &mut out);
         }
         for language_pref in LANGUAGES {
             overflowing_root(&format!("{tag} language={language_pref:?}"),

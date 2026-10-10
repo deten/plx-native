@@ -668,6 +668,11 @@ pub struct Session {
     /// committed replay fixtures included — serializes exactly as it did before.
     #[serde(default, deserialize_with = "de_soft_deck_press", skip_serializing_if = "is_default_deck_press")]
     pub deck_press: DeckPress,
+    /// **Which view a library opens on**: see [`LibraryOpens`]. Install-wide like
+    /// [`Session::deck_press`]. Absence is Default (Recommended), what every build before the
+    /// field showed; skipped at the default so an older session serializes exactly as before.
+    #[serde(default, deserialize_with = "de_soft_library_opens", skip_serializing_if = "is_default_library_opens")]
+    pub library_opens: LibraryOpens,
     /// **Device-wide ambient memory**: the last hero `UltraBlurColors` envelope Home actually
     /// rendered on this television, so a route in the Settings/first-run family that opens
     /// BEFORE Home has fetched anything this boot — first-run consent moved ahead of the
@@ -799,6 +804,8 @@ struct CanonicalSessionPreferences {
     skip_credits: MarkerSkip,
     #[serde(default, deserialize_with = "de_soft_deck_press", skip_serializing_if = "is_default_deck_press")]
     deck_press: DeckPress,
+    #[serde(default, deserialize_with = "de_soft_library_opens", skip_serializing_if = "is_default_library_opens")]
+    library_opens: LibraryOpens,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
     plaintext_consent: Vec<PlaintextConsent>,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
@@ -843,6 +850,7 @@ impl Default for CanonicalSessionPreferences {
             skip_intro: MarkerSkip::Manual,
             skip_credits: MarkerSkip::Manual,
             deck_press: DeckPress::Details,
+            library_opens: LibraryOpens::Default,
             plaintext_consent: Vec::new(),
             server_key_pins: Vec::new(),
             audio_enhancements: crate::plex::AudioEnhancements::NONE,
@@ -900,6 +908,7 @@ fn split_public(session: &Session) -> Result<plx_platform::storage::state::Publi
         skip_intro: session.skip_intro,
         skip_credits: session.skip_credits,
         deck_press: session.deck_press,
+        library_opens: session.library_opens,
         plaintext_consent: session.plaintext_consent.clone(),
         server_key_pins: session.server_key_pins.clone(),
         audio_enhancements: session.audio_enhancements,
@@ -979,6 +988,7 @@ pub fn join_canonical(
         skip_intro: preferences.skip_intro,
         skip_credits: preferences.skip_credits,
         deck_press: preferences.deck_press,
+        library_opens: preferences.library_opens,
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
         audio_enhancements: preferences.audio_enhancements,
@@ -1017,6 +1027,7 @@ fn public_session(public: &plx_platform::storage::state::PublicPayload) -> Sessi
         skip_intro: preferences.skip_intro,
         skip_credits: preferences.skip_credits,
         deck_press: preferences.deck_press,
+        library_opens: preferences.library_opens,
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
         audio_enhancements: preferences.audio_enhancements,
@@ -1537,6 +1548,49 @@ impl DeckPress {
     /// triangle, its press and its menu's Play row are all derived from.
     pub fn press_plays(self) -> bool {
         self == DeckPress::Play
+    }
+}
+
+/// Which view a library opens on: its Recommended shelves above the full list, or the full list
+/// (All) with the shelves hidden. Install-wide, like [`DeckPress`]. The Library's view switcher
+/// changes the view of the library on screen whatever this says; this decides only how a library
+/// OPENS. Absence is `Default`, the Recommended page every build before this preference showed.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LibraryOpens {
+    /// every library opens on Recommended
+    #[default]
+    #[serde(rename = "default")]
+    Default,
+    /// every library opens on All
+    #[serde(rename = "all")]
+    All,
+    /// each library reopens on the view last chosen for it in the switcher
+    /// ([`LibraryView::all`]), Recommended when none was ever chosen
+    #[serde(rename = "last")]
+    Last,
+}
+
+impl LibraryOpens {
+    /// Every option, the order the picker lists them in.
+    pub const LADDER: [LibraryOpens; 3] = [LibraryOpens::Default, LibraryOpens::All, LibraryOpens::Last];
+
+    /// An in-memory index back to an option; out of range is the default, as for [`DeckPress`].
+    pub fn from_index(i: u8) -> LibraryOpens {
+        Self::LADDER.get(i as usize).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> u8 {
+        Self::LADDER.iter().position(|&m| m == self).unwrap_or(0) as u8
+    }
+
+    /// Whether a library opens on All, given whether the viewer's last choice in the switcher for
+    /// that library was All (`remembered_all`, false when it never chose).
+    pub fn opens_all(self, remembered_all: bool) -> bool {
+        match self {
+            LibraryOpens::Default => false,
+            LibraryOpens::All => true,
+            LibraryOpens::Last => remembered_all,
+        }
     }
 }
 
@@ -2147,6 +2201,12 @@ pub struct LibraryView {
     /// The direction of `listing_sort`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub listing_desc: bool,
+    /// The view last chosen in the Library's view switcher for this library: true for All (the
+    /// full list with the Recommended shelves hidden), false for Recommended or never chosen. Read
+    /// only when [`Session::library_opens`] is [`LibraryOpens::Last`], and recorded on every
+    /// switch whatever that setting is, so turning Last on later starts from the real choices.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub all: bool,
     #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
     pub extensions: OpaqueExtensions,
 }
@@ -2171,7 +2231,7 @@ impl LibraryView {
     pub fn is_default(&self) -> bool {
         self.sort.is_empty() && !self.desc && !self.unwatched && self.genre.is_empty()
             && self.listing.is_empty() && self.listing_sort.is_empty() && !self.listing_desc
-            && self.extensions.is_empty()
+            && !self.all && self.extensions.is_empty()
     }
     /// This view with every field a record may not carry dropped back to its default: a sort
     /// longer than [`LibraryViews::MAX_SORT`], a genre longer than [`LibraryViews::MAX_GENRE`], a
@@ -2663,6 +2723,23 @@ fn is_default_deck_press(mode: &DeckPress) -> bool {
     *mode == DeckPress::default()
 }
 
+/// The library-opens choice is a preference too: a spelling this build does not know degrades to
+/// Default (Recommended).
+fn de_soft_library_opens<'de, D>(d: D) -> Result<LibraryOpens, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(LibraryOpens::default());
+    };
+    Ok(serde_json::from_value::<LibraryOpens>(v).unwrap_or_default())
+}
+
+/// `skip_serializing_if` needs a function, not just `PartialEq` with `Default::default()`.
+fn is_default_library_opens(mode: &LibraryOpens) -> bool {
+    *mode == LibraryOpens::default()
+}
+
 /// The audio-enhancement toggle is a preference too: an unknown shape degrades to both flags
 /// off rather than failing the enclosing [`Session`].
 fn de_soft_audio_enhancements<'de, D>(d: D) -> Result<crate::plex::AudioEnhancements, D::Error>
@@ -2920,6 +2997,16 @@ impl Session {
     pub fn with_deck_press(&self, mode: DeckPress) -> Self {
         let mut next = self.clone();
         next.deck_press = mode;
+        next
+    }
+
+    pub fn library_opens(&self) -> LibraryOpens {
+        self.library_opens
+    }
+
+    pub fn with_library_opens(&self, mode: LibraryOpens) -> Self {
+        let mut next = self.clone();
+        next.library_opens = mode;
         next
     }
 
@@ -6032,6 +6119,85 @@ mod next_episode_mode_tests {
             assert_eq!(join_canonical(&public, &protected).unwrap().next_episode_mode(), mode);
             assert_eq!(public_session(&public).next_episode_mode(), mode);
         }
+    }
+}
+
+/// `Session::library_opens` and `LibraryView::all`: soft-parse to Default, omit at the default,
+/// round-trip through both formats, and the per-library choice is kept per profile.
+#[cfg(test)]
+mod library_opens_tests {
+    use super::*;
+
+    #[test]
+    fn absent_or_malformed_is_default() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"library_opens": null}),
+            serde_json::json!({"library_opens": "future"}),
+            serde_json::json!({"library_opens": 2}),
+        ] {
+            let session: Session = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{value}: a bad preference must not fail the session: {e}"));
+            assert_eq!(session.library_opens(), LibraryOpens::Default, "{value}");
+        }
+    }
+
+    #[test]
+    fn the_default_is_not_serialized() {
+        let session = Session::default();
+        assert!(!serde_json::to_string(&session).unwrap().contains("library_opens"));
+        let prefs = serde_json::to_string(&split_public(&session).unwrap().preferences).unwrap();
+        assert!(!prefs.contains("library_opens"), "{prefs}");
+    }
+
+    #[test]
+    fn each_pick_round_trips_through_both_formats() {
+        for mode in LibraryOpens::LADDER {
+            let session = Session::default().with_library_opens(mode);
+            let round: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+            assert_eq!(round.library_opens(), mode);
+            let (public, protected) = split_canonical(&session).unwrap();
+            assert_eq!(join_canonical(&public, &protected).unwrap().library_opens(), mode);
+            assert_eq!(public_session(&public).library_opens(), mode);
+        }
+    }
+
+    #[test]
+    fn the_ladder_indexes_back_to_itself_and_decides_the_opening_view() {
+        for mode in LibraryOpens::LADDER {
+            assert_eq!(LibraryOpens::from_index(mode.index()), mode);
+        }
+        assert_eq!(LibraryOpens::from_index(200), LibraryOpens::Default);
+        for remembered in [false, true] {
+            assert!(!LibraryOpens::Default.opens_all(remembered), "Default always opens on Recommended");
+            assert!(LibraryOpens::All.opens_all(remembered), "All always opens on All");
+            assert_eq!(LibraryOpens::Last.opens_all(remembered), remembered, "Last follows the choice");
+        }
+    }
+
+    /// The switcher's choice rides the library's remembered view: per profile, by machine id and
+    /// section key, omitted while Recommended, and an All-only entry is a real entry (not the
+    /// default view that `LibraryViews::set` forgets).
+    #[test]
+    fn a_libraries_all_choice_survives_the_canonical_split_per_profile() {
+        let all = LibraryView { machine_id: "m".into(), key: 4, all: true, ..Default::default() };
+        assert!(!all.is_default(), "All is something a fresh library would not say");
+        let recommended = LibraryView { all: false, ..all.clone() };
+        assert!(recommended.is_default());
+        assert!(!serde_json::to_string(&recommended).unwrap().contains("\"all\""));
+        let mut session = Session::default();
+        session.set_view_for("u-kid", all.clone());
+        session.set_view_for("", LibraryView { key: 5, ..all.clone() });
+        let (public, protected) = split_canonical(&session).unwrap();
+        for restored in [join_canonical(&public, &protected).unwrap(), public_session(&public)] {
+            assert!(restored.views_for("u-kid").and_then(|v| v.get("m", 4)).is_some_and(|v| v.all));
+            assert!(restored.views_for("u-kid").and_then(|v| v.get("m", 5)).is_none(),
+                "the owner's choice is not the kid profile's");
+            assert!(restored.views_for("").and_then(|v| v.get("m", 5)).is_some_and(|v| v.all));
+        }
+        session.set_view_for("u-kid", recommended);
+        assert!(session.views_for("u-kid").and_then(|v| v.get("m", 4)).is_none(),
+            "choosing Recommended back forgets the entry");
     }
 }
 

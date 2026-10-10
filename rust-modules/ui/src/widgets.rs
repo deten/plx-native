@@ -5229,6 +5229,24 @@ pub fn draw_strip(
     scroll: f32,
     ground: TabGround,
 ) {
+    draw_strip_sized(p, strip, lays, top, h, scroll, ground, theme::size::BODY);
+}
+
+/// [`draw_strip`] at another type rung: a SECONDARY strip that reads as subordinate to a strip
+/// beside it (the Library's view switcher under its library row). `sz` must be the rung the
+/// caller laid its pills out with ([`strip_layout_measured`]), or the labels would not fit the
+/// frames the capsules travel between. The row height stays the caller's, as for every strip.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_strip_sized(
+    p: Painter,
+    strip: &TabStrip,
+    lays: &[StripLay],
+    top: f32,
+    h: f32,
+    scroll: f32,
+    ground: TabGround,
+    sz: c_int,
+) {
     let p = p.translate(-scroll, 0.0);
     strip.draw(p, top, h, ground);
     let env = Env::inert();
@@ -5238,7 +5256,7 @@ pub fn draw_strip(
             continue;
         }
         let (fm, sm) = strip.mixes((pill.x, pill.w));
-        TabPill::new(lay.label.as_ptr(), theme::size::BODY, pill)
+        TabPill::new(lay.label.as_ptr(), sz, pill)
             .plated()
             .mix(fm, sm)
             .draw(&env, p);

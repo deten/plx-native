@@ -1020,6 +1020,7 @@ fn settings_boot_arm(app: &mut App, fr: &mut Frame) {
                 "picker-skip-interval" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::SkipInterval),
                 "picker-skip-intro" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::SkipIntro),
                 "picker-skip-credits" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::SkipCredits),
+                "picker-library-opens" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::LibraryOpens),
                 "audio" => plx_screens::family::SettingsPage::AudioSubtitles,
                 _other => {
                     #[cfg(feature = "devtriggers")]

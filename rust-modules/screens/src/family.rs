@@ -112,6 +112,8 @@ pub enum PickerKind {
     SubtitleMode,
     SubtitleLanguage,
     ForcedSubtitles,
+    /// Which view a library opens on, listed on the Settings root beside Library order.
+    LibraryOpens,
 }
 
 impl SettingsPage {
@@ -120,6 +122,7 @@ impl SettingsPage {
     /// visit would. Every other page is booted as the surface's root.
     pub fn boot_trail(self) -> Vec<SettingsPage> {
         match self {
+            SettingsPage::Picker(kind) if kind.parent() == SettingsPage::Root => vec![SettingsPage::Root, self],
             SettingsPage::Picker(kind) => vec![SettingsPage::Root, kind.parent(), self],
             page => vec![page],
         }
@@ -133,6 +136,7 @@ impl PickerKind {
             PickerKind::Quality | PickerKind::DirectPlay | PickerKind::SubtitleSize | PickerKind::SubtitlePosition | PickerKind::NextEpisode | PickerKind::DeckPress | PickerKind::SkipInterval
             | PickerKind::SkipIntro | PickerKind::SkipCredits => SettingsPage::Playback,
             PickerKind::AudioLanguage | PickerKind::SubtitleMode | PickerKind::SubtitleLanguage | PickerKind::ForcedSubtitles => SettingsPage::AudioSubtitles,
+            PickerKind::LibraryOpens => SettingsPage::Root,
         }
     }
 }
@@ -392,6 +396,16 @@ mod tests {
         assert_eq!(SettingsPage::ConsentStage(0).id(), SettingsPage::ConsentStage(1).id());
         // …but `same_instance` still tells them apart, since it is bare equality here:
         assert!(!SettingsPage::Document(0).same_instance(&SettingsPage::Document(1)));
+    }
+
+    /// A picker listed on the root itself (Library opens on) boots as root → picker, so BACK from
+    /// it lands on the root as an interactive visit would; a field page's picker keeps its page.
+    #[test]
+    fn a_root_level_picker_boots_over_the_root_alone() {
+        assert_eq!(SettingsPage::Picker(PickerKind::LibraryOpens).boot_trail(),
+            vec![SettingsPage::Root, SettingsPage::Picker(PickerKind::LibraryOpens)]);
+        assert_eq!(SettingsPage::Picker(PickerKind::DeckPress).boot_trail(),
+            vec![SettingsPage::Root, SettingsPage::Playback, SettingsPage::Picker(PickerKind::DeckPress)]);
     }
 }
 

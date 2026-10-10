@@ -281,7 +281,33 @@ fn the_local_subtitle_pickers_never_touch_the_plex_account() {
         assert!(page.state.io.status.is_empty(), "{field:?}: no loading status");
         assert!(page.form.index_of_key(RowKey(RETRY_KEY)).is_none(), "{field:?}: no Retry row");
         assert!(!page.copy.contains(plx_platform::i18n::msg::settings_audio_account_note()), "{field:?}: no account note");
-        assert_eq!(field.kind(), Kind::Playback, "{field:?} belongs to the Video & playback page");
-        assert_eq!(field.kind().title(), plx_platform::i18n::msg::settings_playback_title(), "{field:?}: the crumb names the page it opened from");
+        assert_eq!(field.kind(), Some(Kind::Playback), "{field:?} belongs to the Video & playback page");
+        assert_eq!(field.crumb(), plx_platform::i18n::msg::settings_playback_title(), "{field:?}: the crumb names the page it opened from");
     }
+}
+
+/// Library opens on is a local, install-wide setting the Settings root lists itself: its picker
+/// starts no account load, names Settings as where BACK goes, opens on the live choice, and a
+/// pick submits the local write.
+#[test]
+fn the_library_opens_picker_is_local_and_returns_to_the_root() {
+    let _serial = plx_base::testlock::serial();
+    let _session = plx_plex::plex::session::TempSession::new("pref-library-opens-picker");
+    let prior = plx_data::browse::library_opens();
+    plx_data::browse::restore_library_opens(LibraryOpens::All);
+    let field = PickerKind::LibraryOpens;
+    let mut page = PickerPage::new(EntryId(0), field);
+    let mut emitted = drive(&mut page, ScreenEvent::Enter(Enter::Fresh { focus: FocusTarget::ContainerGroup(GroupId(0)) }), 0);
+    emitted.extend(drive(&mut page, tick(), 0));
+    assert_eq!(preference_commands(&emitted), 0, "no account load");
+    assert_eq!(field.kind(), None, "no field page lists it");
+    assert_eq!(field.crumb(), plx_platform::i18n::msg::settings_title(), "BACK returns to Settings");
+    assert_eq!(page.state.checked, 1, "the picker opens on the live choice (All)");
+    let emitted = drive(&mut page, ScreenEvent::Activate(2), 2);
+    plx_data::browse::restore_library_opens(prior);
+    let saved = emitted.into_iter().find_map(|e| match e.fx {
+        Fx::App(AppFx::Preferences(PreferenceCmd::LibraryOpens { mode, .. })) => Some(mode),
+        _ => None,
+    });
+    assert_eq!(saved, Some(LibraryOpens::Last));
 }

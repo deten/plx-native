@@ -367,6 +367,10 @@ fn rail_eligibility_and_last_producer_hold_over_a_long_shelf() {
     fixture.listing = plx_data::browse::view::ListingSnapshot::fixture(id.sid, items,
         (0..9).map(|i| (format!("{i}"), 14)).collect()).with_section(id.epoch, id.section);
     let mut page = fixture.screen();
+    // Scrolled past the head (the view switcher) so the first shelf stands where the fixed rail is.
+    page.scroll.jump(page.layout.library_h());
+    page.scroll_target = page.scroll.pos;
+    page.relayout(None);
     assert!(page.layout.row_y(0, page.scroll.pos) > SCR_H, "the fixture grid starts below the viewport");
     let shelf = page.key(*page.shelves[0].elems.last().unwrap());
     let mut engine = FocusEngine::new();
@@ -641,8 +645,10 @@ fn owned_card_stops_clip_pointer_hits_and_hold_the_engine_item() {
     let fixture = Fixture::new();
     let mut page = fixture.screen();
     page.initial = false;
-    page.scroll.jump(400.0);
-    page.scroll_target = 400.0;
+    // 400 px into the grid, under whatever head (the view switcher) stands above it.
+    let scroll = 400.0 + page.layout.library_h();
+    page.scroll.jump(scroll);
+    page.scroll_target = scroll;
     let first = page.key(page.pair.detail.elems[0]);
     let chosen = page.key(page.pair.detail.elems[1]);
     page.relayout(Some(first));
@@ -1697,14 +1703,15 @@ fn the_pages_focus_groups_keep_their_ids_order_and_first_seat() {
     let mut groups = Vec::new();
     page.groups(&fixture.cx(None), &mut groups);
     let ids: Vec<u32> = groups.iter().map(|group| group.id.0).collect();
-    assert_eq!(ids, [0x2500_0003, 0x2500_0004, 0x2500_0002, 0x2500_0001],
-        "shelf 0, shelf 1, the heading row, the grid");
-    assert_eq!(groups.iter().map(|group| group.len).collect::<Vec<_>>(), [5, 5, 3, 120]);
+    assert_eq!(ids, [VIEWS_GROUP.0, 0x2500_0003, 0x2500_0004, 0x2500_0002, 0x2500_0001],
+        "the view switcher, shelf 0, shelf 1, the heading row, the grid");
+    assert_eq!(groups.iter().map(|group| group.len).collect::<Vec<_>>(), [2, 5, 5, 3, 120]);
     assert_eq!(page.shelves.iter().map(|row| row.group.0).collect::<Vec<_>>(), [0x2500_0003, 0x2500_0004]);
     assert_eq!(page.shelves[0].elems, [0x2200_0000, 0x2200_0001, 0x2200_0002, 0x2200_0003, 0x2200_0004]);
     assert_eq!(page.shelves[1].elems, [0x2200_0005, 0x2200_0006, 0x2200_0007, 0x2200_0008, 0x2200_0009]);
-    assert_eq!(page.first_group(), page.shelves[0].group, "the page seats on its first shelf");
-    for (row, group) in page.shelves.iter().zip(&groups) {
+    assert_eq!(page.first_group(), VIEWS_GROUP, "a lone library's switcher heads the document");
+    assert_eq!(page.head_group(), page.shelves[0].group, "the page seats on its first shelf");
+    for (row, group) in page.shelves.iter().zip(&groups[1..]) {
         assert!(matches!(group.kind, GroupKind::Row { wrap: false }) && group.seat == Seat::Remembered);
         assert_eq!(page.row_elems(Some(row.group)), row.elems);
         for elem in &row.elems {

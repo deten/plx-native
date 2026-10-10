@@ -34,6 +34,9 @@ struct ListingData {
     genre: Option<Arc<GenreEntry>>,
     unwatched: bool,
     cursor: Option<Arc<super::Cursor>>,
+    /// The viewer last chose All in the Library's view switcher for this library (its remembered
+    /// view, `LibraryView::all`). Read when the library opens under "Library opens on: Last".
+    remembers_all: bool,
 }
 
 impl ListingSnapshot {
@@ -49,6 +52,14 @@ impl ListingSnapshot {
     pub fn with_cursor(mut self, cursor: super::Cursor) -> Self {
         if let Some(data) = &mut self.data {
             data.cursor = Some(Arc::new(cursor));
+        }
+        self
+    }
+    /// This fixture as a library whose remembered view says the switcher last chose All.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_remembered_all(mut self, all: bool) -> Self {
+        if let Some(data) = &mut self.data {
+            data.remembers_all = all;
         }
         self
     }
@@ -146,6 +157,7 @@ impl ListingSnapshot {
                 genre: None,
                 unwatched: false,
                 cursor: None,
+                remembers_all: false,
             }),
         }
     }
@@ -162,6 +174,10 @@ impl<'a> ListingView<'a> {
     /// Immutable tier-three bookmark; a live entry's engine memory takes precedence.
     pub fn cursor(self) -> Option<&'a super::Cursor> {
         self.0.data.as_ref()?.cursor.as_deref()
+    }
+    /// Whether the viewer's last choice in the view switcher for this library was All.
+    pub fn remembers_all(self) -> bool {
+        self.0.data.as_ref().is_some_and(|s| s.remembers_all)
     }
 
     /// Placement keys need rebuilding only when item membership or listing identity changes.
@@ -315,6 +331,7 @@ impl super::BrowseState {
                     genre: state.genre.clone(),
                     unwatched: state.unwatched,
                     cursor: state.cursor.clone(),
+                    remembers_all: self.remembers_all(sec),
                 }),
         }
     }

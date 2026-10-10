@@ -235,6 +235,14 @@
     "value": "All",
     "description": "browse library all"
   },
+  "browse.library.view.recommended": {
+    "value": "Recommended",
+    "description": "Library view switcher, the small pill under the selected library: the library's recommended shelves above its full list (the server's Recommended hubs)"
+  },
+  "browse.library.view.all": {
+    "value": "All",
+    "description": "Library view switcher, the small pill under the selected library: the library's full list with the recommended shelves hidden"
+  },
   "browse.library.all_genres": {
     "value": "All Genres",
     "description": "browse library all_genres"

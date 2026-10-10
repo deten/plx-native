@@ -59,6 +59,12 @@ pub(super) fn execute(command: PreferenceCmd) {
                 plx_machine::idle::invalidate();
             });
         }
+        PreferenceCmd::LibraryOpens { mode, reply } => {
+            let _ = plx_base::storage_worker::submit_retained(move || {
+                let _ = reply.send(plx_data::browse::set_library_opens(mode));
+                plx_machine::idle::invalidate();
+            });
+        }
         PreferenceCmd::SkipInterval { interval, reply } => {
             let _ = plx_base::storage_worker::submit_retained(move || {
                 let _ = reply.send(plx_media::route::set_skip_interval(interval));

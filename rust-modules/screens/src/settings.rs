@@ -953,6 +953,7 @@ struct ServerMachineId(String);
 enum RootId {
     Favourites,
     LibraryOrder,
+    LibraryOpens,
     Playback,
     AudioSubtitles,
     Language,
@@ -982,6 +983,7 @@ impl FormId for RootId {
             RootId::Legal => 8,
             RootId::About => 9,
             RootId::LibraryOrder => 10,
+            RootId::LibraryOpens => 11,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1078,6 +1080,8 @@ struct RootInputs {
     /// shown the Automatically Sign In switch.
     multi_user: bool,
     library_count: i64,
+    /// Which view a library opens on: the Library opens on row's read-out.
+    library_opens: plx_plex::plex::session::LibraryOpens,
     auto_sign_in: bool,
     trailer_autoplay: bool,
     language: plx_platform::i18n::Preference,
@@ -1114,6 +1118,15 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Action::Door,
             Row::new(plx_platform::i18n::msg::settings_library_order_title())
                 .detail(plx_platform::i18n::msg::settings_library_order_detail())
+                .chevron(true),
+        )
+        .item(
+            RootId::LibraryOpens,
+            RowKind::Nav(SettingsPage::Picker(super::family::PickerKind::LibraryOpens)),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::settings_library_opens_title())
+                .detail(plx_platform::i18n::msg::settings_library_opens_detail())
+                .value(super::preferences::library_opens_label(inputs.library_opens))
                 .chevron(true),
         );
     let playback = FormSection::new(plx_platform::i18n::msg::settings_playback_section())
@@ -1254,6 +1267,7 @@ impl RootPage {
         let plaintext = if signed_in { self.plaintext_inputs() } else { Vec::new() };
         let form = root_form(&RootInputs {
             signed_in, multi_user, library_count: directory.pinned_count() as i64,
+            library_opens: plx_data::browse::library_opens(),
             auto_sign_in, trailer_autoplay, language: self.state.language, plaintext,
         });
         let keep = self.form.selected_id().cloned();

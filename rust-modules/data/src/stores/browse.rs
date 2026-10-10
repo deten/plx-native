@@ -471,6 +471,11 @@ pub enum LibraryWork {
     Hubs {
         may_publish: bool,
     },
+    /// The Library view switcher's choice for this library (`all`: the full list, shelves
+    /// hidden), remembered per profile and library for Settings' "Library opens on: Last".
+    Page {
+        all: bool,
+    },
     Retry,
 }
 

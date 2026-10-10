@@ -144,6 +144,16 @@ fn every_picker_level_fits_its_column_in_every_language() {
                 out.extend(table_of(section).app_fit_failures(frame_w(), &format!("{tag} {field:?} picker")));
             }
         }
+        // The Settings root's own picker (Library opens on), under each live choice.
+        for mode in LibraryOpens::LADDER {
+            plx_data::browse::restore_library_opens(mode);
+            let field = PickerKind::LibraryOpens;
+            let current = resolve_value(field, Quality::Original, DirectPlayMode::Auto, None);
+            let section = field_options(field, Quality::Original, DirectPlayMode::Auto, None).into_iter()
+                .fold(Section::new(""), |section, (label, value)| section.row(Row::new(&label).checked(value == current)));
+            out.extend(table_of(section).app_fit_failures(frame_w(), &format!("{tag} {field:?}={mode:?} picker")));
+        }
+        plx_data::browse::restore_library_opens(LibraryOpens::Default);
     }
     plx_ui::table::assert_no_fit_failures(&out);
 }
@@ -225,7 +235,7 @@ fn every_explanation_under_a_title_fits_the_column_in_every_language() {
     let all_fields = [PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition,
         PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::SkipIntro, PickerKind::SkipCredits,
         PickerKind::AudioLanguage, PickerKind::SubtitleMode,
-        PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles];
+        PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::LibraryOpens];
     let mut out = Vec::new();
     for language in SHIPPED {
         let _guard = language_on_this_thread_for_test(language);
@@ -264,7 +274,8 @@ fn every_explanation_under_a_title_fits_the_column_in_every_language() {
 fn each_local_picker_has_its_own_explanation_in_every_language() {
     let _serial = plx_base::testlock::serial();
     let fields = [PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition,
-        PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::SkipIntro, PickerKind::SkipCredits];
+        PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::SkipIntro, PickerKind::SkipCredits,
+        PickerKind::LibraryOpens];
     for language in SHIPPED {
         let _guard = language_on_this_thread_for_test(language);
         let tag = language.tag();

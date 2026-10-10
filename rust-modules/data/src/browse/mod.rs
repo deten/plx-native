@@ -489,10 +489,12 @@ pub enum SecFetch {
     Failed,
 }
 
+mod opens;
 pub mod record;
 mod saved_view;
 pub mod section_hubs;
 pub mod view;
+pub use opens::{library_opens, restore_library_opens, set_library_opens, LibraryOpens};
 
 /// A tier-three application bookmark, frozen only at navigation boundaries. It is not
 /// current focus; a live Library entry keeps its authoritative memory in FocusEngine.
@@ -1224,6 +1226,43 @@ impl BrowseState {
             Some(next)
         });
     }
+    /// Remember the Library view switcher's choice for section `i` (`all`: the full list with the
+    /// Recommended shelves hidden) in its remembered view, beside the toolbar's choices. Recorded
+    /// whatever `LibraryOpens` says, so choosing Last later reopens each library where the viewer
+    /// left it. Merged against the STORED record inside the worker's read, for
+    /// [`note_view_choice`](Self::note_view_choice)'s reason. Answers whether the local record
+    /// moved.
+    fn note_page_choice(&mut self, i: usize, all: bool) -> bool {
+        let Some(section) = self.sections.get(i) else { return false };
+        let Some(machine) = self.sources.get(section.src).map(|s| s.machine_id.clone()) else {
+            return false;
+        };
+        if machine.is_empty() {
+            return false;
+        }
+        let key = section.key;
+        let changed = self.view_memory.get(&machine, key).is_some_and(|view| view.all) != all;
+        let local = saved_view::with_page(self.view_memory.get(&machine, key), &machine, key, all);
+        self.view_memory.set(local);
+        let user = plx_plex::plex::session::current_profile_key();
+        plx_plex::plex::session::queue_update(move |current| {
+            let stored = current.views_for(&user).and_then(|views| views.get(&machine, key));
+            if stored.is_some_and(|view| view.all) == all {
+                return None;
+            }
+            let mut next = current.clone();
+            next.set_view_for(&user, saved_view::with_page(stored, &machine, key, all));
+            Some(next)
+        });
+        changed
+    }
+    /// Whether section `i`'s remembered view says the viewer last chose All in the switcher.
+    fn remembers_all(&self, i: usize) -> bool {
+        let Some(section) = self.sections.get(i) else { return false };
+        self.sources.get(section.src)
+            .and_then(|source| self.view_memory.get(&source.machine_id, section.key))
+            .is_some_and(|view| view.all)
+    }
     /// Apply section `i`'s remembered listing type and Unwatched switch, once, as the section is
     /// created. Neither needs the server to vouch for it — the type is checked against what the
     /// section kind offers, and Unwatched is a plain flag — so the first page's query carries
@@ -1477,6 +1516,7 @@ impl BrowseState {
                 self.hubs_kick(index, adapter);
                 self.hubs_commit_staged(index, may_publish)
             }
+            LibraryWork::Page { all } => self.note_page_choice(index, all),
             work => {
                 if self.cur() != index {
                     return false;
@@ -1488,6 +1528,7 @@ impl BrowseState {
                     LibraryWork::Retry => self.retry_cur_source(),
                     LibraryWork::Commit { .. }
                     | LibraryWork::Hubs { .. }
+                    | LibraryWork::Page { .. }
                     | LibraryWork::SaveCursor { .. } => unreachable!(),
                 }
                 true

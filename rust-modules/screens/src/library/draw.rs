@@ -148,6 +148,7 @@ impl LibraryScreen {
         let p = f.painter.alpha(f.page_alpha * self.page_fade.alpha());
         let env = Env::inert();
         self.draw_library_controls(f);
+        self.draw_view_controls(f);
         plx_ui::profile::phase("lb.shelves", || {
             for index in self.shelf_window() {
                 #[cfg(test)] self.shelf_visits.set(self.shelf_visits.get() + 1);
@@ -198,6 +199,19 @@ impl LibraryScreen {
             plx_ui::widgets::TabGround::Plated { pop });
     }
 
+    /// The view switcher (`views.rs`): the library row's own strip path, a rung smaller.
+    fn draw_view_controls<H: LibraryLike>(&self, f: &mut DrawFrame<'_, '_, H>) {
+        if !self.layout.views { return; }
+        let p = f.painter.alpha(f.page_alpha * self.page_fade.alpha());
+        let pop = self.view_pop.scale_with(0, f.press.scale);
+        let y = self.view_y();
+        if !document_band_visible(p, y, layout::VIEW_PILL_H, pop) { return; }
+        // Scrolling away, it passes under the top bar's band like the shelves, never over the chip.
+        let _clip = f.clip(p, content_clip());
+        plx_ui::widgets::draw_strip_sized(p, &self.view_capsules, &self.view_lays(f.cx), y,
+            layout::VIEW_PILL_H, 0.0, plx_ui::widgets::TabGround::Plated { pop }, layout::VIEW_SZ);
+    }
+
     fn draw_grid_header<H: LibraryLike>(&self, f: &DrawFrame<'_, '_, H>) {
         let p = f.painter.alpha(f.page_alpha * self.page_fade.alpha());
         let y = CONTENT_TOP + self.layout.grid_block_top() - self.scroll.pos;
@@ -219,6 +233,11 @@ impl LibraryScreen {
         for (index, (elem, _)) in self.libraries.iter().enumerate() {
             let rect = self.library_rect(index, f.cx);
             if on_axis(rect.y, rect.h, SCR_H, 0.0) { self.stop(*elem, f); }
+        }
+        for elem in super::views::View::ELEMS {
+            if self.view_rect(elem, f.cx).is_some_and(|rect| on_axis(rect.y, rect.h, SCR_H, 0.0)) {
+                self.stop(elem, f);
+            }
         }
         for index in self.shelf_window() {
             #[cfg(test)] self.shelf_visits.set(self.shelf_visits.get() + 1);

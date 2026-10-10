@@ -20,6 +20,7 @@ use std::cell::RefCell;
 use std::sync::mpsc::{self, Receiver};
 use plx_plex::plex::account::{AudioPreferences, PreferenceError, PreferenceRequest, PreferenceSnapshot, PreferenceUpdate};
 use plx_media::route::{DeckPress, DirectPlayMode, MarkerSkip, NextEpisodeMode, Quality, SkipInterval, SubtitlePosition, SubtitleSize};
+use plx_plex::plex::session::LibraryOpens;
 use plx_ui::form::{Form, FormId, FormSection, FormTable, RowKey, RowKind};
 use plx_ui::frame::Budget;
 use plx_machine::machine::{Canon, Cx, Delivery, Edge, Effects, EntryId, FocusKey, Fx, GroupId,
@@ -51,6 +52,7 @@ impl PickerKind {
         Self::SkipCredits => plx_platform::i18n::msg::settings_playback_skip_credits(),
         Self::AudioLanguage => plx_platform::i18n::msg::settings_audio_language(), Self::SubtitleMode => plx_platform::i18n::msg::settings_audio_subtitles(),
         Self::SubtitleLanguage => plx_platform::i18n::msg::settings_audio_subtitle_language(), Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_forced_subtitles(),
+        Self::LibraryOpens => plx_platform::i18n::msg::settings_library_opens_title(),
     }}
     /// What this field's picker says about it under its title. The four account fields share the
     /// account note (it is about where those values are saved); each local one has its own.
@@ -65,14 +67,21 @@ impl PickerKind {
         Self::SkipIntro => plx_platform::i18n::msg::settings_playback_skip_intro_copy(),
         Self::SkipCredits => plx_platform::i18n::msg::settings_playback_skip_credits_copy(),
         Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_account_note(),
+        Self::LibraryOpens => plx_platform::i18n::msg::settings_library_opens_copy(),
     }}
-    /// The field-list page this field belongs to.
-    fn kind(self) -> Kind {
+    /// The field-list page this field belongs to; `None` for a field the Settings root lists
+    /// itself (Library opens on).
+    fn kind(self) -> Option<Kind> {
         match self {
             Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::NextEpisode | Self::DeckPress | Self::SkipInterval
-            | Self::SkipIntro | Self::SkipCredits => Kind::Playback,
-            Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => Kind::AudioSubtitles,
+            | Self::SkipIntro | Self::SkipCredits => Some(Kind::Playback),
+            Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => Some(Kind::AudioSubtitles),
+            Self::LibraryOpens => None,
         }
+    }
+    /// The crumb over this field's picker: the page BACK returns to.
+    fn crumb(self) -> &'static str {
+        self.kind().map_or_else(plx_platform::i18n::msg::settings_title, Kind::title)
     }
 }
 impl Kind {
@@ -86,7 +95,7 @@ impl Kind {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Value { Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), SkipIntro(MarkerSkip), SkipCredits(MarkerSkip), Language(String), Mode(i64), Forced(i64) }
+enum Value { Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), SkipIntro(MarkerSkip), SkipCredits(MarkerSkip), LibraryOpens(LibraryOpens), Language(String), Mode(i64), Forced(i64) }
 
 /// The hashed half of a transaction: what the page shows while a load or save is in flight.
 struct Io { busy: bool, status: String }
@@ -218,6 +227,7 @@ impl Txn {
             Value::SkipInterval(interval) => PreferenceCmd::SkipInterval { interval, reply },
             Value::SkipIntro(mode) => PreferenceCmd::SkipIntro { mode, reply },
             Value::SkipCredits(mode) => PreferenceCmd::SkipCredits { mode, reply },
+            Value::LibraryOpens(mode) => PreferenceCmd::LibraryOpens { mode, reply },
             _ => return,
         };
         self.pending = Some(Pending::Local(rx)); io.busy = true; self.saving = true;
@@ -293,6 +303,8 @@ impl FormId for RowId {
             Self::Field(PickerKind::DeckPress) => 7,
             Self::Field(PickerKind::SkipIntro) => 8,
             Self::Field(PickerKind::SkipCredits) => 9,
+            // listed on the Settings root, never on a field page: a key no page reuses
+            Self::Field(PickerKind::LibraryOpens) => 10,
             Self::Retry => 6,
         })
     }
@@ -422,6 +434,7 @@ fn resolve_value(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
         PickerKind::SkipInterval => Value::SkipInterval(plx_media::route::skip_interval()),
         PickerKind::SkipIntro => Value::SkipIntro(plx_media::route::skip_intro()),
         PickerKind::SkipCredits => Value::SkipCredits(plx_media::route::skip_credits()),
+        PickerKind::LibraryOpens => Value::LibraryOpens(plx_data::browse::library_opens()),
         // A deprecated code (`pb`) resolves to its replacement so the picker checks that entry.
         PickerKind::AudioLanguage => Value::Language(prefs.and_then(|p| p.stated_language.as_deref()).map(plx_plex::plex::languages::canonical).unwrap_or_default().to_string()),
         PickerKind::SubtitleLanguage => Value::Language(prefs.and_then(|p| p.subtitle_language.as_deref()).map(plx_plex::plex::languages::canonical).unwrap_or_default().to_string()),
@@ -450,6 +463,8 @@ fn field_options(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
             .map(|m| (marker_skip_label(m).into(), Value::SkipIntro(m))).collect(),
         PickerKind::SkipCredits => MarkerSkip::LADDER.into_iter()
             .map(|m| (marker_skip_label(m).into(), Value::SkipCredits(m))).collect(),
+        PickerKind::LibraryOpens => LibraryOpens::LADDER.into_iter()
+            .map(|m| (library_opens_label(m).into(), Value::LibraryOpens(m))).collect(),
         PickerKind::SubtitleMode => [(plx_platform::i18n::msg::settings_audio_manual(), 0), (plx_platform::i18n::msg::settings_audio_foreign(), 1), (plx_platform::i18n::msg::settings_audio_always(), 2)]
             .into_iter().map(|(label, mode)| (label.into(), Value::Mode(mode))).collect(),
         PickerKind::ForcedSubtitles => [plx_platform::i18n::msg::settings_audio_prefer_regular(), plx_platform::i18n::msg::settings_audio_prefer_forced(), plx_platform::i18n::msg::settings_audio_only_forced(), plx_platform::i18n::msg::settings_audio_only_regular()]
@@ -543,6 +558,14 @@ fn marker_skip_label(mode: MarkerSkip) -> &'static str {
         MarkerSkip::Manual => plx_platform::i18n::msg::settings_playback_marker_skip_manual(),
         MarkerSkip::Automatic => plx_platform::i18n::msg::settings_playback_marker_skip_automatic(),
         MarkerSkip::Off => plx_platform::i18n::msg::settings_playback_marker_skip_off(),
+    }
+}
+/// A Library opens on choice's label: the picker's option and the Settings root row's read-out.
+pub(crate) fn library_opens_label(mode: LibraryOpens) -> &'static str {
+    match mode {
+        LibraryOpens::Default => plx_platform::i18n::msg::settings_library_opens_default(),
+        LibraryOpens::All => plx_platform::i18n::msg::settings_library_opens_all(),
+        LibraryOpens::Last => plx_platform::i18n::msg::settings_library_opens_last(),
     }
 }
 /// The Direct Play row's trailing read-out. `mode_label`'s Forced string is long enough to squeeze

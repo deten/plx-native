@@ -828,6 +828,13 @@ player, transport and tracks auditors, and is counted once in the themes above.
   tail and logs `libhubs: card bound 2048 reached`.
   *Where (still):* the categories half — `browse` generalising its single genre facet, and a
   value-tile level in `ui/library.rs`.
+  *Landed (view switcher):* a smaller *Recommended | All* strip hangs under the selected library
+  pill (`screens/library/views.rs`). Recommended is the page above; All hides the shelves so the
+  toolbar and the grid stand right under the pill rows. It switches the library on screen only.
+  Settings > Libraries > **Library opens on** decides how a library opens: Default (Recommended),
+  All, or Last (the view last chosen for that library, kept per profile in its remembered view).
+  CH▼ above the grid jumps to the grid's first row. Still one page and one scroll, so the product
+  ruling above stands; Collections stays a TYPE in the toolbar rather than a third view.
   *Verified as of 2026-09-05:* `plex/hubs.rs` has five ops, the fifth being `library_hubs`;
   `ui/library.rs`'s `enum Area` is eight variants including `Shelf`, built by `zones(&Layout)`;
   `enter()` no longer parks in `Area::Grid` but at the document's first content zone.

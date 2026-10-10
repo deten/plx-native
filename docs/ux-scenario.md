@@ -281,7 +281,17 @@ Reached from any library pill in the top strip. A poster grid, four-way navigabl
 - an **A–Z rail** down the right edge, which jumps the grid to a letter;
 - watched check marks on the cards.
 
-**CH ▲ / CH ▼ page the grid**, which is the fast way through a large library.
+**CH ▲ / CH ▼ page the grid**, which is the fast way through a large library. From above the grid
+(a library pill, the view switcher, a shelf or the Sort/Filter row), **CH ▼ jumps straight to the
+grid's first row**, past every shelf.
+
+A smaller **Recommended | All** switcher hangs under the selected library pill (at the margin when a
+type has one library and so draws no pill row). DOWN from the pills lands on it, on the view shown;
+DOWN again is the first shelf, or the Sort/Filter row in All. **Recommended** is the page as it
+always was: the server's recommended shelves, then the grid. **All** hides the shelves, so the
+Sort/Filter row and the grid stand right under the pills. A choice applies at once, to the library
+on screen only. **Settings > Libraries > Library opens on** picks how a library opens: **Default**
+(Recommended), **All**, or **Last** (the view last chosen for that library, remembered per profile).
 
 **BACK here is ONE step to the head of the library, and a second leaves for Home.** From a shelf, a
 grid row, the Sort/Filter row or the A–Z rail, BACK returns to the top of the page — a deep shelf is
@@ -351,7 +361,8 @@ One more row, **Settings**, is offered in **every** state, signed in or out. A p
 past sign-in has still received a copy of this software, so privacy and legal information cannot be
 conditional on an account. Settings opens a full-screen
 modal: signed-in users also get **Favorite libraries** (under a **Libraries** section — which
-libraries this television shows, on Home, in the top strip and in the Library's own picker), while
+libraries this television shows, on Home, in the top strip and in the Library's own picker), with
+**Library order** and **Library opens on** beside it, while
 everyone gets **Privacy & data**, **Legal notices** and **About PlxNative**.
 
 - **Privacy & data** holds the two saved reporting choices, one scrollable what-is-actually-sent document PER CHANNEL (Crashes / Errors, Analytics / Usage),

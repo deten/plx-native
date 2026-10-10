@@ -271,6 +271,53 @@ fn choosing_the_default_order_forgets_the_entry() {
     assert_eq!(view.primary_sort(), Some(("viewCount", true)), "the library's own sort is untouched");
 }
 
+/// The Library view switcher's choice rides the same per-library record: written for the watching
+/// profile on every switch, read back into the listing at once (what "Library opens on: Last"
+/// opens on), kept through a toolbar edit, and forgotten again when Recommended is chosen back on
+/// a record that says nothing else.
+#[test]
+fn the_view_switchers_choice_is_remembered_and_read_back() {
+    let _g = plx_base::testlock::serial();
+    let session = TempPins::new("view-memory-page");
+    session.watching("u-viewer");
+    let (_cleanup, mut browse, sid, _) = registered_page_source();
+    land_page_with_sorts(&mut browse, vec![SortEntry {
+        key: "titleSort".into(), desc_key: String::new(), title: "Title".into(), default_desc: false,
+    }]);
+    let target = crate::stores::browse::SectionAddress {
+        epoch: browse.state.table_epoch(), sid, section: 1,
+    };
+    let page = |browse: &mut TestBrowse, all: bool| {
+        let moved = browse.state.addressed_with_adapter(&browse.adapter, target,
+            crate::stores::browse::LibraryWork::Page { all });
+        plx_base::storage_worker::drain_for_test();
+        moved
+    };
+    let machine = browse.state.sources()[0].machine_id.clone();
+    let held = |machine: &str| plx_plex::plex::session::peek().views_for("u-viewer")
+        .and_then(|views| views.get(machine, 1).cloned());
+    assert!(!browse.state.listing_snapshot().view().remembers_all(), "never chosen reads as Recommended");
+
+    assert!(page(&mut browse, true), "choosing All moves the record");
+    assert!(browse.state.listing_snapshot().view().remembers_all(), "read back at once, this run");
+    assert!(held(&machine).is_some_and(|view| view.all), "and written to the profile's session record");
+    assert!(!page(&mut browse, true), "the same choice again changes nothing");
+
+    assert!(browse.state.addressed_with_adapter(&browse.adapter, target,
+        crate::stores::browse::LibraryWork::Commit {
+            select: false, choice: false,
+            query: Some(crate::stores::browse::QueryEdit::Unwatched(true)),
+        }));
+    plx_base::storage_worker::drain_for_test();
+    let view = held(&machine).expect("the record holds both choices");
+    assert!(view.all && view.unwatched, "a toolbar edit keeps the switcher's choice");
+
+    assert!(page(&mut browse, false));
+    let view = held(&machine).expect("Unwatched still needs the record");
+    assert!(!view.all && view.unwatched);
+    assert!(!browse.state.listing_snapshot().view().remembers_all());
+}
+
 /// The per-profile list is bounded: the most recently changed libraries are kept.
 #[test]
 fn the_remembered_views_are_capped_most_recent_first() {

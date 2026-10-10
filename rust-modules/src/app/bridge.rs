@@ -2681,6 +2681,7 @@ pub(crate) fn follow_auth_landing(pages: &mut Dispatcher<AppHost>, bridge: &mut 
         plx_media::route::restore_skip_intro(saved.skip_intro());
         plx_media::route::restore_skip_credits(saved.skip_credits());
         plx_media::route::restore_deck_press(saved.deck_press());
+        plx_data::browse::restore_library_opens(saved.library_opens());
         plx_media::player::restore_subtitle_tone(saved.subtitle_tone());
         plx_media::player::restore_audio_enhancements(saved.audio_enhancements());
         plx_media::player::restore_subtitle_auto_sync(saved.subtitle_auto_sync());

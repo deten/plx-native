@@ -11,6 +11,13 @@ pub(super) use plx_ui::cards::{GridBand, MAX_GRID_BANDS};
 pub(super) const MAX_LETTERS: usize = 64;
 pub(super) const CONTENT_TOP: f32 = plx_ui::consts::GRID_TOP_Y;
 pub(super) const LIBRARY_ROW_H: f32 = plx_ui::widgets::StatusOverlay::CTRL_H + plx_ui::consts::CARD_DY + plx_ui::consts::TITLE_DY;
+/// The view switcher's (Recommended | All) pill height: a secondary row under the library row's
+/// `CTRL_H` pills, its labels a rung down ([`VIEW_SZ`]), so it reads as subordinate to them.
+pub(super) const VIEW_PILL_H: f32 = 44.0;
+/// The view switcher's type rung: the couch legibility floor, two rungs under the library row's.
+pub(super) const VIEW_SZ: std::ffi::c_int = theme::size::CAPTION;
+/// Air between the library row and the view switcher hanging under the selected library.
+pub(super) const VIEW_GAP: f32 = theme::space::XS;
 pub(super) const GRID_HEAD_H: f32 = plx_ui::consts::TITLE_DY
     + plx_ui::consts::CARD_DY
     + 52.0
@@ -92,6 +99,8 @@ impl ShelfRun {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Block {
     LibraryRow,
+    /// The view switcher (Recommended | All) under the selected library.
+    ViewRow,
     Shelf(usize),
     Toolbar,
     Grid(usize),
@@ -101,6 +110,8 @@ pub(super) enum Block {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Layout {
     pub libraries: bool,
+    /// The view switcher row stands under the library row (or alone, for a single library).
+    pub views: bool,
     pub shelves: usize,
     pub rows: usize,
     pub grid_head: bool,
@@ -115,11 +126,11 @@ pub(super) struct Layout {
 }
 
 impl Layout {
-    pub(super) const SHAPE: &'static str = "LibraryLayout{libraries:bool,shelves:u32,rows:u32,grid_head:bool,status:bool,empty:bool,episodes:bool,shelf_run:f32,grid_bands:[(row:u32,expansion:f32)]}";
+    pub(super) const SHAPE: &'static str = "LibraryLayout{libraries:bool,views:bool,shelves:u32,rows:u32,grid_head:bool,status:bool,empty:bool,episodes:bool,shelf_run:f32,grid_bands:[(row:u32,expansion:f32)]}";
 
     pub(super) fn write(&self, c: &mut plx_machine::machine::Canon) {
-        let Self { libraries, shelves, rows, grid_head, status, empty, episodes, shelf_run, grid_bands } = self;
-        c.bool(*libraries).u32(*shelves as u32).u32(*rows as u32).bool(*grid_head).bool(*status).bool(*empty).bool(*episodes);
+        let Self { libraries, views, shelves, rows, grid_head, status, empty, episodes, shelf_run, grid_bands } = self;
+        c.bool(*libraries).bool(*views).u32(*shelves as u32).u32(*rows as u32).bool(*grid_head).bool(*status).bool(*empty).bool(*episodes);
         c.f32(*shelf_run);
         c.seq(grid_bands.iter().filter(|band| band.row != usize::MAX).count());
         for band in grid_bands.iter().filter(|band| band.row != usize::MAX) {
@@ -130,6 +141,7 @@ impl Layout {
     pub(super) fn new(libraries: bool, shelf_pitches: &[f32], rows: usize, grid_head: bool) -> Self {
         Self {
             libraries,
+            views: false,
             shelves: shelf_pitches.len(),
             rows,
             grid_head,
@@ -146,6 +158,9 @@ impl Layout {
     }
 
     pub(super) fn with_episodes(self, episodes: bool) -> Self { Self { episodes, ..self } }
+
+    /// This document with the view switcher row under its library row (or heading it alone).
+    pub(super) fn with_views(self, views: bool) -> Self { Self { views, ..self } }
 
     pub(super) fn with_grid_bands(mut self, bands: [GridBand; MAX_GRID_BANDS]) -> Self {
         self.grid_bands = bands;
@@ -201,8 +216,19 @@ impl Layout {
         MARGIN_X + col as f32 * (style.w + style.gap)
     }
 
+    /// The head of the document: the library row, the view switcher under it, and the air down
+    /// to the first shelf's heading. Either row may be absent; with neither there is no head.
     pub(super) fn library_h(&self) -> f32 {
-        if self.libraries { LIBRARY_ROW_H } else { 0.0 }
+        match (self.libraries, self.views) {
+            (false, false) => 0.0,
+            (true, false) => LIBRARY_ROW_H,
+            (_, true) => self.view_row_top() + VIEW_PILL_H + plx_ui::consts::CARD_DY + plx_ui::consts::TITLE_DY,
+        }
+    }
+
+    /// The view switcher's top in document space: under the library row, or heading the page.
+    pub(super) fn view_row_top(&self) -> f32 {
+        if self.libraries { plx_ui::widgets::StatusOverlay::CTRL_H + VIEW_GAP } else { 0.0 }
     }
 
     pub(super) fn shelf_pitch(&self, run: &ShelfRun, index: usize) -> f32 { run.pitch(index) }
@@ -242,16 +268,27 @@ impl Layout {
     }
 
     pub(super) fn row_reveal(&self, row: usize) -> f32 {
+        // With no shelf above it (All, or a library with none) the grid's first row stands under
+        // the pill rows; when it fits whole there the page holds still, so the rows above it stay
+        // in view instead of sliding half under the top bar.
+        if row == 0 && self.shelves == 0
+            && CONTENT_TOP + self.grid_top() + self.card_h() + plx_ui::cards::UNDER_LABEL_H <= SCR_H - MARGIN_Y {
+            return 0.0;
+        }
         let top = if row == 0 { self.grid_block_top() } else { self.row_top(row) };
         top.clamp(0.0, self.max_scroll())
     }
 
     pub(super) fn shelf_reveal(&self, run: &ShelfRun, shelf: usize) -> f32 {
+        // With no library row, all that stands above the first shelf is a lone library's view
+        // switcher (or nothing): the page holds still, so the switcher stays in view with it.
+        if shelf == 0 && !self.libraries { return 0.0; }
         (self.shelf_origin(run, shelf) - plx_ui::consts::TITLE_DY).clamp(0.0, self.max_scroll())
     }
 
     pub(super) fn first(&self) -> Option<Block> {
         if self.libraries { Some(Block::LibraryRow) }
+        else if self.views { Some(Block::ViewRow) }
         else if self.shelves > 0 { Some(Block::Shelf(0)) }
         else if self.status { Some(Block::Status) }
         else if self.grid_head { Some(Block::Toolbar) }
@@ -658,6 +695,39 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The view switcher hangs under the library row and pushes everything below it down by its
+    /// own pill and the air above it; for a single library (no row) it heads the page alone. With
+    /// the shelves hidden (All) the grid's block starts right under the head.
+    #[test]
+    fn the_view_switcher_stacks_under_the_library_row_and_heads_a_lone_library() {
+        use plx_ui::consts::{CARD_DY, TITLE_DY};
+        use plx_ui::widgets::StatusOverlay;
+        let air = CARD_DY + TITLE_DY;
+        let run = ShelfRun::of(&[plx_ui::consts::ROW_PITCH; 2]);
+
+        let both = posters(true, 2, 40, true).with_views(true);
+        assert_eq!(both.view_row_top(), StatusOverlay::CTRL_H + VIEW_GAP);
+        assert_eq!(both.library_h(), StatusOverlay::CTRL_H + VIEW_GAP + VIEW_PILL_H + air);
+        assert_eq!(both.shelf_origin(&run, 0), both.library_h(), "the first shelf hangs under the switcher");
+        assert_eq!(both.first(), Some(Block::LibraryRow));
+        assert!(VIEW_PILL_H < StatusOverlay::CTRL_H, "the switcher is the smaller, secondary row");
+
+        let lone = posters(false, 2, 40, true).with_views(true);
+        assert_eq!(lone.view_row_top(), 0.0);
+        assert_eq!(lone.library_h(), VIEW_PILL_H + air);
+        assert_eq!(lone.first(), Some(Block::ViewRow), "a lone library's switcher heads the page");
+        assert_eq!(lone.seat_for_scroll(&run, 0.0, 0), Some(Block::ViewRow));
+        assert_eq!(lone.shelf_reveal(&run, 0), 0.0, "its first shelf keeps the switcher in view");
+        assert!(lone.shelf_reveal(&run, 1) > 0.0);
+        assert!(both.shelf_reveal(&run, 0) > 0.0, "under a pill row the first shelf scrolls as before");
+
+        let all = posters(true, 0, 40, true).with_views(true);
+        assert_eq!(all.grid_block_top(), all.library_h(), "All: the toolbar sits right under the head");
+        assert_eq!(all.row_reveal(0), 0.0, "All: the first row fits under the head, which stays in view");
+        assert!(all.row_reveal(1) > all.library_h(), "a later row scrolls as before");
+        assert_eq!(posters(true, 2, 40, true).library_h(), LIBRARY_ROW_H, "no switcher, the head is unchanged");
     }
 
     #[test]
