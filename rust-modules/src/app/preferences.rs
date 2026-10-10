@@ -65,6 +65,18 @@ pub(super) fn execute(command: PreferenceCmd) {
                 plx_machine::idle::invalidate();
             });
         }
+        PreferenceCmd::SkipIntro { mode, reply } => {
+            let _ = plx_base::storage_worker::submit_retained(move || {
+                let _ = reply.send(plx_media::route::set_skip_intro(mode));
+                plx_machine::idle::invalidate();
+            });
+        }
+        PreferenceCmd::SkipCredits { mode, reply } => {
+            let _ = plx_base::storage_worker::submit_retained(move || {
+                let _ = reply.send(plx_media::route::set_skip_credits(mode));
+                plx_machine::idle::invalidate();
+            });
+        }
         // The optimistic picks run HERE, on the main thread: the live value is published before
         // anything is persisted and the persistence rides the storage worker on its own
         // (`route::select_subtitle_size`), so there is no outer worker submission to republish.

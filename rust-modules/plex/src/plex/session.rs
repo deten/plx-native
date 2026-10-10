@@ -645,6 +645,15 @@ pub struct Session {
     /// field — committed replay fixtures included — serializes exactly as it did before.
     #[serde(default, deserialize_with = "de_soft_skip_interval", skip_serializing_if = "is_default_skip_interval")]
     pub skip_interval: SkipInterval,
+    /// **What the player does when an intro marker begins.** See [`MarkerSkip`]. Install-wide
+    /// like [`Session::skip_interval`]. Absence is Manual, the Skip Intro button every build before
+    /// the field showed. Skipped at the default so an older session serializes exactly as before.
+    #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "is_default_marker_skip")]
+    pub skip_intro: MarkerSkip,
+    /// **The same choice for credits markers.** A separate value because Plex keeps the two
+    /// separate: plenty of viewers skip every intro but want to see a film's credits.
+    #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "is_default_marker_skip")]
+    pub skip_credits: MarkerSkip,
     /// **What OK does on a Continue Watching card** — see [`DeckPress`]. Install-wide like
     /// [`Session::playback_quality`]. Absence is Details, so a session written before the field
     /// existed opens the page on OK. Skipped at the default so a session predating this field —
@@ -774,6 +783,10 @@ struct CanonicalSessionPreferences {
     next_episode_mode: NextEpisodeMode,
     #[serde(default, deserialize_with = "de_soft_skip_interval", skip_serializing_if = "is_default_skip_interval")]
     skip_interval: SkipInterval,
+    #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "is_default_marker_skip")]
+    skip_intro: MarkerSkip,
+    #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "is_default_marker_skip")]
+    skip_credits: MarkerSkip,
     #[serde(default, deserialize_with = "de_soft_deck_press", skip_serializing_if = "is_default_deck_press")]
     deck_press: DeckPress,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
@@ -816,6 +829,8 @@ impl Default for CanonicalSessionPreferences {
             subtitle_position: SubtitlePosition::Low,
             next_episode_mode: NextEpisodeMode::Countdown,
             skip_interval: SkipInterval::Seconds10,
+            skip_intro: MarkerSkip::Manual,
+            skip_credits: MarkerSkip::Manual,
             deck_press: DeckPress::Details,
             plaintext_consent: Vec::new(),
             server_key_pins: Vec::new(),
@@ -870,6 +885,8 @@ fn split_public(session: &Session) -> Result<plx_platform::storage::state::Publi
         subtitle_position: session.subtitle_position,
         next_episode_mode: session.next_episode_mode,
         skip_interval: session.skip_interval,
+        skip_intro: session.skip_intro,
+        skip_credits: session.skip_credits,
         deck_press: session.deck_press,
         plaintext_consent: session.plaintext_consent.clone(),
         server_key_pins: session.server_key_pins.clone(),
@@ -946,6 +963,8 @@ pub fn join_canonical(
         subtitle_position: preferences.subtitle_position,
         next_episode_mode: preferences.next_episode_mode,
         skip_interval: preferences.skip_interval,
+        skip_intro: preferences.skip_intro,
+        skip_credits: preferences.skip_credits,
         deck_press: preferences.deck_press,
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
@@ -981,6 +1000,8 @@ fn public_session(public: &plx_platform::storage::state::PublicPayload) -> Sessi
         subtitle_position: preferences.subtitle_position,
         next_episode_mode: preferences.next_episode_mode,
         skip_interval: preferences.skip_interval,
+        skip_intro: preferences.skip_intro,
+        skip_credits: preferences.skip_credits,
         deck_press: preferences.deck_press,
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
@@ -1436,6 +1457,38 @@ impl SkipInterval {
     /// The hop in nanoseconds, the unit every scrub position is in.
     pub fn ns(self) -> i64 {
         self.seconds() * 1_000_000_000
+    }
+}
+
+/// What the player does when the playhead enters a server intro or credits marker. Plex's own
+/// players offer the same three choices for each kind (Disabled, Manually, Automatically, with
+/// Manually the default); install-wide like [`SkipInterval`]. Absence is `Manual`, the Skip button
+/// every build before this preference showed.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarkerSkip {
+    /// show the Skip button and wait for a press
+    #[default]
+    #[serde(rename = "manual")]
+    Manual,
+    /// skip the segment as soon as it begins, the same action a press of the button takes
+    #[serde(rename = "automatic")]
+    Automatic,
+    /// show nothing and play the segment
+    #[serde(rename = "off")]
+    Off,
+}
+
+impl MarkerSkip {
+    /// Every option in the order the picker lists them.
+    pub const LADDER: [MarkerSkip; 3] = [MarkerSkip::Manual, MarkerSkip::Automatic, MarkerSkip::Off];
+
+    /// An in-memory index back to an option; out of range is the default, as for [`SkipInterval`].
+    pub fn from_index(i: u8) -> MarkerSkip {
+        Self::LADDER.get(i as usize).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> u8 {
+        Self::LADDER.iter().position(|&o| o == self).unwrap_or(0) as u8
     }
 }
 
@@ -2458,6 +2511,22 @@ fn is_default_skip_interval(interval: &SkipInterval) -> bool {
     *interval == SkipInterval::default()
 }
 
+/// A marker-skip choice this build does not know degrades to Manual, the button.
+fn de_soft_marker_skip<'de, D>(d: D) -> Result<MarkerSkip, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(MarkerSkip::default());
+    };
+    Ok(serde_json::from_value::<MarkerSkip>(v).unwrap_or_default())
+}
+
+/// `skip_serializing_if` needs a function, not just `PartialEq` with `Default::default()`.
+fn is_default_marker_skip(mode: &MarkerSkip) -> bool {
+    *mode == MarkerSkip::default()
+}
+
 /// The deck-press mode is a preference too: a spelling this build does not know degrades to Details.
 fn de_soft_deck_press<'de, D>(d: D) -> Result<DeckPress, D::Error>
 where
@@ -2701,6 +2770,26 @@ impl Session {
     pub fn with_skip_interval(&self, interval: SkipInterval) -> Self {
         let mut next = self.clone();
         next.skip_interval = interval;
+        next
+    }
+
+    pub fn skip_intro(&self) -> MarkerSkip {
+        self.skip_intro
+    }
+
+    pub fn with_skip_intro(&self, mode: MarkerSkip) -> Self {
+        let mut next = self.clone();
+        next.skip_intro = mode;
+        next
+    }
+
+    pub fn skip_credits(&self) -> MarkerSkip {
+        self.skip_credits
+    }
+
+    pub fn with_skip_credits(&self, mode: MarkerSkip) -> Self {
+        let mut next = self.clone();
+        next.skip_credits = mode;
         next
     }
 
@@ -5849,6 +5938,58 @@ mod deck_press_tests {
         for mode in DeckPress::LADDER {
             assert_eq!(DeckPress::from_index(mode.index()), mode);
         }
+    }
+}
+
+/// `Session::skip_intro` / `skip_credits`: soft-parse to Manual, omit at the default, round-trip.
+#[cfg(test)]
+mod marker_skip_tests {
+    use super::*;
+
+    #[test]
+    fn absent_or_malformed_is_the_button() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"skip_intro": null, "skip_credits": null}),
+            serde_json::json!({"skip_intro": "future", "skip_credits": 3}),
+        ] {
+            let session: Session = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{value}: a bad preference must not fail the session: {e}"));
+            assert_eq!((session.skip_intro(), session.skip_credits()), (MarkerSkip::Manual, MarkerSkip::Manual), "{value}");
+        }
+    }
+
+    #[test]
+    fn the_default_is_not_serialized() {
+        let session = Session::default();
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(!json.contains("skip_intro") && !json.contains("skip_credits"), "{json}");
+        let prefs = serde_json::to_string(&split_public(&session).unwrap().preferences).unwrap();
+        assert!(!prefs.contains("skip_intro") && !prefs.contains("skip_credits"), "{prefs}");
+    }
+
+    #[test]
+    fn each_pick_round_trips_through_both_formats_and_the_two_stay_apart() {
+        for intro in MarkerSkip::LADDER {
+            for credits in MarkerSkip::LADDER {
+                let session = Session::default().with_skip_intro(intro).with_skip_credits(credits);
+                let round: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+                assert_eq!((round.skip_intro(), round.skip_credits()), (intro, credits));
+                let (public, protected) = split_canonical(&session).unwrap();
+                let joined = join_canonical(&public, &protected).unwrap();
+                assert_eq!((joined.skip_intro(), joined.skip_credits()), (intro, credits));
+                let shown = public_session(&public);
+                assert_eq!((shown.skip_intro(), shown.skip_credits()), (intro, credits));
+            }
+        }
+    }
+
+    #[test]
+    fn the_ladder_indexes_back_to_itself() {
+        for mode in MarkerSkip::LADDER {
+            assert_eq!(MarkerSkip::from_index(mode.index()), mode);
+        }
+        assert_eq!(MarkerSkip::from_index(200), MarkerSkip::Manual);
     }
 }
 

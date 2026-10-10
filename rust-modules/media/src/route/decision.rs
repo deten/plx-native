@@ -6397,6 +6397,56 @@ pub fn set_skip_interval(interval: SkipInterval) -> bool {
     saved
 }
 
+/// What the player does at a server intro marker and at a credits marker. Install-wide, like
+/// [`SKIP_INTERVAL`]. Read every frame by `appkit::player_hud::resolve`.
+static SKIP_INTRO: AtomicU8 = AtomicU8::new(0); // MarkerSkip::Manual's index
+static SKIP_CREDITS: AtomicU8 = AtomicU8::new(0);
+
+pub fn skip_intro() -> MarkerSkip {
+    MarkerSkip::from_index(SKIP_INTRO.load(Ordering::Relaxed))
+}
+
+pub fn skip_credits() -> MarkerSkip {
+    MarkerSkip::from_index(SKIP_CREDITS.load(Ordering::Relaxed))
+}
+
+pub fn restore_skip_intro(mode: MarkerSkip) {
+    #[cfg(any(test, feature = "test-support"))]
+    plx_base::testlock::assert_held("skip intro preference");
+    SKIP_INTRO.store(mode.index(), Ordering::Relaxed);
+}
+
+pub fn restore_skip_credits(mode: MarkerSkip) {
+    #[cfg(any(test, feature = "test-support"))]
+    plx_base::testlock::assert_held("skip credits preference");
+    SKIP_CREDITS.store(mode.index(), Ordering::Relaxed);
+}
+
+/// Blocking persistence seam; Settings dispatches it on the storage worker. The live value changes
+/// only once the write is durable, so a failed save claims nothing.
+pub fn set_skip_intro(mode: MarkerSkip) -> bool {
+    let saved = plx_plex::plex::session::update_with_outcome(|s| Some(s.with_skip_intro(mode)))
+        .is_some_and(|write| matches!(write.classify(),
+            plx_plex::plex::session::async_persistence::CompletionOutcome::Durable(_)));
+    if saved {
+        restore_skip_intro(mode);
+        plx_machine::idle::invalidate();
+    }
+    saved
+}
+
+/// The credits twin of [`set_skip_intro`].
+pub fn set_skip_credits(mode: MarkerSkip) -> bool {
+    let saved = plx_plex::plex::session::update_with_outcome(|s| Some(s.with_skip_credits(mode)))
+        .is_some_and(|write| matches!(write.classify(),
+            plx_plex::plex::session::async_persistence::CompletionOutcome::Durable(_)));
+    if saved {
+        restore_skip_credits(mode);
+        plx_machine::idle::invalidate();
+    }
+    saved
+}
+
 /// What OK does on a Continue Watching card — install-wide, like [`NEXT_EPISODE_MODE`]. Read by
 /// every deck's press and draw (Home's and the Library's) and by the item menu when it builds its
 /// rows; `DeckPress::press_plays` is the one question they all ask of it.

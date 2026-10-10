@@ -739,6 +739,65 @@ impl ControlSlot {
 /// case: `AfterCredits` and `Off` offer nothing there (the discs stay), because the successor is
 /// not announced until the stream ends, if then. The last episode and films keep Skip Credits.
 pub fn slot_for(marker: Option<plx_data::metadata::Marker>, has_next: bool, mode: plx_media::route::NextEpisodeMode) -> ControlSlot {
+    slot_for_with(marker, has_next, mode, SkipModes::default())
+}
+
+/// The viewer's Skip Intro and Skip Credits choices (Settings > Playback), sampled once per frame
+/// with the rest of the row's inputs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct SkipModes {
+    pub intro: plx_media::route::MarkerSkip,
+    pub credits: plx_media::route::MarkerSkip,
+}
+
+impl SkipModes {
+    /// The live choices, as Settings last saved them.
+    pub fn live() -> SkipModes {
+        SkipModes { intro: plx_media::route::skip_intro(), credits: plx_media::route::skip_credits() }
+    }
+
+    fn of(self, kind: plx_data::metadata::MarkerKind) -> plx_media::route::MarkerSkip {
+        match kind {
+            plx_data::metadata::MarkerKind::Intro => self.intro,
+            plx_data::metadata::MarkerKind::Credits => self.credits,
+        }
+    }
+}
+
+/// [`slot_for`] with the viewer's skip choices applied. `Off` for a kind withdraws its Skip pill,
+/// so the discs stay and the segment plays. It never withdraws Up Next: that offer belongs to the
+/// Next episode preference, which has its own Off.
+pub fn slot_for_with(
+    marker: Option<plx_data::metadata::Marker>,
+    has_next: bool,
+    mode: plx_media::route::NextEpisodeMode,
+    skips: SkipModes,
+) -> ControlSlot {
+    match slot_for_marker(marker, has_next, mode) {
+        ControlSlot::Skip(pr) if skips.of(pr.kind) == plx_media::route::MarkerSkip::Off => ControlSlot::Discs,
+        slot => slot,
+    }
+}
+
+/// PURE: should the row's occupant be activated on its own, the moment the segment is offered?
+///
+/// True for a Skip pill whose kind is set to Automatic, and for Up Next when credits are set to
+/// Automatic (skipping a final credits segment with a successor queued means starting it, which is
+/// what the Next Episode button does). `from_server` is false for the synthesized tail marker,
+/// which only exists to time the Up Next countdown where the server detected no credits: acting on
+/// it would cut off the last seconds of an episode nobody marked, so it is never skipped.
+pub fn auto_skips(slot: ControlSlot, from_server: bool, skips: SkipModes) -> bool {
+    if !from_server {
+        return false;
+    }
+    match slot {
+        ControlSlot::Skip(pr) => skips.of(pr.kind) == plx_media::route::MarkerSkip::Automatic,
+        ControlSlot::UpNext(m) => skips.of(m.kind) == plx_media::route::MarkerSkip::Automatic,
+        ControlSlot::Discs => false,
+    }
+}
+
+fn slot_for_marker(marker: Option<plx_data::metadata::Marker>, has_next: bool, mode: plx_media::route::NextEpisodeMode) -> ControlSlot {
     match marker {
         Some(m) => {
             let pr = crate::skip_pill::prompt_for(m);
@@ -760,6 +819,19 @@ pub fn slot_for(marker: Option<plx_data::metadata::Marker>, has_next: bool, mode
 /// handlers and the draw, so re-deriving per call site let a keypress dispatch to a control that
 /// the same frame then declined to draw.
 pub fn slot(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>) -> ControlSlot {
+    resolve(ps, meta).slot
+}
+
+/// The row's occupant for this frame and whether it should act on its own ([`auto_skips`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct RowResolution {
+    pub slot: ControlSlot,
+    pub auto_skip: bool,
+}
+
+/// [`slot`] plus the automatic-skip decision, from the same single sample of the playhead.
+pub fn resolve(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>) -> RowResolution {
+    let skips = SkipModes::live();
     let has_next = plx_media::route::up_next(ps).is_some();
     let mode = plx_media::route::next_episode_mode();
     // The data layer does not read the player: the playhead is sampled here, once, and handed in.
@@ -771,12 +843,14 @@ pub fn slot(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::Me
     // Server marker first; the synthesized tail only exists where credits DETECTION does not
     // (a Plex Pass server feature) — see `metadata::synthesized_tail_marker` — and only to feed
     // the Up Next countdown, so it is not even computed in the other modes.
-    let m = meta.active_marker(head).or_else(|| {
+    let server = meta.active_marker(head);
+    let m = server.or_else(|| {
         (mode == plx_media::route::NextEpisodeMode::Countdown)
             .then(|| meta.synthesized_tail_marker(head, has_next))
             .flatten()
     });
-    slot_for(m, has_next, mode)
+    let slot = slot_for_with(m, has_next, mode, skips);
+    RowResolution { slot, auto_skip: auto_skips(slot, server.is_some(), skips) }
 }
 
 /// PURE edge: has a stand-in just vanished OUT FROM UNDER the focus ring, so the ring has to go
@@ -2020,6 +2094,76 @@ mod tests {
             start_ms: 1_000,
             end_ms: 2_000,
             final_seg,
+        }
+    }
+
+    fn skips(intro: plx_media::route::MarkerSkip, credits: plx_media::route::MarkerSkip) -> SkipModes {
+        SkipModes { intro, credits }
+    }
+
+    /// The default choices change nothing: `slot_for_with` at Manual/Manual is `slot_for`.
+    #[test]
+    fn the_button_choice_leaves_the_row_as_it_was() {
+        use plx_media::route::NextEpisodeMode as N;
+        for kind in [MarkerKind::Intro, MarkerKind::Credits] {
+            for final_seg in [false, true] {
+                for has_next in [false, true] {
+                    for mode in [N::Countdown, N::AfterCredits, N::Off] {
+                        let m = Some(marker(kind, final_seg));
+                        assert!(slot_for_with(m, has_next, mode, SkipModes::default()) == slot_for(m, has_next, mode));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Off withdraws its own kind's Skip pill only, and never the Up Next offer, which the Next
+    /// episode preference owns.
+    #[test]
+    fn off_withdraws_the_skip_pill_of_its_kind_only() {
+        use plx_media::route::{MarkerSkip as K, NextEpisodeMode as N};
+        let intro_off = skips(K::Off, K::Manual);
+        assert!(slot_for_with(Some(marker(MarkerKind::Intro, false)), false, N::Countdown, intro_off).is_discs());
+        assert!(matches!(slot_for_with(Some(marker(MarkerKind::Credits, false)), false, N::Countdown, intro_off), ControlSlot::Skip(_)));
+        let credits_off = skips(K::Manual, K::Off);
+        assert!(slot_for_with(Some(marker(MarkerKind::Credits, true)), false, N::Countdown, credits_off).is_discs());
+        assert!(matches!(slot_for_with(Some(marker(MarkerKind::Intro, false)), false, N::Countdown, credits_off), ControlSlot::Skip(_)));
+        assert!(matches!(slot_for_with(Some(marker(MarkerKind::Credits, true)), true, N::Countdown, credits_off), ControlSlot::UpNext(_)));
+    }
+
+    /// Automatic acts on exactly what the row offers for that kind, Up Next included, and never on
+    /// a synthesized tail marker or under the button choice.
+    #[test]
+    fn automatic_skips_only_its_own_kind_and_only_server_markers() {
+        use plx_media::route::{MarkerSkip as K, NextEpisodeMode as N};
+        let intro = slot_for(Some(marker(MarkerKind::Intro, false)), true, N::Countdown);
+        let credits_mid = slot_for(Some(marker(MarkerKind::Credits, false)), true, N::Countdown);
+        let credits_last = slot_for(Some(marker(MarkerKind::Credits, true)), false, N::Countdown);
+        let up_next = slot_for(Some(marker(MarkerKind::Credits, true)), true, N::Countdown);
+        assert!(matches!(up_next, ControlSlot::UpNext(_)));
+
+        assert!(auto_skips(intro, true, skips(K::Automatic, K::Manual)));
+        assert!(!auto_skips(intro, true, skips(K::Manual, K::Automatic)));
+        for slot in [credits_mid, credits_last, up_next] {
+            assert!(auto_skips(slot, true, skips(K::Manual, K::Automatic)));
+            assert!(!auto_skips(slot, true, skips(K::Automatic, K::Manual)));
+        }
+        for slot in [intro, credits_mid, credits_last, up_next] {
+            assert!(!auto_skips(slot, true, SkipModes::default()), "the button is the default");
+            assert!(!auto_skips(slot, false, skips(K::Automatic, K::Automatic)), "a synthesized marker is never skipped");
+        }
+        assert!(!auto_skips(ControlSlot::Discs, true, skips(K::Automatic, K::Automatic)));
+    }
+
+    /// A final credits segment skipped automatically FINISHES the item, the same as pressing Skip
+    /// Credits there: the last episode or a film ends rather than seeking into its own last frames.
+    #[test]
+    fn automatic_final_credits_with_nowhere_to_go_finish_the_item() {
+        use plx_media::route::{MarkerSkip as K, NextEpisodeMode as N};
+        let slot = slot_for_with(Some(marker(MarkerKind::Credits, true)), false, N::Countdown, skips(K::Manual, K::Automatic));
+        match slot {
+            ControlSlot::Skip(pr) => assert!(pr.action == SkipAction::Finish),
+            _ => panic!("the last episode keeps Skip Credits"),
         }
     }
 

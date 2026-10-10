@@ -106,6 +106,8 @@ pub enum PickerKind {
     NextEpisode,
     SkipInterval,
     DeckPress,
+    SkipIntro,
+    SkipCredits,
     AudioLanguage,
     SubtitleMode,
     SubtitleLanguage,
@@ -128,7 +130,8 @@ impl PickerKind {
     /// The page that lists this field (its picker is pushed from there and returns there).
     pub fn parent(self) -> SettingsPage {
         match self {
-            PickerKind::Quality | PickerKind::DirectPlay | PickerKind::SubtitleSize | PickerKind::SubtitlePosition | PickerKind::NextEpisode | PickerKind::DeckPress | PickerKind::SkipInterval => SettingsPage::Playback,
+            PickerKind::Quality | PickerKind::DirectPlay | PickerKind::SubtitleSize | PickerKind::SubtitlePosition | PickerKind::NextEpisode | PickerKind::DeckPress | PickerKind::SkipInterval
+            | PickerKind::SkipIntro | PickerKind::SkipCredits => SettingsPage::Playback,
             PickerKind::AudioLanguage | PickerKind::SubtitleMode | PickerKind::SubtitleLanguage | PickerKind::ForcedSubtitles => SettingsPage::AudioSubtitles,
         }
     }

@@ -86,6 +86,8 @@ pub enum PreferenceCmd {
     DirectPlay { mode: plx_plex::plex::session::DirectPlayMode, reply: std::sync::mpsc::Sender<bool> },
     NextEpisode { mode: plx_plex::plex::session::NextEpisodeMode, reply: std::sync::mpsc::Sender<bool> },
     SkipInterval { interval: plx_plex::plex::session::SkipInterval, reply: std::sync::mpsc::Sender<bool> },
+    SkipIntro { mode: plx_plex::plex::session::MarkerSkip, reply: std::sync::mpsc::Sender<bool> },
+    SkipCredits { mode: plx_plex::plex::session::MarkerSkip, reply: std::sync::mpsc::Sender<bool> },
     DeckPress { mode: plx_plex::plex::session::DeckPress, reply: std::sync::mpsc::Sender<bool> },
     SubtitleSize { size: plx_plex::plex::session::SubtitleSize, reply: std::sync::mpsc::Sender<bool> },
     SubtitlePosition { position: plx_plex::plex::session::SubtitlePosition, reply: std::sync::mpsc::Sender<bool> },

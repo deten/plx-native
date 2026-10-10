@@ -797,6 +797,34 @@
     "value": "How far one press of Left or Right jumps in the player.",
     "description": "Explanation under the title of the Skip interval picker. One value for both directions; it also sets the hop in the trailer transport."
   },
+  "settings.playback.skip_intro": {
+    "value": "Skip intro",
+    "description": "Settings row title and picker title: what the player does when a TV episode's intro begins (the server marks intros)."
+  },
+  "settings.playback.skip_credits": {
+    "value": "Skip credits",
+    "description": "Settings row title and picker title: what the player does when the credits begin (the server marks credits)."
+  },
+  "settings.playback.marker_skip.manual": {
+    "value": "Show button",
+    "description": "Skip intro and Skip credits picker option (the default): a Skip button appears and the viewer presses it."
+  },
+  "settings.playback.marker_skip.automatic": {
+    "value": "Automatically",
+    "description": "Skip intro and Skip credits picker option: the segment is skipped as soon as it begins, with no button."
+  },
+  "settings.playback.marker_skip.off": {
+    "value": "Off",
+    "description": "Skip intro and Skip credits picker option: no button appears and the segment plays."
+  },
+  "settings.playback.skip_intro.copy": {
+    "value": "Show button offers Skip Intro when an intro begins. Automatically skips it for you. Off lets it play.",
+    "description": "Explanation under the title of the Skip intro picker. It names the three options by their picker labels (Show button, Automatically, Off); keep those words identical to settings.playback.marker_skip.manual, .automatic and .off. Intros are found by the Plex server's intro detection."
+  },
+  "settings.playback.skip_credits.copy": {
+    "value": "Show button offers Skip Credits when the credits begin. Automatically skips them for you, and starts the next episode when one is queued. Off lets them play.",
+    "description": "Explanation under the title of the Skip credits picker. It names the three options by their picker labels (Show button, Automatically, Off); keep those words identical to settings.playback.marker_skip.manual, .automatic and .off. When the Next episode setting shows the Up Next countdown, Automatically starts the next episode at once."
+  },
   "settings.playback.enable_force": {
     "value": "Enable Force",
     "description": "Settings, consent or sign-in UI: settings.playback.enable_force"
