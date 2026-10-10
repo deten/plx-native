@@ -40,11 +40,22 @@ Good to know:
 
 Code: branch [`library-order`](../../tree/library-order).
 
-### Subtitle auto-sync (in progress)
+### Subtitle auto-sync (built, testing on a real server)
 
-Plex Media Server can re-time a downloaded subtitle to match the video, and its subtitle search
-marks which candidates support it (`canAutoSync`). This fork adds a way to ask for that from the
-player's subtitle menu.
+Plex Media Server can re-time an external subtitle to match the dialogue, the same feature Plex's
+own apps call "Auto Sync Subtitles". This fork asks the server for the synced copy whenever the
+server says it can provide one, and falls back to the original file otherwise.
+
+In the player, open **Subtitles**. For an external subtitle that your server can sync, an
+**Auto-sync** toggle appears (on by default) with a note saying whether the server synced it.
+Switching it re-fetches the subtitle straight away.
+
+It needs a Plex Pass server that has analysed the film for voice activity. It works with external
+subtitle files, including ones downloaded through the app's subtitle search. Subtitles inside the
+video file, and subtitles the server burns into a transcode, keep their original timing; the
+existing manual **Timing** control still adjusts those.
+
+Code: branch [`subtitle-autosync`](../../tree/subtitle-autosync), which builds on `library-order`.
 
 ## Try a test build
 
