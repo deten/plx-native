@@ -57,6 +57,59 @@ existing manual **Timing** control still adjusts those.
 
 Code: branch [`subtitle-autosync`](../../tree/subtitle-autosync), which builds on `library-order`.
 
+### Recommended or All, per library (in testing)
+
+Each library now has two views, picked from a small **Recommended | All** row under its pill:
+
+- **Recommended** is the regular page: the server's shelves, then the full list further down.
+- **All** goes straight to the full list, with Type, Sort, Filter and the A to Z rail at the top.
+
+The row follows the library pill you are on. Move to **Kids Movies**, press Down, and choose
+**All** to open every Kids Movie in one step. Selecting a pill directly opens it the usual way.
+On a library page, Channel Down (or Page Down) jumps from the pills or shelves to the full list.
+
+**Settings > Libraries > Library opens on** decides the starting view:
+
+- **Default** opens every library on Recommended.
+- **All** opens every library on its full list.
+- **Last** reopens each library on the view you last chose for it.
+
+| Choosing All for Kids Movies | Kids Movies selected |
+|---|---|
+| ![The row under Kids Movies with All focused](docs/fork/library-views-pick.jpg) | ![The row under the selected Kids Movies pill](docs/fork/library-views-recommended.jpg) |
+
+| The All view | Library opens on |
+|---|---|
+| ![A library opened on All](docs/fork/library-views-all.jpg) | ![The Library opens on setting](docs/fork/library-opens-on.jpg) |
+
+### Skip intro and credits
+
+**Settings > Playback** has **Skip intro** and **Skip credits**, each with three choices:
+
+- **Show button** (the default) offers the Skip button as before.
+- **Automatically** skips as soon as the server's marker starts. Automatic credit skipping starts
+  the next episode right away, or ends playback after a film or a show's last episode.
+- **Off** hides the button for that kind.
+
+Automatic skipping only acts on markers your server has detected.
+
+### Audio and subtitles remembered per show
+
+Choose an audio track or subtitle in the player, including turning subtitles off, and later
+episodes of the same show start with the matching track. The choice is kept per profile and
+matched by language and type, since every episode numbers its tracks differently. Forced
+subtitles and full subtitles stay separate, and an audio description track only replaces the main
+audio when you picked one.
+
+### Shuffle (in testing)
+
+Hold OK on a show for **Shuffle Show**, which plays episodes from every season in random order,
+or on a season for **Shuffle Season**. The season tabs on a show's page offer both. Up Next keeps
+following the shuffled order until you play something else.
+
+Code: branch [`library-views`](../../tree/library-views) holds everything above, built on
+`subtitle-autosync`.
+
 ## Try a test build
 
 Test builds are published as [pre-releases](../../releases). They use the **debug** flavour, which
@@ -66,8 +119,9 @@ tile and sign-in. It sits alongside your regular PlxNative and the official Plex
 On a rooted television with Homebrew Channel, install the `.ipk` from a release. To remove it,
 uninstall **PlxNative debug** like any other app.
 
-The debug flavour keeps upstream's developer checks switched on, so it can be stricter than the
-regular app.
+The newest test build, [Test 5](../../releases/tag/test-5), carries every feature above. Test
+builds are compiled the release way, so the on-screen frame counter that debug builds show is
+left out.
 
 ## Building
 
