@@ -286,7 +286,9 @@ Reached from any library pill in the top strip. A poster grid, four-way navigabl
 grid's first row**, past every shelf.
 
 A smaller **Recommended | All** switcher hangs under the selected library pill (at the margin when a
-type has one library and so draws no pill row). DOWN from the pills lands on it, on the view shown;
+type has one library and so draws no pill row). While focus walks the library pills it moves with
+the focused pill, and it returns under the selected one when focus leaves the row. DOWN from the
+pills lands on it, on the view shown;
 DOWN again is the first shelf, or the Sort/Filter row in All. **Recommended** is the page as it
 always was: the server's recommended shelves, then the grid. **All** hides the shelves, so the
 Sort/Filter row and the grid stand right under the pills. A choice applies at once, to the library

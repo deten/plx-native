@@ -1,6 +1,7 @@
 //! **The view switcher**: a smaller second strip, *Recommended | All*, hanging directly under the
-//! selected library pill (or at the margin for a section with a single library, which draws no
-//! pill row). It switches the view of the library on screen only:
+//! selected library pill, or under the focused one while focus walks the library row (at the
+//! margin for a section with a single library, which draws no pill row). It switches the view of
+//! the library on screen only:
 //!
 //! - **Recommended** is the page as it always was: the server's Recommended shelves, then the
 //!   toolbar and the full grid under them.
@@ -48,9 +49,9 @@ fn view_labels() -> [&'static str; 2] {
 }
 
 impl LibraryScreen {
-    /// The switcher's pills, laid out under the selected library pill: their left edge is that
-    /// pill's left edge (the margin when there is no pill row), pulled left only as far as keeps
-    /// the whole switcher inside the grid's band.
+    /// The switcher's pills, laid out under the library pill they belong to ([`Self::view_pill`]):
+    /// their left edge is that pill's left edge (the margin when there is no pill row), pulled left
+    /// only as far as keeps the whole switcher inside the grid's band.
     pub(super) fn view_lays<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> Vec<plx_ui::widgets::StripLay> {
         let lay = |left: f32| plx_ui::widgets::strip_layout_measured(
             view_labels().into_iter().map(str::to_owned), left + plx_ui::widgets::STRIP_PAD, VIEW_SZ,
@@ -60,11 +61,22 @@ impl LibraryScreen {
             let pill = plx_ui::widgets::strip_pill_rect(last, 0.0, VIEW_PILL_H);
             pill.x + pill.w - MARGIN_X
         });
-        let under = self.view_section(cx)
-            .and_then(|section| self.libraries.iter().position(|(_, index)| *index == section))
-            .map_or(MARGIN_X, |index| self.library_rect(index, cx).x);
+        let under = self.view_pill(cx).map_or(MARGIN_X, |index| self.library_rect(index, cx).x);
         let left = under.min(layout::GRID_RIGHT - width).max(MARGIN_X);
         if left == MARGIN_X { at_margin } else { lay(left) }
+    }
+
+    /// The library pill the switcher hangs under: the FOCUSED one while focus walks the library
+    /// row, so the switcher moves with the focus mark the viewer is following, and otherwise the
+    /// selected one (the library on screen, or on its way in). A library pill only switches the
+    /// library on OK, so without the first rule the switcher stayed under the library on screen
+    /// while focus walked away from it. Focus on the "+N" pill keeps it under the selection: that
+    /// pill opens the library menu and has no views of its own.
+    fn view_pill<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> Option<usize> {
+        let focused = cx.focus.current.filter(|key| key.entry == self.entry)
+            .and_then(|key| self.libraries.iter().position(|(elem, _)| *elem == key.elem && *elem != MORE));
+        focused.or_else(|| self.view_section(cx)
+            .and_then(|section| self.libraries.iter().position(|(_, index)| *index == section)))
     }
 
     /// The switcher row's top on screen, rising with the library row above it when the first

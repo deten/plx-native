@@ -70,6 +70,58 @@ fn the_switcher_hangs_under_the_selected_library_pill_and_follows_it() {
     assert_eq!(page.layout.first(), Some(Block::ViewRow));
 }
 
+/// Where the switcher's first pill stands, and where library pill `index` stands.
+fn switcher_x(page: &LibraryScreen, fixture: &Fixture, engine: &FocusEngine<u32>) -> f32 {
+    page.view_rect(VIEW_RECOMMENDED, &fixture.cx(engine)).expect("the switcher is shown").x
+}
+fn pill_x(page: &LibraryScreen, fixture: &Fixture, engine: &FocusEngine<u32>, index: usize) -> f32 {
+    page.library_rect(index, &fixture.cx(engine)).x
+}
+
+/// With two libraries the switcher hangs under the pill the viewer is ON: it follows FOCUS along
+/// the library row (a pill switches the library only on OK, so following the selection alone left
+/// the switcher standing under the library on screen while focus walked off it), stays under the
+/// second pill once that library is chosen, and returns under the selected pill whenever focus
+/// leaves the row.
+#[test]
+fn the_switcher_follows_focus_along_the_library_row() {
+    let _guard = plx_base::testlock::serial();
+    let mut fixture = Fixture::new(2, 24, 2);
+    let mut page = fixture.screen();
+    page.initial = false;
+    let mut engine = FocusEngine::new();
+    fixture.step(&mut page, &mut engine, ScreenEvent::Enter(Enter::Fresh { focus: FocusTarget::ContainerGroup(LIBRARY_GROUP) }));
+    let (first, second) = (page.libraries[0].0, page.libraries[1].0);
+    assert_eq!(engine.current(OWNER), Some(page.key(first)));
+    let (left, right) = (pill_x(&page, &fixture, &engine, 0), pill_x(&page, &fixture, &engine, 1));
+    assert!(right > left, "two pills, side by side");
+    assert_eq!(switcher_x(&page, &fixture, &engine), left, "under the first, selected pill");
+
+    fixture.direction(&mut page, &mut engine, Dir::Right);
+    assert_eq!(engine.current(OWNER), Some(page.key(second)));
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "focus on the second pill takes the switcher with it");
+    fixture.direction(&mut page, &mut engine, Dir::Left);
+    assert_eq!(switcher_x(&page, &fixture, &engine), left, "…and back");
+
+    fixture.direction(&mut page, &mut engine, Dir::Right);
+    fixture.step(&mut page, &mut engine, ScreenEvent::Activate(second));
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "OK on the second pill: it stays under it");
+    open_library(&mut fixture, &mut page, &mut engine, 1);
+    engine.set(OWNER, page.key(second), Some(LIBRARY_GROUP), By::Dir);
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "the second library is on screen");
+    fixture.direction(&mut page, &mut engine, Dir::Down);
+    assert_eq!(engine.current(OWNER), Some(page.key(VIEW_RECOMMENDED)));
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "focus in the switcher: under the selected second pill");
+
+    fixture.direction(&mut page, &mut engine, Dir::Up);
+    fixture.direction(&mut page, &mut engine, Dir::Left);
+    assert_eq!(engine.current(OWNER), Some(page.key(first)));
+    assert_eq!(switcher_x(&page, &fixture, &engine), left, "focus walks back to the first pill, so does the switcher");
+    fixture.direction(&mut page, &mut engine, Dir::Down);
+    assert_eq!(engine.current(OWNER), Some(page.key(VIEW_RECOMMENDED)), "DOWN still lands on the view shown");
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "…under the library it applies to");
+}
+
 /// The switcher always fits beside the selected pill: placed under the LAST pill of a full row it
 /// is pulled left rather than past the grid's band, and its app-owned labels never elide (each pill
 /// is measured to its label) in any shipped language.
