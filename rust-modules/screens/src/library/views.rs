@@ -1,7 +1,7 @@
 //! **The view switcher**: a smaller second strip, *Recommended | All*, hanging directly under the
 //! selected library pill, or under the focused one while focus walks the library row (at the
 //! margin for a section with a single library, which draws no pill row). It switches the view of
-//! the library on screen only:
+//! the library it stands under:
 //!
 //! - **Recommended** is the page as it always was: the server's Recommended shelves, then the
 //!   toolbar and the full grid under them.
@@ -14,8 +14,23 @@
 //! (`LibraryWork::Page`), whatever the setting says, so choosing *Last* later starts from the
 //! viewer's real choices. It is a strip like the library row above it (`widgets::draw_strip_sized`
 //! at [`VIEW_SZ`] in a [`VIEW_PILL_H`] row), drawn through the same `TabStrip` capsules.
+//!
+//! **A library not on screen yet.** A library pill switches the library on OK only, so DOWN from a
+//! pill that is highlighted but not selected takes focus into the switcher FOR that library
+//! (`LibraryScreen::views_for`): the switcher stays under its pill, offers the view that library
+//! would open on ([`LibraryScreen::switcher_view`]), and the page below still shows the library on
+//! screen. OK on a view there opens that library straight into the view chosen ([`Opening`]) and
+//! records the choice. DOWN there goes nowhere: the content below is the library on screen's, and
+//! only OK chooses. UP returns to its pill, and leaving the switcher any other way forgets it.
 use super::*;
 use super::layout::{VIEW_PILL_H, VIEW_SZ};
+
+/// A library opening from the switcher: the view it opens on in place of the setting's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Opening {
+    pub(super) section: LibrarySectionIdentity,
+    pub(super) view: View,
+}
 
 /// The two views a library page can show.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -67,16 +82,64 @@ impl LibraryScreen {
     }
 
     /// The library pill the switcher hangs under: the FOCUSED one while focus walks the library
-    /// row, so the switcher moves with the focus mark the viewer is following, and otherwise the
-    /// selected one (the library on screen, or on its way in). A library pill only switches the
-    /// library on OK, so without the first rule the switcher stayed under the library on screen
-    /// while focus walked away from it. Focus on the "+N" pill keeps it under the selection: that
-    /// pill opens the library menu and has no views of its own.
+    /// row, so the switcher moves with the focus mark the viewer is following; the pill DOWN came
+    /// from while focus is in the switcher for a library not selected yet ([`Self::views_for`]);
+    /// and otherwise the selected one (the library on screen, or on its way in). A library pill
+    /// only switches the library on OK, so without the first two rules the switcher stayed under
+    /// the library on screen while focus walked away from it. Focus on the "+N" pill keeps it
+    /// under the selection: that pill opens the library menu and has no views of its own.
     fn view_pill<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> Option<usize> {
+        let position = |section: usize| self.libraries.iter().position(|(_, index)| *index == section);
         let focused = cx.focus.current.filter(|key| key.entry == self.entry)
             .and_then(|key| self.libraries.iter().position(|(elem, _)| *elem == key.elem && *elem != MORE));
-        focused.or_else(|| self.view_section(cx)
-            .and_then(|section| self.libraries.iter().position(|(_, index)| *index == section)))
+        focused.or_else(|| self.views_for.filter(|_| self.in_switcher(cx)).and_then(position))
+            .or_else(|| self.view_section(cx).and_then(position))
+    }
+
+    /// Focus is on one of the switcher's pills.
+    fn in_switcher<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> bool {
+        self.layout.views && cx.focus.current.is_some_and(|key| key.entry == self.entry && View::ELEMS.contains(&key.elem))
+    }
+
+    /// The library (section index) the switcher stands under and acts on.
+    pub(super) fn switcher_section<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> Option<usize> {
+        self.view_pill(cx).and_then(|index| self.libraries.get(index)).map(|(_, section)| *section)
+            .filter(|section| *section != usize::MAX)
+            .or_else(|| self.view_section(cx))
+    }
+
+    /// The view the switcher marks as its library's: the view shown for the library on screen; for
+    /// one on its way in from the switcher, the view chosen for it; for any other, the view it
+    /// would open on now (the setting, and for *Last* its remembered choice).
+    pub(super) fn switcher_view<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> View {
+        let directory = H::directory(cx);
+        let Some(section) = self.switcher_section(cx).filter(|section| Some(*section) != directory.current())
+        else { return self.view };
+        let incoming = self.pending.section().filter(|target| target.index == section);
+        self.opening.as_ref().filter(|opening| incoming.is_some_and(|target| target.identity == opening.section))
+            .map_or_else(|| View::of(plx_data::browse::library_opens().opens_all(directory.remembers_all(section))),
+                |opening| opening.view)
+    }
+
+    /// Focus is in the switcher for a library that is not the selected one: DOWN from its pill
+    /// put it there.
+    pub(super) fn switcher_for_other<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> bool {
+        self.views_for.filter(|_| self.in_switcher(cx)).is_some_and(|section| Some(section) != self.view_section(cx))
+    }
+
+    /// Focus moved: DOWN from a library pill that is not the selected one makes the switcher that
+    /// library's; a move inside the switcher keeps it; any other move forgets it.
+    pub(super) fn track_views_for<H: LibraryLike>(&mut self, from: Option<FocusKey<u32>>, to: FocusKey<u32>, cx: &Cx<'_, H>) {
+        let mine = |key: FocusKey<u32>| key.entry == self.entry;
+        if !(mine(to) && self.layout.views && View::ELEMS.contains(&to.elem)) {
+            self.views_for = None;
+            return;
+        }
+        let Some(from) = from.filter(|key| mine(*key)) else { self.views_for = None; return };
+        if View::ELEMS.contains(&from.elem) { return; }
+        self.views_for = self.libraries.iter().find(|(elem, _)| *elem == from.elem && *elem != MORE)
+            .map(|(_, section)| *section)
+            .filter(|section| Some(*section) != self.view_section(cx));
     }
 
     /// The switcher row's top on screen, rising with the library row above it when the first
@@ -93,11 +156,28 @@ impl LibraryScreen {
             plx_ui::widgets::strip_pill_rect(lay, self.view_y(), VIEW_PILL_H))
     }
 
-    /// Show `view` for the library on screen, at once, and remember the choice for it. A press
-    /// while another library is still on its way in changes nothing: the switcher names the
-    /// library under it, and that one is decided when it opens.
+    /// Choose `view` for the library the switcher stands under, and remember the choice for it.
+    /// For the library on screen it shows at once. For another one (DOWN came from its pill, or it
+    /// is already on its way in) that library opens straight into `view` ([`Opening`]). Choosing
+    /// the library on screen while another is on its way in keeps the one on screen, as OK on its
+    /// pill would.
     pub(super) fn choose_view<H: LibraryLike>(&mut self, view: View, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) {
-        if !self.layout.views || self.pending.section().is_some() || view == self.view { return; }
+        if !self.layout.views { return; }
+        let target = self.switcher_section(cx);
+        self.views_for = None;
+        if let Some(index) = target.filter(|index| Some(*index) != H::directory(cx).current()) {
+            let incoming = self.pending.section().is_some_and(|section| section.index == index);
+            let address = if incoming { self.requested_address(cx) } else { self.request_library(index, cx, fx) };
+            let Some(address) = address else { return };
+            self.opening = Some(Opening {
+                section: LibrarySectionIdentity { sid: address.sid, key: address.section }, view,
+            });
+            self.store(address, LibraryWork::Page { all: view.is_all() }, fx);
+            fx.invalidate(Provenance::Input);
+            return;
+        }
+        if self.pending.section().is_some() { self.cancel_library_switch(); }
+        if view == self.view { return; }
         self.view = view;
         if let Some(target) = self.address(cx) {
             self.store(target, LibraryWork::Page { all: view.is_all() }, fx);
@@ -113,7 +193,7 @@ impl LibraryScreen {
     /// Step the switcher's capsules: the selection on the view shown, the focus on its pill.
     pub(super) fn step_views<H: LibraryLike>(&mut self, focused: Option<FocusKey<u32>>, cx: &Cx<'_, H>, dt: f32) {
         let shown = self.layout.views;
-        let selected = if shown { self.view.index() as i32 } else { -1 };
+        let selected = if shown { self.switcher_view(cx).index() as i32 } else { -1 };
         let focused = focused.filter(|key| key.entry == self.entry && shown)
             .and_then(|key| View::ELEMS.iter().position(|e| *e == key.elem)).map_or(-1, |i| i as i32);
         let spans: Vec<_> = View::ELEMS.iter().filter_map(|elem| self.view_rect(*elem, cx).map(|r| (r.x, r.w))).collect();

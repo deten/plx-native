@@ -288,11 +288,15 @@ grid's first row**, past every shelf.
 A smaller **Recommended | All** switcher hangs under the selected library pill (at the margin when a
 type has one library and so draws no pill row). While focus walks the library pills it moves with
 the focused pill, and it returns under the selected one when focus leaves the row. DOWN from the
-pills lands on it, on the view shown;
-DOWN again is the first shelf, or the Sort/Filter row in All. **Recommended** is the page as it
-always was: the server's recommended shelves, then the grid. **All** hides the shelves, so the
-Sort/Filter row and the grid stand right under the pills. A choice applies at once, to the library
-on screen only. **Settings > Libraries > Library opens on** picks how a library opens: **Default**
+selected pill lands on it, on the view shown; DOWN again is the first shelf, or the Sort/Filter row
+in All. DOWN from a pill that is highlighted but not selected yet keeps the switcher under that
+pill, on the view that library would open on, while the page still shows the library on screen.
+OK on Recommended or All there switches to that library in the view chosen. DOWN there does
+nothing: only OK chooses. UP returns to its pill, and BACK, the top bar or leaving the page puts
+the switcher back under the selected library. **Recommended** is the page as
+it always was: the server's recommended shelves, then the grid. **All** hides the shelves, so the
+Sort/Filter row and the grid stand right under the pills. A choice applies at once to the library
+on screen, or opens the highlighted library in it. **Settings > Libraries > Library opens on** picks how a library opens: **Default**
 (Recommended), **All**, or **Last** (the view last chosen for that library, remembered per profile).
 
 **BACK here is ONE step to the head of the library, and a second leaves for Home.** From a shelf, a

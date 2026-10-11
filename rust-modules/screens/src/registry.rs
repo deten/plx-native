@@ -2097,7 +2097,10 @@ pub const SCREEN_SHAPES: &[&str] = &[
 // Library view switcher (Recommended | All): the Library's logical state gains the switcher
 // (`switcher:LibraryViews{view,shown,capsules,pop}`), its layout `views:bool`, and its saved
 // viewport `all:bool`; the previous pin was 0xdb39_f424_a0be_5fd2.
-const SCREEN_SHAPES_PIN: u64 = 0xb6a5_fe9f_9825_0637;
+// The switcher for a library not selected yet: the switcher gains the library it is for
+// (`for:Option<u32>`) and the view a library chosen there opens on (`opening`); the previous pin
+// was 0xb6a5_fe9f_9825_0637.
+const SCREEN_SHAPES_PIN: u64 = 0x43f8_1f0c_e8ef_7d6c;
 
 #[cfg(test)]
 mod arg_tests {

@@ -372,6 +372,11 @@ pub struct DirectorySnapshot {
     discovery: SecFetch,
     sections_gen: u32,
     tabs_gen: u32,
+    /// Per section, in table order: the viewer last chose All in the Library's view switcher for
+    /// it (its remembered view, `LibraryView::all`). The switcher reads it for a library that is
+    /// not on screen yet, to show the view that library would open on under "Library opens on:
+    /// Last". A choice is not a table change, so it is kept beside `data`, not inside it.
+    remembers_all: Arc<[bool]>,
 }
 
 impl Default for DirectorySnapshot {
@@ -386,6 +391,7 @@ impl Default for DirectorySnapshot {
             discovery: SecFetch::Loading,
             sections_gen: 0,
             tabs_gen: 0,
+            remembers_all: Arc::from([]),
         }
     }
 }
@@ -417,6 +423,13 @@ impl DirectorySnapshot {
         self.discovery = state.discovery_state();
         self.sections_gen = state.sections_gen();
         self.tabs_gen = state.tabs_gen();
+        // Rebuilt only when a choice moved: the frame-by-frame capture allocates nothing.
+        let sections = state.sections().len();
+        if self.remembers_all.len() != sections
+            || (0..sections).any(|i| self.remembers_all[i] != state.remembers_all(i))
+        {
+            self.remembers_all = (0..sections).map(|i| state.remembers_all(i)).collect();
+        }
         for (i, kind) in [super::SecKind::Movie, super::SecKind::Show].into_iter().enumerate() {
             self.preferred[i] = state.tab_of_kind(kind).and_then(|tab| state.tab_section(tab));
             self.kind_fetch[i] = state.kind_state(kind);
@@ -445,6 +458,7 @@ impl DirectorySnapshot {
             discovery: fetch,
             sections_gen: 0,
             tabs_gen: 0,
+            remembers_all: Arc::from([]),
         }
     }
 
@@ -457,6 +471,13 @@ impl DirectorySnapshot {
             && self.tabs_gen == other.tabs_gen
             && self.preferred == other.preferred
             && self.kind_fetch == other.kind_fetch
+            && self.remembers_all == other.remembers_all
+    }
+    /// This fixture with the switcher's remembered choice of All on the sections named.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_remembered_all(mut self, sections: &[usize]) -> Self {
+        self.remembers_all = (0..self.data.sections.len()).map(|i| sections.contains(&i)).collect();
+        self
     }
     /// This fixture with a profile display order over its sections (indices, every one once).
     #[cfg(any(test, feature = "test-support"))]
@@ -505,6 +526,7 @@ impl DirectorySnapshot {
             discovery: SecFetch::Ready,
             sections_gen: 0,
             tabs_gen: 0,
+            remembers_all: Arc::from([]),
         }
     }
 
@@ -621,6 +643,11 @@ impl<'a> DirectoryView<'a> {
     }
     pub fn discovery(self) -> SecFetch {
         self.0.discovery
+    }
+    /// Whether section `index`'s remembered view says the viewer last chose All in the Library's
+    /// view switcher (false when it never chose).
+    pub fn remembers_all(self, index: usize) -> bool {
+        self.0.remembers_all.get(index).copied().unwrap_or(false)
     }
     /// Every section index in the profile's library display order — the order Home's Recently
     /// Added shelves, the Library's same-type pills and the Library order page all follow. A

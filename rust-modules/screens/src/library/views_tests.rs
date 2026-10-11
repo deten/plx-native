@@ -118,8 +118,223 @@ fn the_switcher_follows_focus_along_the_library_row() {
     assert_eq!(engine.current(OWNER), Some(page.key(first)));
     assert_eq!(switcher_x(&page, &fixture, &engine), left, "focus walks back to the first pill, so does the switcher");
     fixture.direction(&mut page, &mut engine, Dir::Down);
-    assert_eq!(engine.current(OWNER), Some(page.key(VIEW_RECOMMENDED)), "DOWN still lands on the view shown");
-    assert_eq!(switcher_x(&page, &fixture, &engine), right, "…under the library it applies to");
+    assert_eq!(engine.current(OWNER), Some(page.key(VIEW_RECOMMENDED)), "DOWN lands on the view the first library opens on");
+    assert_eq!(switcher_x(&page, &fixture, &engine), left, "…and the switcher stays under the pill DOWN came from");
+}
+
+/// A DOWN keypress as the dispatcher delivers it: the page sees the key first, and the engine
+/// moves focus only when the page leaves it unhandled. What the page asked of the app, in order.
+fn press_down(fixture: &Fixture, page: &mut LibraryScreen, engine: &mut FocusEngine<u32>) -> Vec<AppFx> {
+    let event = ScreenEvent::Input(plx_machine::machine::InputEvent {
+        at: Tick::default(),
+        source: plx_machine::machine::Source::Sdl,
+        kind: InputKind::Key { key: Key::Down, sym: 0, wcode: 0, edge: Edge::Down, at_edge: false },
+    });
+    let mut out = Vec::new();
+    let mut present = plx_machine::present::Present::new();
+    let handled = page.step(&event, &fixture.cx(engine),
+        &mut Effects::new(&mut out, MachineId::Instance(InstanceId(19)), &mut present));
+    let apps = out.into_iter().filter_map(|effect| match effect.fx { Fx::App(app) => Some(app), _ => None }).collect();
+    if handled == Handled::No { fixture.direction(page, engine, Dir::Down); }
+    apps
+}
+
+/// Two libraries, the first on screen and focus on its pill; the second pill's position.
+fn on_the_first_of_two(fixture: &Fixture) -> (LibraryScreen, FocusEngine<u32>) {
+    let mut page = fixture.screen();
+    page.initial = false;
+    let mut engine = FocusEngine::new();
+    fixture.step(&mut page, &mut engine, ScreenEvent::Enter(Enter::Fresh { focus: FocusTarget::ContainerGroup(LIBRARY_GROUP) }));
+    assert_eq!(engine.current(OWNER), Some(page.key(page.libraries[0].0)));
+    (page, engine)
+}
+
+/// The library the switcher is for lands (the store commits it) and the page runs on for a second.
+fn lands(fixture: &mut Fixture, page: &mut LibraryScreen, engine: &mut FocusEngine<u32>, section: usize) {
+    open_library(fixture, page, engine, section);
+    for n in 0..60 {
+        fixture.step(page, engine, ScreenEvent::Tick(Tick { ms: n * 16, dt_us: 16_000 }));
+    }
+}
+
+/// The `LibraryWork::Page` choices a batch of effects recorded, with the library (section key)
+/// each was recorded for.
+fn recorded_for(effects: &[AppFx]) -> Vec<(i64, bool)> {
+    effects.iter().filter_map(|effect| match effect {
+        AppFx::Store(StoreId::Browse, StoreCmd::Browse(BrowseCmd::Addressed { target, work: LibraryWork::Page { all } })) => Some((target.section, *all)),
+        _ => None,
+    }).collect()
+}
+
+/// **DOWN from a highlighted pill that is not selected yet** keeps the switcher under that pill:
+/// focus goes into the switcher FOR that library, the page below still shows the library on screen,
+/// LEFT/RIGHT walk the views under it, and UP returns to its pill.
+#[test]
+fn down_from_a_highlighted_pill_keeps_the_switcher_under_it() {
+    let _guard = plx_base::testlock::serial();
+    let fixture = Fixture::new(2, 24, 2);
+    let (mut page, mut engine) = on_the_first_of_two(&fixture);
+    let (left, right) = (pill_x(&page, &fixture, &engine, 0), pill_x(&page, &fixture, &engine, 1));
+    let second = page.libraries[1].0;
+    fixture.direction(&mut page, &mut engine, Dir::Right);
+    let effects = press_down(&fixture, &mut page, &mut engine);
+    assert_eq!(engine.current(OWNER), Some(page.key(VIEW_RECOMMENDED)), "DOWN: the switcher, on the view the second library opens on");
+    assert_eq!(page.views_for, Some(1), "…for the second library");
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "…standing under the second pill");
+    assert!(recorded(&effects).is_empty() && page.pending.section().is_none(), "nothing is switched yet");
+    assert_eq!((page.section.as_ref().map(|section| section.key), page.view, page.shelves.len()), (Some(1), View::Recommended, 2),
+        "the first library is still the one on screen");
+    assert_eq!(switcher_x(&page, &fixture, &engine), right);
+
+    fixture.direction(&mut page, &mut engine, Dir::Right);
+    assert_eq!(engine.current(OWNER), Some(page.key(VIEW_ALL)));
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "RIGHT keeps the switcher anchored");
+    fixture.direction(&mut page, &mut engine, Dir::Left);
+    assert_eq!(engine.current(OWNER), Some(page.key(VIEW_RECOMMENDED)));
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "…and so does LEFT");
+
+    fixture.direction(&mut page, &mut engine, Dir::Up);
+    assert_eq!(engine.current(OWNER), Some(page.key(second)), "UP returns to the second pill");
+    assert_eq!(page.views_for, None);
+    assert_eq!(switcher_x(&page, &fixture, &engine), right, "…with the switcher still under it");
+    assert!(page.pending.section().is_none());
+    assert_ne!(left, right);
+}
+
+/// **OK on All for the highlighted library** opens that library straight into All, even under the
+/// Default setting, and records the choice for IT; focus stays on the switcher. Recommended works
+/// the same way, from a setting that would have opened it on All.
+#[test]
+fn ok_on_a_view_for_the_highlighted_library_opens_it_in_that_view() {
+    let _guard = plx_base::testlock::serial();
+    let mut fixture = Fixture::new(2, 24, 2);
+    let (mut page, mut engine) = on_the_first_of_two(&fixture);
+    fixture.direction(&mut page, &mut engine, Dir::Right);
+    press_down(&fixture, &mut page, &mut engine);
+    fixture.direction(&mut page, &mut engine, Dir::Right);
+    let effects = fixture.step(&mut page, &mut engine, ScreenEvent::Activate(VIEW_ALL));
+    assert_eq!(page.pending.section().map(|target| target.index), Some(1), "OK switches to the second library");
+    assert_eq!(recorded_for(&effects), [(2, true)], "…and records All for it, not for the library on screen");
+    assert_eq!(page.view, View::Recommended, "the first library keeps its view while it fades out");
+    assert_eq!(page.switcher_view(&fixture.cx(&engine)), View::All, "the switcher marks the view chosen");
+    lands(&mut fixture, &mut page, &mut engine, 1);
+    assert_eq!(page.section.as_ref().map(|section| section.key), Some(2));
+    assert_eq!(page.view, View::All, "the second library opens in All, though Default opens on Recommended");
+    assert!(page.shelves.is_empty(), "All: no shelves");
+    assert_eq!(engine.current(OWNER), Some(page.key(VIEW_ALL)), "focus stays on the view chosen");
+    assert_eq!(page.opening, None, "the choice is spent");
+
+    opening_on(LibraryOpens::All, || {
+        let mut fixture = Fixture::new(2, 24, 2);
+        let (mut page, mut engine) = on_the_first_of_two(&fixture);
+        fixture.direction(&mut page, &mut engine, Dir::Right);
+        press_down(&fixture, &mut page, &mut engine);
+        assert_eq!(engine.current(OWNER), Some(page.key(VIEW_ALL)), "All: the second library would open on All");
+        fixture.direction(&mut page, &mut engine, Dir::Left);
+        let effects = fixture.step(&mut page, &mut engine, ScreenEvent::Activate(VIEW_RECOMMENDED));
+        assert_eq!(recorded_for(&effects), [(2, false)]);
+        lands(&mut fixture, &mut page, &mut engine, 1);
+        assert_eq!(page.view, View::Recommended, "the second library opens on Recommended, though the setting says All");
+        assert_eq!(page.shelves.len(), 2, "with its shelves");
+        assert_eq!(engine.current(OWNER), Some(page.key(VIEW_RECOMMENDED)));
+    });
+}
+
+/// The view focused on landing is the one the highlighted library would open on: the setting,
+/// and for Last ITS remembered choice, never the view of the library on screen.
+#[test]
+fn the_landing_view_is_the_one_the_highlighted_library_opens_on() {
+    let _guard = plx_base::testlock::serial();
+    for (mode, remembered, lands_on) in [
+        (LibraryOpens::Default, true, View::Recommended),
+        (LibraryOpens::All, false, View::All),
+        (LibraryOpens::Last, false, View::Recommended),
+        (LibraryOpens::Last, true, View::All),
+    ] {
+        opening_on(mode, || {
+            let mut fixture = Fixture::new(2, 24, 2);
+            let remembers: &[usize] = if remembered { &[1] } else { &[] };
+            fixture.directory = fixture.directory.clone().with_remembered_all(remembers);
+            let (mut page, mut engine) = on_the_first_of_two(&fixture);
+            let shown = page.view;
+            fixture.direction(&mut page, &mut engine, Dir::Right);
+            press_down(&fixture, &mut page, &mut engine);
+            assert_eq!(engine.current(OWNER), Some(page.key(lands_on.elem())), "{mode:?}, second library last on All={remembered}");
+            assert_eq!(page.view, shown, "{mode:?}: the library on screen keeps its own view");
+        });
+    }
+}
+
+/// The switcher forgets the highlighted library when focus leaves it some other way (BACK, the
+/// page covered or left) and returns under the selected library.
+#[test]
+fn leaving_the_switcher_forgets_the_highlighted_library() {
+    let _guard = plx_base::testlock::serial();
+    let fixture = Fixture::new(2, 24, 2);
+    for leave in ["BACK", "a page over it"] {
+        let (mut page, mut engine) = on_the_first_of_two(&fixture);
+        let left = pill_x(&page, &fixture, &engine, 0);
+        fixture.direction(&mut page, &mut engine, Dir::Right);
+        press_down(&fixture, &mut page, &mut engine);
+        assert_eq!(page.views_for, Some(1));
+        if leave == "BACK" {
+            fixture.step(&mut page, &mut engine, ScreenEvent::Input(plx_machine::machine::InputEvent {
+                at: Tick::default(), source: plx_machine::machine::Source::Sdl,
+                kind: InputKind::Key { key: Key::Back, sym: 0, wcode: 0, edge: Edge::Down, at_edge: false },
+            }));
+        } else {
+            fixture.step(&mut page, &mut engine, ScreenEvent::Cover);
+        }
+        assert_eq!(page.views_for, None, "{leave}: the pending library is forgotten");
+        assert_eq!(switcher_x(&page, &fixture, &engine), left, "{leave}: the switcher is back under the selected library");
+        assert!(page.pending.section().is_none(), "{leave}: nothing was switched");
+    }
+    // A move out of the switcher that is not a choice (the top bar, past the pills) forgets it too.
+    let (mut page, mut engine) = on_the_first_of_two(&fixture);
+    let left = pill_x(&page, &fixture, &engine, 0);
+    fixture.direction(&mut page, &mut engine, Dir::Right);
+    press_down(&fixture, &mut page, &mut engine);
+    let from = engine.current(OWNER);
+    let tab = page.key(plx_ui::dispatch::STRIP_BASE);
+    engine.set(OWNER, tab, Some(STRIP), By::Pointer);
+    fixture.step(&mut page, &mut engine, ScreenEvent::FocusMoved { from, to: tab, by: By::Pointer });
+    assert_eq!(page.views_for, None, "the top bar");
+    assert_eq!(switcher_x(&page, &fixture, &engine), left, "the switcher is back under the selected library");
+    assert!(page.pending.section().is_none());
+}
+
+/// **DOWN from the switcher for a library not selected yet goes nowhere**: only OK chooses a view
+/// for it. The library on screen, its view, the focus and the switcher's place all stay as they
+/// were. For the library on screen DOWN is the plain move it always was.
+#[test]
+fn down_from_the_switcher_for_the_highlighted_library_does_nothing() {
+    let _guard = plx_base::testlock::serial();
+    for view in [View::All, View::Recommended] {
+        let fixture = Fixture::new(2, 24, 2);
+        let (mut page, mut engine) = on_the_first_of_two(&fixture);
+        let right = pill_x(&page, &fixture, &engine, 1);
+        fixture.direction(&mut page, &mut engine, Dir::Right);
+        press_down(&fixture, &mut page, &mut engine);
+        if view == View::All { fixture.direction(&mut page, &mut engine, Dir::Right); }
+        let effects = press_down(&fixture, &mut page, &mut engine);
+        assert!(recorded(&effects).is_empty(), "{view:?}: DOWN chooses nothing");
+        assert!(page.pending.section().is_none(), "{view:?}: …and switches no library");
+        assert_eq!(engine.current(OWNER), Some(page.key(view.elem())), "{view:?}: focus stays on the switcher");
+        assert_eq!((page.views_for, switcher_x(&page, &fixture, &engine)), (Some(1), right),
+            "{view:?}: …still under the highlighted pill");
+        assert_eq!((page.section.as_ref().map(|section| section.key), page.view, page.shelves.len()), (Some(1), View::Recommended, 2),
+            "{view:?}: the library on screen and its view are unchanged");
+        let effects = fixture.step(&mut page, &mut engine, ScreenEvent::Activate(view.elem()));
+        assert_eq!(recorded_for(&effects), [(2, view.is_all())], "{view:?}: OK still chooses afterwards");
+    }
+
+    let fixture = Fixture::new(2, 24, 2);
+    let (mut page, mut engine) = on_the_first_of_two(&fixture);
+    press_down(&fixture, &mut page, &mut engine);
+    assert_eq!(page.views_for, None, "DOWN from the selected pill: the switcher of the library on screen");
+    let effects = press_down(&fixture, &mut page, &mut engine);
+    assert!(recorded(&effects).is_empty() && page.pending.section().is_none());
+    assert_eq!(group_at(&page, &engine, &fixture), Some(page.shelves[0].group), "…and DOWN is its first shelf, as always");
 }
 
 /// The switcher always fits beside the selected pill: placed under the LAST pill of a full row it
