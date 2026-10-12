@@ -638,7 +638,7 @@ class Enhancement266(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {
             "refuse_enhancements": True, "ignore_enhancements": False, "plex_pass": True,
-            "subtitle_auto_sync": False})
+            "subtitle_auto_sync": False, "watchlist_refused": False})
         self.assertIs(pms.refuse_enhancements, True)
         self.assertIs(pms.ignore_enhancements, False)
 
