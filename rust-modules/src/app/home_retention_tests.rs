@@ -386,8 +386,26 @@ fn library_publishes_the_actual_container_strip() {
     bridge.capture_chrome(&mut dispatcher);
     let base = plx_ui::dispatch::STRIP_BASE;
     assert_eq!(dispatcher.nav.tabs.strip.iter().map(|member| member.elem).collect::<Vec<_>>(),
-        vec![base + 4, base, base + 1, base + 2, base + 3]);
+        vec![base + 4, base, base + 1, base + 2, base + 5, base + 3]);
     assert_eq!(dispatcher.nav.tabs.strip_fallback, Some(base));
+}
+
+/// The Watchlist page wears the same strip, with its own pill as the fallback while there is
+/// nothing on the page to seat (a list still loading), and its pill selected.
+#[test]
+fn the_watchlist_publishes_the_strip_with_its_own_pill_selected() {
+    let _guard = plx_base::testlock::serial();
+    let mut dispatcher = Dispatcher::<AppHost>::new();
+    let mut bridge = Bridge::for_test(|| 0);
+    bridge.stores.browse.borrow_mut().seed_two_source_table_for_test();
+    bridge.refresh_browse_directory();
+    super::show_page(&mut dispatcher, AppArg::Watchlist);
+    bridge.capture_chrome(&mut dispatcher);
+    let base = plx_ui::dispatch::STRIP_BASE;
+    assert_eq!(dispatcher.nav.tabs.strip.iter().map(|member| member.elem).collect::<Vec<_>>(),
+        vec![base + 4, base, base + 1, base + 2, base + 5, base + 3]);
+    assert_eq!(dispatcher.nav.tabs.strip_fallback, Some(base + 5));
+    assert_eq!(bridge.chrome_selection, 3, "Home, Movies, TV Shows, then the Watchlist pill");
 }
 
 #[test]

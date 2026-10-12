@@ -144,6 +144,13 @@ pub enum Icon {
     Shuffle,
     /// An X — "remove this" (the item menu's Remove from Continue Watching row).
     Close,
+    /// A stroked bookmark, the detail hero's Watchlist disc while the title is NOT on the
+    /// Watchlist, the face of the press that adds it. One path, one stroke.
+    Bookmark,
+    /// The same bookmark filled, that disc's face once the title IS on the Watchlist, the
+    /// press that takes it off. A pair like `Check`/`Minus` on the watched toggle: the face is
+    /// the control's current state and its verb unfurls beside it.
+    BookmarkFill,
     /// A horizontal ellipsis — "more options". The player transport's third control disc, which
     /// opens the overflow popover (`appkit/more_menu.rs`). Overflow, so it sits at the END of the row.
     More,
@@ -297,6 +304,8 @@ fn src(id: Icon) -> &'static str {
         Icon::PlayStart => include_str!("../../../assets/icons/play-start.svg"),
         Icon::Shuffle => include_str!("../../../assets/icons/shuffle.svg"),
         Icon::Close => include_str!("../../../assets/icons/close.svg"),
+        Icon::Bookmark => include_str!("../../../assets/icons/bookmark.svg"),
+        Icon::BookmarkFill => include_str!("../../../assets/icons/bookmark-fill.svg"),
         Icon::More => include_str!("../../../assets/icons/more.svg"),
         Icon::Search => include_str!("../../../assets/icons/search.svg"),
         Icon::Tomato => include_str!("../../../assets/icons/tomato.svg"),
@@ -556,6 +565,29 @@ mod ink_tests {
                     assert_eq!(alpha(x, y), 0, "Collection has ink on the border at {px}px ({x},{y})");
                 }
             }
+        }
+    }
+
+    /// The Watchlist pair at the hero disc's glyph sizes: full opacity, nothing on the border,
+    /// and the filled face carrying half as much ink again as the stroked one (the two faces must not
+    /// read as the same mark from the couch).
+    #[test]
+    fn the_bookmark_pair_rasterizes_clean_and_reads_as_two_states() {
+        for px in [28, 32, 40, 69] {
+            let ink = |id: Icon| {
+                let rgba = plx_gfx::svg::rasterize(src(id), px, px)
+                    .unwrap_or_else(|| panic!("{id:?} failed to rasterize at {px}px"));
+                let alpha = |x: i32, y: i32| rgba[((y * px + x) * 4 + 3) as usize];
+                assert_eq!((0..px).flat_map(|y| (0..px).map(move |x| alpha(x, y))).max(), Some(255),
+                    "{id:?} never reaches full opacity at {px}px");
+                for i in 0..px {
+                    for (x, y) in [(i, 0), (i, px - 1), (0, i), (px - 1, i)] {
+                        assert_eq!(alpha(x, y), 0, "{id:?} has ink on the border at {px}px ({x},{y})");
+                    }
+                }
+                (0..px).flat_map(|y| (0..px).map(move |x| alpha(x, y) as u64)).sum::<u64>()
+            };
+            assert!(2 * ink(Icon::BookmarkFill) > 3 * ink(Icon::Bookmark), "at {px}px");
         }
     }
 

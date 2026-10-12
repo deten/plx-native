@@ -58,6 +58,8 @@ pub enum AppFx {
     /// Library-page semantic requests. The bridge owns navigation/player/item-menu execution.
     Library(LibraryReq),
     Search(SearchReq),
+    /// Watchlist-page semantic requests. The bridge owns navigation and menu execution.
+    Watchlist(WatchlistReq),
     /// Player-route requests — what an overlay panel on the player's own `ModalStack` asks of the
     /// loop, because the thing being asked for needs the `MainThread` token, the route or the
     /// trail (§14). Executed by `app/playback.rs`'s drain.
@@ -222,6 +224,20 @@ pub enum SearchReq {
     Account,
 }
 
+/// Bounded actions emitted by the owned Watchlist page. A card's identity is its provider `guid`;
+/// a press that reaches a server names the server row the store matched it to, and the bridge
+/// checks both against the page's retained selection before acting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WatchlistReq {
+    Back,
+    Tab(HomeTab),
+    Account,
+    /// OK on a title a server holds: that server's own detail page.
+    Detail { sid: plx_plex::plex::ServerId, rk: String, guid: String },
+    /// A hold on a title a server holds: the ordinary card menu plus *Remove from Watchlist*.
+    ItemMenu { sid: plx_plex::plex::ServerId, rk: String, guid: String },
+}
+
 /// Bounded actions emitted by the owned Home page. Item identity is always server-scoped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HomeReq {
@@ -241,6 +257,8 @@ pub enum HomeTab {
     Movies,
     Shows,
     Search,
+    /// The profile's Plex Watchlist, the pill between the type pills and Search.
+    Watchlist,
 }
 
 /// Addressed bootstrap/diagnostic intentions. They use the same owned step and focus engine as
@@ -352,6 +370,10 @@ pub enum ItemMenuKind {
     /// The detail page's season tabs. `show_rk` is the page's own show, which the menu's Shuffle
     /// Show row plays.
     Season { mark: plx_ui::widgets::PosterMark, show_rk: String },
+    /// A Watchlist card a server holds: `row` is that server's catalog row (the ordinary card
+    /// menu is built from it) and `guid` the title's provider guid, which the menu's extra
+    /// *Remove from Watchlist* row names.
+    WatchlistCard { row: Box<plx_data::pms::PmsMovie>, guid: String },
 }
 
 /// **Identity, not contents.** `PmsMovie` is a wire DTO with no `PartialEq` of its own, and one
@@ -366,6 +388,8 @@ impl PartialEq for ItemMenuKind {
                 da == db && a.sid == b.sid && a.rk == b.rk && a.kind == b.kind,
             (Self::Episode { mark: a }, Self::Episode { mark: b }) => a == b,
             (Self::Season { mark: a, show_rk: sa }, Self::Season { mark: b, show_rk: sb }) => a == b && sa == sb,
+            (Self::WatchlistCard { row: a, guid: ga }, Self::WatchlistCard { row: b, guid: gb }) =>
+                ga == gb && a.sid == b.sid && a.rk == b.rk && a.kind == b.kind,
             _ => false,
         }
     }
@@ -389,6 +413,7 @@ impl plx_machine::machine::LogicalState for ItemMenuArg {
             ItemMenuKind::Card { row, from_deck } => { c.u32(0).bool(*from_deck).u32(row.kind as u32); }
             ItemMenuKind::Episode { mark } => { c.u32(1).u32(*mark as u32); }
             ItemMenuKind::Season { mark, show_rk } => { c.u32(2).u32(*mark as u32).str(show_rk); }
+            ItemMenuKind::WatchlistCard { row, guid } => { c.u32(3).u32(row.kind as u32).str(guid); }
         }
         c.u32(self.host.0);
         c.option(self.focus, |c, key| { c.u32(key.entry.0).u32(key.elem); });
@@ -1010,6 +1035,12 @@ pub trait MetadataLike: AppLike + Sized {
     fn subtitle_search<'a>(_cx: &Cx<'a, Self>) -> Option<plx_data::subsearch::SubSearchView<'a>> {
         None
     }
+    /// The profile's Watchlist, which the Watchlist page lists and the detail page's Watchlist
+    /// control reads. PROVIDED, defaulting to `None` for `subtitle_search`'s reason: a host that
+    /// carries no Watchlist shows no Watchlist control, so test hosts owe nothing.
+    fn watchlist<'a>(_cx: &Cx<'a, Self>) -> Option<plx_data::watchlist::WatchlistView<'a>> {
+        None
+    }
 }
 
 /// A host that publishes Home's retained catalog view. The view is borrowed from the rig-owned
@@ -1174,6 +1205,9 @@ pub mod word {
     pub const ITEM_MENU: &str = "itemmenu";
     pub const PERSON: &str = "person";
     pub const COLLECTION: &str = "collection";
+    /// The Watchlist page (`screens::watchlist`), a `route=` word, the same spelling as
+    /// `app::words::route_word`'s `AppArg::Watchlist` arm.
+    pub const WATCHLIST: &str = "watchlist";
     pub const SETTINGS: &str = "settings";
     pub const PRIVACY: &str = "privacy";
     pub const LEGAL: &str = "legal";
@@ -1503,6 +1537,9 @@ pub enum AppArg {
     /// The Search screen. A PEER of Home and the Library, not a stacking page: it is reached from
     /// the strip's last pill and BACK from it returns to Home. What it OPENS stacks; it does not.
     Search,
+    /// The profile's Plex Watchlist. A PEER of Home exactly as Search is: reached from its pill
+    /// (between the type pills and Search), BACK returns to Home, and what it opens stacks.
+    Watchlist,
     /// Playback. Its panels are NOT here — they are entries on the player page's own
     /// `ModalStack` ([`Self::PlayerOverlay`]), and the container owns which one is up.
     Player,
@@ -1517,11 +1554,11 @@ pub enum AppArg {
     FirstRunConsent(u8),
 }
 
-pub const ARG_SHAPE: &str = "AppArg{Login,Profiles,Onboard,Home,Library,Search,Player,Content:{Detail{sid:u32,rk:str},Person{sid:u32,key:str,guid:str,name:str,thumb:str},Filmography{sid:u32,key:str},Collection{sid:u32,rk:str,sec:i64,tag:i64,name:str}},Settings:SettingsPage{Root,Playback,AudioSubtitles,Favourites,Privacy,Legal,About,Document(u8),Preview(u8),ConsentStage(u8),Language,Contribute},FirstRunConsent(u8),LibraryMenu{host:u32,target:{epoch:u32,sid:u32,section:u64},kind:u32,anchor:[u32;4]},\
+pub const ARG_SHAPE: &str = "AppArg{Login,Profiles,Onboard,Home,Library,Search,Watchlist,Player,Content:{Detail{sid:u32,rk:str},Person{sid:u32,key:str,guid:str,name:str,thumb:str},Filmography{sid:u32,key:str},Collection{sid:u32,rk:str,sec:i64,tag:i64,name:str}},Settings:SettingsPage{Root,Playback,AudioSubtitles,Favourites,Privacy,Legal,About,Document(u8),Preview(u8),ConsentStage(u8),Language,Contribute},FirstRunConsent(u8),LibraryMenu{host:u32,target:{epoch:u32,sid:u32,section:u64},kind:u32,anchor:[u32;4]},\
      PlayerOverlay{Tracks(tab:i32),Info,Chapters,More(quality:bool)},\
      AltSources{host:u32,sid:u32,rk:str,anchor:[u32;4]},\
      TracksPanel{page:i32},AboutPanel,PersonBio,CollectionAbout,AccountMenu,\
-     ItemMenu{sid:u32,rk:str,kind:{Card{from_deck:bool,type:u32},Episode{mark:u32},Season{mark:u32}},\
+     ItemMenu{sid:u32,rk:str,kind:{Card{from_deck:bool,type:u32},Episode{mark:u32},Season{mark:u32},WatchlistCard{type:u32,guid:str}},\
      host:u32,focus:Option<{entry:u32,elem:u32}>,anchor:[u32;4],loaded_episode:bool,from_home:bool}}";
 
 impl LogicalState for AppArg {
@@ -1554,6 +1591,8 @@ impl LogicalState for AppArg {
             Self::Library => { c.u32(0).u32(6); }
             Self::Search => { c.u32(0).u32(9); }
             Self::Player => { c.u32(0).u32(10); }
+            // Allocated forward past every page tag above.
+            Self::Watchlist => { c.u32(0).u32(12); }
             Self::Content(arg) => { c.u32(1); arg.write(c); }
             Self::Settings(page) => { c.u32(2); page.write(c); }
             Self::FirstRunConsent(stage) => { c.u32(3).u8(*stage); }
@@ -1570,7 +1609,7 @@ impl plx_ui::screen::ScreenArg for AppArg {
     /// them fade the bar with the page.
     fn chrome(&self) -> Chrome {
         match self {
-            AppArg::Home | AppArg::Library | AppArg::Search => Chrome::TabBar,
+            AppArg::Home | AppArg::Library | AppArg::Search | AppArg::Watchlist => Chrome::TabBar,
             AppArg::Login
             | AppArg::Profiles
             | AppArg::Onboard
@@ -1623,6 +1662,8 @@ impl plx_ui::screen::ScreenArg for AppArg {
             AppArg::Library => 7,
             AppArg::Search => 10,
             AppArg::Player => 11,
+            // Allocated forward: 25 is the first id no screen has held.
+            AppArg::Watchlist => 25,
             // The ROOT payload is a boot address, not an identity: one Settings surface and one
             // consent question, whichever page each happens to have been rooted at.
             AppArg::Settings(_) => 12,
@@ -1815,6 +1856,7 @@ where
                 if let PageMemory::Search(memory) = &ret.memory { page.restore(memory); }
                 Box::new(page)
             }
+            AppArg::Watchlist => Box::new(crate::watchlist::WatchlistScreen::new(entry, id)),
             // Phase 9: the player is an OWNED screen — the instance that holds the HUD, the scrub
             // gesture, the held-key timer, the control row's springs and the Up Next countdown,
             // and that answers `RenderStrategy::VideoPlane`. Its transport is pinned from the
@@ -1929,6 +1971,7 @@ pub fn every_surface_arg() -> Vec<AppArg> {
             | AppArg::Home
             | AppArg::Library
             | AppArg::Search
+            | AppArg::Watchlist
             | AppArg::Player
             | AppArg::Content(_) => {
                 panic!("a page argument is not a surface: its word is `route=`")
@@ -1986,6 +2029,7 @@ pub const SCREEN_SHAPES: &[&str] = &[
     "LocalizationSettingsV4{Root:{language:system|en|es|be},Language:{selected:system|en|es|be,focus:u32,busy:bool,failed:bool},Contribute:QrLink,LoginReportAlert:{send:bool,scroll_target_bits:u32},ConsentDisclosure:{scroll_target_bits:u32,scroll_owner:answer_band},ConsentDeleteDisclosure:{scroll_target_bits:u32},BandPart:MeasuredRowOrColumn}",
     crate::preferences::SHAPE,
     crate::preferences::PICKER_SHAPE,
+    crate::watchlist::SHAPE,
 ];
 
 /// The pin over [`SCREEN_SHAPES`] — bump it in the same edit that adds an entry, and say why.
@@ -2100,7 +2144,9 @@ pub const SCREEN_SHAPES: &[&str] = &[
 // The switcher for a library not selected yet: the switcher gains the library it is for
 // (`for:Option<u32>`) and the view a library chosen there opens on (`opening`); the previous pin
 // was 0xb6a5_fe9f_9825_0637.
-const SCREEN_SHAPES_PIN: u64 = 0x43f8_1f0c_e8ef_7d6c;
+// The Watchlist: `ARG_SHAPE` gains the `Watchlist` page and the item menu's `WatchlistCard` kind,
+// and `screens::watchlist::SHAPE` joins the inventory; the previous pin was 0x43f8_1f0c_e8ef_7d6c.
+const SCREEN_SHAPES_PIN: u64 = 0x5600_14ed_619e_9928;
 
 #[cfg(test)]
 mod arg_tests {
@@ -2167,7 +2213,7 @@ mod arg_tests {
     /// stated as a rule.
     #[test]
     fn the_profile_chip_is_offered_on_exactly_the_bar_wearing_pages() {
-        for r in [AppArg::Home, AppArg::Library, AppArg::Search] {
+        for r in [AppArg::Home, AppArg::Library, AppArg::Search, AppArg::Watchlist] {
             assert!((r.chrome() == Chrome::TabBar), "a bar-wearing page carries the chip");
         }
         for r in [

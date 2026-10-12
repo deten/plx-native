@@ -40,6 +40,14 @@ pub const ELEM_ALT: u32 = 2;
 pub const ELEM_MARK_WATCHED: u32 = 3;
 pub const ELEM_MARK_UNWATCHED: u32 = 4;
 pub const ELEM_TRAILER: u32 = 5;
+pub const ELEM_WATCHLIST_ADD: u32 = 6;
+pub const ELEM_WATCHLIST_REMOVE: u32 = 7;
+
+/// How many discs the row can carry, in [`disc_verb`]'s slot order: Restart, Trailer, the watched
+/// toggle and the Watchlist toggle.
+pub const DISCS: usize = 4;
+/// The most controls the row ever holds: Play, the four discs and *Also available*.
+pub const MAX_CTLS: usize = 6;
 
 /// The hero's one focus group. Local to this screen — nothing outside `screens::detail` ever names
 /// it — so, like `screens::profiles`'s `ROSTER_GROUP`/`FOOTER_GROUP`, any small integer would do;
@@ -83,6 +91,8 @@ fn mark_show_watched_label() -> &'static CStr { plx_platform::i18n::msg::browse_
 fn mark_show_unwatched_label() -> &'static CStr { plx_platform::i18n::msg::browse_detail_mark_show_unwatched_c() }
 fn play_from_start_label() -> &'static CStr { plx_platform::i18n::msg::browse_detail_play_start_c() }
 fn trailer_label() -> &'static CStr { plx_platform::i18n::msg::browse_detail_trailer_c() }
+fn watchlist_add_label() -> &'static CStr { plx_platform::i18n::msg::browse_watchlist_add_c() }
+fn watchlist_remove_label() -> &'static CStr { plx_platform::i18n::msg::browse_watchlist_remove_c() }
 
 /// A control in the hero action row, named rather than numbered — ported verbatim from
 /// `ui/detail.rs::HeroCtl`.
@@ -101,6 +111,11 @@ pub enum HeroCtl {
     MarkWatched,
     /// the − face of that same toggle — worn once the item IS watched
     MarkUnwatched,
+    /// the stroked-bookmark face of the Watchlist TOGGLE, worn while the title is not on the
+    /// profile's Watchlist; present only while the Watchlist can answer for this title
+    WatchlistAdd,
+    /// the filled-bookmark face of that toggle, worn once the title IS on the Watchlist
+    WatchlistRemove,
 }
 
 impl HeroCtl {
@@ -113,6 +128,8 @@ impl HeroCtl {
             HeroCtl::Alt => ELEM_ALT,
             HeroCtl::MarkWatched => ELEM_MARK_WATCHED,
             HeroCtl::MarkUnwatched => ELEM_MARK_UNWATCHED,
+            HeroCtl::WatchlistAdd => ELEM_WATCHLIST_ADD,
+            HeroCtl::WatchlistRemove => ELEM_WATCHLIST_REMOVE,
         }
     }
     /// The inverse of [`elem`](Self::elem) — `None` for any `u32` outside the six identities
@@ -126,12 +143,18 @@ impl HeroCtl {
             ELEM_ALT => Some(HeroCtl::Alt),
             ELEM_MARK_WATCHED => Some(HeroCtl::MarkWatched),
             ELEM_MARK_UNWATCHED => Some(HeroCtl::MarkUnwatched),
+            ELEM_WATCHLIST_ADD => Some(HeroCtl::WatchlistAdd),
+            ELEM_WATCHLIST_REMOVE => Some(HeroCtl::WatchlistRemove),
             _ => None,
         }
     }
     /// Is `self` the watched toggle, wearing either face?
     pub fn is_watch(self) -> bool {
         matches!(self, HeroCtl::MarkWatched | HeroCtl::MarkUnwatched)
+    }
+    /// Is `self` the Watchlist toggle, wearing either face?
+    pub fn is_watchlist(self) -> bool {
+        matches!(self, HeroCtl::WatchlistAdd | HeroCtl::WatchlistRemove)
     }
 }
 
@@ -144,13 +167,17 @@ pub struct HeroSet {
     pub trailer: bool,
     pub alt: bool,
     pub mark: PosterMark,
+    /// Whether the title is on the profile's Watchlist, `None` while the Watchlist cannot answer
+    /// (not loaded, a profile without one, a title it cannot hold), and then the row carries no
+    /// Watchlist control at all.
+    pub watchlist: Option<bool>,
 }
 
 /// The row's controls, in drawn order, for a given set. A fixed 5-slot array (Play + Restart +
 /// Trailer + Alt + one watch face is the widest the row ever gets) plus a live count, so no
 /// per-frame allocation.
-pub fn hero_ctls(set: HeroSet) -> ([HeroCtl; 5], usize) {
-    let mut v = [HeroCtl::Play; 5];
+pub fn hero_ctls(set: HeroSet) -> ([HeroCtl; MAX_CTLS], usize) {
+    let mut v = [HeroCtl::Play; MAX_CTLS];
     let mut n = 1;
     if set.restart {
         v[n] = HeroCtl::Restart;
@@ -170,6 +197,12 @@ pub fn hero_ctls(set: HeroSet) -> ([HeroCtl; 5], usize) {
         HeroCtl::MarkWatched
     };
     n += 1;
+    // The Watchlist toggle closes the row: it is about the title's place in a list, not about
+    // playing it, so it sits after every control that plays or marks.
+    if let Some(on) = set.watchlist {
+        v[n] = if on { HeroCtl::WatchlistRemove } else { HeroCtl::WatchlistAdd };
+        n += 1;
+    }
     (v, n)
 }
 
@@ -202,12 +235,12 @@ pub fn focusable(ctl: HeroCtl, full_trailer: bool) -> bool {
 /// presentation mode. Every call site that enumerates the row for focus/hit-testing extent must go
 /// through this rather than `hero_ctls` directly, or the two can disagree about which controls
 /// exist right now.
-pub fn visible_ctls(set: HeroSet, full_trailer: bool) -> ([HeroCtl; 5], usize) {
+pub fn visible_ctls(set: HeroSet, full_trailer: bool) -> ([HeroCtl; MAX_CTLS], usize) {
     let (all, n) = hero_ctls(set);
     if !full_trailer {
         return (all, n);
     }
-    let mut v = [HeroCtl::Play; 5];
+    let mut v = [HeroCtl::Play; MAX_CTLS];
     let mut count = 0;
     for &c in &all[..n] {
         if focusable(c, full_trailer) {
@@ -236,6 +269,13 @@ pub fn index_of(set: HeroSet, ctl: HeroCtl) -> Option<usize> {
 pub fn watch_index(set: HeroSet) -> Option<usize> {
     let (v, n) = hero_ctls(set);
     v[..n].iter().position(|&c| c.is_watch())
+}
+
+/// Where the Watchlist toggle sits in `set`, by its JOB, like [`watch_index`], so focus rides a
+/// press that flips its face. `None` while the row carries no Watchlist control.
+pub fn watchlist_index(set: HeroSet) -> Option<usize> {
+    let (v, n) = hero_ctls(set);
+    v[..n].iter().position(|&c| c.is_watchlist())
 }
 
 /// Has this show been started AT ALL? PMS puts `S1E1 off=0` on deck for a show nobody has
@@ -301,7 +341,7 @@ pub fn watch_names_show(d: &Detail) -> bool {
     hero_episode(d).is_some()
 }
 
-/// A disc's slot (`[restart, trailer, watch]`) and the verb it unfurls to — `None` for the two PILLS.
+/// A disc's slot (`[restart, trailer, watch, watchlist]`) and the verb it unfurls to, `None` for the two PILLS.
 pub fn disc_verb(ctl: HeroCtl, name_show: bool) -> Option<(usize, &'static CStr)> {
     match (ctl, name_show) {
         (HeroCtl::Restart, _) => Some((0, play_from_start_label())),
@@ -310,6 +350,8 @@ pub fn disc_verb(ctl: HeroCtl, name_show: bool) -> Option<(usize, &'static CStr)
         (HeroCtl::MarkWatched, true) => Some((2, mark_show_watched_label())),
         (HeroCtl::MarkUnwatched, false) => Some((2, mark_unwatched_label())),
         (HeroCtl::MarkUnwatched, true) => Some((2, mark_show_unwatched_label())),
+        (HeroCtl::WatchlistAdd, _) => Some((3, watchlist_add_label())),
+        (HeroCtl::WatchlistRemove, _) => Some((3, watchlist_remove_label())),
         _ => None,
     }
 }
@@ -370,7 +412,7 @@ pub struct HeroWidths {
     pub pill: f32,
     pub alt: f32,
     /// the three discs, in [`disc_verb`]'s slot order, each already unfurled
-    pub disc: [f32; 3],
+    pub disc: [f32; DISCS],
 }
 
 /// The accumulation itself, PURE: the drawn frame of control `i` in `set`, given both pills'
@@ -386,6 +428,7 @@ pub fn hero_btn_rect_at(set: HeroSet, i: usize, y: f32, cw: HeroWidths) -> Rect 
             HeroCtl::Restart => cw.disc[0],
             HeroCtl::Trailer => cw.disc[1],
             HeroCtl::MarkWatched | HeroCtl::MarkUnwatched => cw.disc[2],
+            HeroCtl::WatchlistAdd | HeroCtl::WatchlistRemove => cw.disc[3],
         };
         if k >= i {
             break;
@@ -405,11 +448,11 @@ pub fn hero_btn_rect_at(set: HeroSet, i: usize, y: f32, cw: HeroWidths) -> Rect 
 pub fn disc_caps(
     measure: &dyn Measure,
     set: HeroSet,
-    unfurl: [f32; 3],
+    unfurl: [f32; DISCS],
     named_show: bool,
-) -> [f32; 3] {
+) -> [f32; DISCS] {
     let (v, n) = hero_ctls(set);
-    let mut label_w = [0.0f32; 3];
+    let mut label_w = [0.0f32; DISCS];
     for &c in &v[..n] {
         if let Some((slot, label)) = disc_verb(c, named_show) {
             label_w[slot] = measure.width(label, theme::size::BODY, true);
@@ -428,25 +471,21 @@ pub(super) fn disc_caps_at(
     set: HeroSet,
     pill: f32,
     alt: f32,
-    unfurl: [f32; 3],
-    label_w: [f32; 3],
-) -> [f32; 3] {
+    unfurl: [f32; DISCS],
+    label_w: [f32; DISCS],
+) -> [f32; DISCS] {
     let (_, n) = hero_ctls(set);
     let closed = HeroWidths {
         pill,
         alt,
-        disc: [CD; 3],
+        disc: [CD; DISCS],
     };
     let last = hero_btn_rect_at(set, n.saturating_sub(1), 0.0, closed);
     let budget = CircleButton::label_budget(CD, FACTS_R - (last.x + last.w));
     if label_w.iter().copied().fold(0.0f32, f32::max) > budget {
-        return [CD; 3];
+        return [CD; DISCS];
     }
-    let open = [
-        CircleButton::cap_w(CD, unfurl[0], label_w[0]),
-        CircleButton::cap_w(CD, unfurl[1], label_w[1]),
-        CircleButton::cap_w(CD, unfurl[2], label_w[2]),
-    ];
+    let open: [f32; DISCS] = std::array::from_fn(|i| CircleButton::cap_w(CD, unfurl[i], label_w[i]));
     let last_open = hero_btn_rect_at(
         set,
         n.saturating_sub(1),
@@ -458,7 +497,7 @@ pub(super) fn disc_caps_at(
         },
     );
     if last_open.x + last_open.w > FACTS_R + 0.01 {
-        return [CD; 3];
+        return [CD; DISCS];
     }
     open
 }
@@ -470,7 +509,7 @@ pub fn hero_widths(
     measure: &dyn Measure,
     set: HeroSet,
     has_restart: bool,
-    unfurl: [f32; 3],
+    unfurl: [f32; DISCS],
     named_show: bool,
 ) -> HeroWidths {
     HeroWidths {
@@ -850,6 +889,7 @@ mod tests {
             trailer,
             alt,
             mark,
+            watchlist: None,
         }
     }
 
@@ -1031,13 +1071,14 @@ mod tests {
         let cw = HeroWidths {
             pill: 200.0,
             alt: 260.0,
-            disc: [CD, CD, CD],
+            disc: [CD; DISCS],
         };
         for restart in [false, true] {
             for alt in [false, true] {
                 for trailer in [false, true] {
-                    for mark in [PosterMark::None, PosterMark::Watched] {
-                        let s = set_full(restart, alt, mark, trailer);
+                    for (mark, watchlist) in [(PosterMark::None, None), (PosterMark::Watched, None),
+                        (PosterMark::None, Some(false)), (PosterMark::Watched, Some(true))] {
+                        let s = HeroSet { watchlist, ..set_full(restart, alt, mark, trailer) };
                         let (_, n) = hero_ctls(s);
                         let mut prev_right = f32::MIN;
                         for i in 0..n {
@@ -1260,6 +1301,7 @@ mod tests {
             trailer: false,
             alt: false,
             mark: PosterMark::Watched,
+            watchlist: None,
         };
         let (controls, n) = hero_ctls(set);
         assert_eq!(
@@ -1275,6 +1317,7 @@ mod tests {
             trailer: false,
             alt: false,
             mark: PosterMark::None,
+            watchlist: None,
         };
         let with = HeroSet {
             alt: true,
@@ -1293,6 +1336,7 @@ mod tests {
                     trailer,
                     alt,
                     mark: PosterMark::InProgress,
+                    watchlist: None,
                 };
                 let (controls, n) = hero_ctls(set);
                 assert!(controls[..n].iter().all(|ctl| matches!(
@@ -1413,12 +1457,14 @@ mod tests {
             trailer: false,
             alt: false,
             mark: PosterMark::None,
+            watchlist: None,
         };
         let wide = HeroSet {
             restart: true,
             trailer: false,
             alt: true,
             mark: PosterMark::None,
+            watchlist: None,
         };
         assert_eq!(ctl_at(compact, 1), Some(HeroCtl::MarkWatched));
         assert_eq!(ctl_at(wide, 1), Some(HeroCtl::Restart));
@@ -1432,11 +1478,12 @@ mod tests {
             trailer: false,
             alt: true,
             mark: PosterMark::None,
+            watchlist: Some(false),
         };
         let widths = HeroWidths {
             pill: 210.0,
             alt: 300.0,
-            disc: [90.0, 120.0, 120.0],
+            disc: [90.0, 120.0, 120.0, 130.0],
         };
         let (controls, n) = hero_ctls(set);
         for i in 1..n {
@@ -1462,20 +1509,22 @@ mod tests {
                         PosterMark::InProgress,
                         PosterMark::Watched,
                     ] {
-                        let set = set_full(restart, alt, mark, trailer);
+                        for watchlist in [None, Some(false), Some(true)] {
+                        let set = HeroSet { watchlist, ..set_full(restart, alt, mark, trailer) };
                         let (_, n) = hero_ctls(set);
                         for labels in [
-                            [10.0, 12.0, 12.0],
-                            [201.0, 80.0, 316.0],
-                            [400.0, 400.0, 400.0],
-                            [900.0, 40.0, 40.0],
+                            [10.0, 12.0, 12.0, 14.0],
+                            [201.0, 80.0, 316.0, 290.0],
+                            [400.0, 400.0, 400.0, 400.0],
+                            [900.0, 40.0, 40.0, 40.0],
                         ] {
                             for e in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
                                 for unfurl in [
-                                    [e, 0.0, 1.0 - e],
-                                    [1.0 - e, 0.0, e],
-                                    [e, e, 0.0],
-                                    [0.0, e, e],
+                                    [e, 0.0, 1.0 - e, 0.0],
+                                    [1.0 - e, 0.0, e, 0.0],
+                                    [e, e, 0.0, 0.0],
+                                    [0.0, e, e, 0.0],
+                                    [0.0, 0.0, 1.0 - e, e],
                                 ] {
                                     let disc = disc_caps_at(set, PW + 62.0, 340.0, unfurl, labels);
                                     let last = hero_btn_rect_at(
@@ -1493,6 +1542,7 @@ mod tests {
                                 }
                             }
                         }
+                        }
                     }
                 }
             }
@@ -1508,8 +1558,9 @@ mod tests {
             trailer: true,
             alt: true,
             mark: PosterMark::Watched,
+            watchlist: Some(true),
         };
-        let caps = disc_caps(&measure, wide, [1.0, 1.0, 1.0], true);
+        let caps = disc_caps(&measure, wide, [1.0; DISCS], true);
         let (_, n) = hero_ctls(wide);
         let last = hero_btn_rect_at(
             wide,
@@ -1523,7 +1574,7 @@ mod tests {
         );
         assert!(
             last.x + last.w <= FACTS_R + 0.01,
-            "the 5-control row collapses rather than crossing People"
+            "the 6-control row collapses rather than crossing People"
         );
 
         let roomy = HeroSet {
@@ -1531,10 +1582,17 @@ mod tests {
             trailer: true,
             alt: false,
             mark: PosterMark::Watched,
+            watchlist: None,
         };
-        let caps = disc_caps(&measure, roomy, [1.0, 1.0, 1.0], false);
+        let caps = disc_caps(&measure, roomy, [1.0; DISCS], false);
         assert!(caps[1] > CD, "Trailer unfurls when the row has room");
         assert!(caps[2] > CD, "Watch unfurls when the row has room");
+
+        // The common movie row with the Watchlist toggle, Play, the watched toggle, the
+        // Watchlist toggle, still has room for either verb.
+        let movie = HeroSet { restart: false, trailer: false, alt: false, mark: PosterMark::None, watchlist: Some(true) };
+        let caps = disc_caps(&measure, movie, [1.0; DISCS], false);
+        assert!(caps[2] > CD && caps[3] > CD, "both toggles unfurl on a plain movie row");
     }
 
     struct HugeMeasure;
@@ -1557,8 +1615,9 @@ mod tests {
             trailer: true,
             alt: true,
             mark: PosterMark::Watched,
+            watchlist: None,
         };
-        assert_eq!(disc_caps(&HugeMeasure, set, [1.0, 1.0, 1.0], true), [CD; 3]);
+        assert_eq!(disc_caps(&HugeMeasure, set, [1.0; DISCS], true), [CD; DISCS]);
     }
 
     #[test]
@@ -1596,8 +1655,10 @@ mod tests {
             trailer: true,
             alt: true,
             mark: PosterMark::InProgress,
+            watchlist: Some(false),
         };
         let (_, n) = hero_ctls(set);
+        assert_eq!(n, MAX_CTLS, "the widest row there is");
         let last = hero_btn_rect_at(
             set,
             n - 1,
@@ -1605,7 +1666,7 @@ mod tests {
             HeroWidths {
                 pill: PW + 62.0,
                 alt: 340.0,
-                disc: [CD; 3],
+                disc: [CD; DISCS],
             },
         );
         assert!(last.x + last.w < FACTS_R);

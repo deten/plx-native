@@ -475,6 +475,7 @@ pub(crate) fn content_requests(app: &mut App, fr: &Frame) {
     home_requests(app, fr.now);
     library_requests(app, fr.now);
     search_requests(app);
+    watchlist_requests(app);
     // The player's overlays are surfaces on its own stack, so what they decide reaches the
     // loop the same way every other owned screen's decision does — as requests, drained here,
     // after the dispatcher and before the frame's own arms (`playback::player_requests`).
@@ -747,6 +748,78 @@ fn search_requests(app: &mut App) {
                 app.ok_armed = false;
             }
         }
+    }
+}
+
+/// The server row a Watchlist press may act on: the retained selection's own, and only when the
+/// request names that same server row and title. A list that moved under the press (a refresh,
+/// a removal, a server that stopped holding it) names nothing.
+fn watchlist_target<'a>(entry: &'a plx_data::watchlist::Entry, sid: plx_plex::plex::ServerId, rk: &str, guid: &str)
+    -> Option<&'a plx_data::pms::PmsMovie> {
+    entry.avail.on_server().filter(|row| entry.item.guid == guid && row.sid == sid && row.rk == rk && !rk.is_empty())
+}
+
+fn watchlist_requests(app: &mut App) {
+    use plx_screens::registry::WatchlistReq;
+    for (source, request, ret) in app.bridge.take_watchlist_reqs() {
+        let MachineId::Instance(instance) = source else { continue };
+        let Some(entry) = app.pages.nav.entry_of_instance(instance) else { continue };
+        if app.route() != AppArg::Watchlist || app.pages.nav.input_owner() != Some(InputOwner::Entry(entry)) { continue; }
+        match &request {
+            WatchlistReq::Back => bridge::nav_tab(&mut app.pages, &mut app.bridge, HomeTab::Home, None, Some(ret)),
+            WatchlistReq::Tab(tab) => {
+                if !app.bridge.search_tab_available(*tab) || matches!(tab, HomeTab::Watchlist) { continue; }
+                match tab {
+                    HomeTab::Home => bridge::nav_home_pill(&mut app.pages, &mut app.bridge, Some(ret)),
+                    other => bridge::nav_tab(&mut app.pages, &mut app.bridge, *other, None, Some(ret)),
+                }
+            }
+            WatchlistReq::Account => bridge::open_account_menu(&mut app.pages),
+            WatchlistReq::Detail { sid, rk, guid } => {
+                let Some((selected, _)) = app.bridge.watchlist_selection(&app.pages, entry, ret.focus) else { continue };
+                if watchlist_target(&selected, *sid, rk, guid).is_none() { continue; }
+                bridge::nav_push_with_return(&mut app.pages,
+                    AppArg::Content(ContentArg::Detail { sid: *sid, rk: rk.clone() }), ret);
+            }
+            WatchlistReq::ItemMenu { sid, rk, guid } => {
+                let Some((selected, opener)) = app.bridge.watchlist_selection(&app.pages, entry, ret.focus) else { continue };
+                let Some(row) = watchlist_target(&selected, *sid, rk, guid)
+                    .filter(|row| plx_screens::item_menu::has_actions(row)) else { continue };
+                let mut arg = bridge::card_menu_arg(row, false, false, entry, ret.focus, opener.rect);
+                arg.kind = plx_screens::registry::ItemMenuKind::WatchlistCard { row: Box::new(row.clone()), guid: guid.clone() };
+                bridge::open_item_menu(&mut app.pages, arg);
+                app.ok_armed = false;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod watchlist_action_tests {
+    use super::*;
+    use plx_data::watchlist::{Availability, Entry};
+
+    fn entry(guid: &str, avail: Availability) -> Entry {
+        Entry { item: plx_plex::plex::discover::WatchItem { guid: guid.into(), ..Default::default() }, avail }
+    }
+
+    /// A press acts only on the retained selection's own server row, by server, ratingKey and guid
+    /// together; a title no server holds, or one still being checked, opens nothing here.
+    #[test]
+    fn a_watchlist_press_names_the_retained_server_row_only() {
+        let _serial = plx_base::testlock::serial();
+        plx_plex::plex::reset_servers_for_test();
+        let a = plx_plex::plex::register_for_test("wl-a", "127.0.0.1", 1, "synthetic", "fixture");
+        let b = plx_plex::plex::register_for_test("wl-b", "127.0.0.1", 2, "synthetic", "fixture");
+        let row = plx_data::pms::PmsMovie { sid: a, rk: "101".into(), ..Default::default() };
+        let on = entry("plex://movie/aaa", Availability::OnServer(Box::new(row)));
+        assert!(watchlist_target(&on, a, "101", "plex://movie/aaa").is_some());
+        assert!(watchlist_target(&on, b, "101", "plex://movie/aaa").is_none(), "another server");
+        assert!(watchlist_target(&on, a, "102", "plex://movie/aaa").is_none(), "a stale row");
+        assert!(watchlist_target(&on, a, "101", "plex://movie/bbb").is_none(), "another title");
+        assert!(watchlist_target(&entry("plex://movie/aaa", Availability::Missing), a, "101", "plex://movie/aaa").is_none());
+        assert!(watchlist_target(&entry("plex://movie/aaa", Availability::Checking), a, "101", "plex://movie/aaa").is_none());
+        plx_plex::plex::reset_servers_for_test();
     }
 }
 

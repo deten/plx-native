@@ -985,6 +985,11 @@ fn grid_library_search_heroidx_arm(app: &mut App, _fr: &mut Frame) {
         if let Some(q) = plx_base::devtrig::read("search") {
             apply_search_boot_trigger(&q, &mut app.pages, &mut app.bridge);
         }
+        // `/tmp/plxnative-watchlist[=<card>]`, the Watchlist page, a peer of Home like Search
+        // (`SelectTab`); `screenshot::watchlist_arm` seats `<card>` once the list has landed.
+        if plx_base::devtrig::read("watchlist").is_some() {
+            crate::app::bridge::nav_select_tab(&mut app.pages, AppArg::Watchlist);
+        }
         if let Some(s) = plx_base::devtrig::read("heroidx") {
             if let Ok(n) = s.parse::<c_int>() {
                 app.bridge.home_command(HomeCmd::SelectHero(n));
@@ -1942,6 +1947,8 @@ pub(crate) unsafe fn each_frame(app: &mut App, fr: &mut Frame) -> bool {
     screenshot::libgrid_arm(app, fr);
     screenshot::libshelf_arm(app, fr);
     screenshot::libmenu_arm(app, fr);
+    screenshot::watchlist_arm(app, fr);
+    screenshot::herowatchlist_arm(app, fr);
     screenshot::clockstop_arm(app, fr);
     if !detail_arm(app, fr) {
         return false;

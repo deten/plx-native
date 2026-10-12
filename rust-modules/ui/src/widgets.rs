@@ -539,6 +539,50 @@ pub fn poster_label(
             card.w - 2.0 * INSET_X, cap_h));
 }
 
+/// The inset a [`poster_note`] keeps from the card's sides and bottom, [`poster_label`]'s.
+const POSTER_NOTE_INSET_X: f32 = 16.0;
+const POSTER_NOTE_INSET_BOT: f32 = 14.0;
+const POSTER_NOTE_LINES: usize = 2;
+
+/// The note's text view at `card_w`: LABEL, bold, centred, at most two lines.
+fn poster_note_view<'a>(text: &'a str, measure: &'a dyn plx_machine::machine::Measure) -> TextView<'a> {
+    TextView::new(text, theme::size::LABEL, theme::TEXT_PRIMARY)
+        .bold()
+        .h(HAlign::Center)
+        .max_lines(POSTER_NOTE_LINES)
+        .with_measure(measure)
+}
+
+/// The width a [`poster_note`] wraps at on a card `card_w` wide.
+pub fn poster_note_w(card_w: f32) -> f32 {
+    (card_w - 2.0 * POSTER_NOTE_INSET_X).max(0.0)
+}
+
+/// Whether `text` fits a [`poster_note`] on a card `card_w` wide without ending in an ellipsis ,
+/// the text-fit tests' question for the app's own note.
+pub fn poster_note_fits(text: &str, card_w: f32, measure: &dyn plx_machine::machine::Measure) -> bool {
+    !poster_note_view(text, measure).truncates(poster_note_w(card_w))
+}
+
+/// **A card that stands for something the viewer cannot open here**: the whole artwork dimmed to
+/// [`theme::CARD_UNAVAILABLE_A`] and a short app-owned NOTE saying why, up to two centred lines at
+/// the card's foot over the shared bottom scrim, a Watchlist title none of the viewer's servers
+/// holds (*Not on your server*). A sibling of [`poster_label`], which names what an item IS; this
+/// says what the viewer can do with it, so it is not a fourth watch-state mark either. Like the
+/// label it is on every such card at once, so it does not move with focus.
+pub fn poster_note(p: Painter, card: Rect, rad: f32, text: &str, measure: &dyn plx_machine::machine::Measure) {
+    let dim = theme::scrim(theme::CARD_UNAVAILABLE_A);
+    p.rect(card, rad, dim, dim, 0.0);
+    if text.is_empty() {
+        return;
+    }
+    let view = poster_note_view(text, measure);
+    let w = poster_note_w(card.w);
+    let h = view.measure_h(w);
+    art_scrim(p, card, rad, h + 2.0 * POSTER_NOTE_INSET_BOT + theme::space::SM, STILL_SCRIM_A);
+    view.draw(p, Rect::new(card.x + POSTER_NOTE_INSET_X, card.y + card.h - POSTER_NOTE_INSET_BOT - h, w, h));
+}
+
 /// The gradient a [`still_line`] is read against — height and peak alpha.
 ///
 /// **112 for the PAIR since 2026-09-05**, and the revision states its own reason: "the system's

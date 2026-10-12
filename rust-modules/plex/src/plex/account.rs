@@ -57,6 +57,13 @@ pub fn plex_tv() -> &'static str {
     })
 }
 
+/// Whether [`plex_tv`] is the loopback stand-in rather than the real service. `discover.rs` asks
+/// so the Watchlist calls follow plex.tv onto the mock: a screenshot or simulator run must reach
+/// no Plex service at all, and the stand-in answers both. In a shipping build it is always `false`.
+pub fn plex_tv_stand_in() -> bool {
+    plex_tv() != PLEX_TV
+}
+
 /// `http://127.0.0.1:<port>` or `http://localhost:<port>`, optionally with a trailing `/`.
 fn loopback_http(v: &str) -> bool {
     let port = v
@@ -284,6 +291,19 @@ impl AccountClient {
             timeouts, false, None, None);
         note_response_contact(url, &response);
         decode_evidence("GET", url, response)
+    }
+
+    /// One request with this client's identity headers plus `extra` (paging headers), for the
+    /// `discover.rs` op file. Blocking; the reachability memo is fed exactly as [`Self::get`] feeds it.
+    pub(super) fn request_with(&self, method: &str, url: &str, extra: &[String])
+        -> Result<plx_net::net::Resp, plx_net::net::RequestFailure> {
+        let mut headers = self.headers();
+        headers.extend(extra.iter().cloned());
+        let body: Option<&[u8]> = (method != "GET").then_some(&b""[..]);
+        let resp = plx_net::net::request_evidence(url, &headers, method, body,
+            plx_net::net::API, false, None, None);
+        note_response_contact(url, &resp);
+        resp
     }
 
     fn get_raw(&self, url: &str) -> Result<plx_net::net::Resp, plx_net::net::RequestFailure> {
@@ -920,7 +940,7 @@ pub fn describe_evidence(evidence: &CallEvidence) -> String {
 }
 
 /// [`decode`], keeping the evidence of a call that yields nothing.
-fn decode_evidence<T: DeserializeOwned>(verb: &str, url: &str,
+pub(super) fn decode_evidence<T: DeserializeOwned>(verb: &str, url: &str,
     response: Result<plx_net::net::Resp, plx_net::net::RequestFailure>) -> Result<T, CallEvidence> {
     match response {
         Err(failure) => Err(Err(failure)),
@@ -1742,6 +1762,18 @@ mod tests {
             ),
             "discover.provider.plex.tv/library/people/{id}"
         );
+
+        // The Watchlist: its route names survive, and the item id rides only in the dropped query.
+        assert_eq!(
+            endpoint_shape("https://discover.provider.plex.tv/library/sections/watchlist/all?sort=watchlistedAt:desc"),
+            "discover.provider.plex.tv/library/sections/watchlist/all"
+        );
+        for action in ["addToWatchlist", "removeFromWatchlist"] {
+            let shape = endpoint_shape(&format!(
+                "https://discover.provider.plex.tv/actions/{action}?ratingKey=5d776825880197001ec967c6"));
+            assert_eq!(shape, format!("discover.provider.plex.tv/actions/{action}"));
+            assert!(!shape.contains("5d77"));
+        }
     }
 
     /// Why the parse-failure line logs serde's CATEGORY and position instead of the message: the

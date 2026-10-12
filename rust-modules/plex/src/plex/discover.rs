@@ -132,6 +132,175 @@ impl AccountClient {
     }
 }
 
+// ---- the Watchlist ------------------------------------------------------------------------------
+//
+// The signed-in profile's Plex Watchlist lives on the same provider host. Every endpoint below is
+// taken from python-plexapi 4.18.3 (`MyPlexAccount.watchlist` / `addToWatchlist` /
+// `removeFromWatchlist`, `myplex.py`), which is the evidence this module has; NONE of it has been
+// measured against a live account from this app. `docs/pms-api.md` §2d records the details and
+// what is still unverified (the JSON shape of a watchlist row in particular: python-plexapi reads
+// the XML form).
+
+/// How many watchlist rows one request asks for, and the most this app holds. python-plexapi's
+/// own page size; a watchlist longer than this shows its newest `WATCHLIST_MAX` titles, and the
+/// detail page's Watchlist control answers from those.
+pub const WATCHLIST_MAX: usize = 100;
+
+/// Where the Watchlist calls go: the Discover provider, or, in a developer build whose plex.tv is
+/// the loopback stand-in (`account::plex_tv`), that same stand-in, so a simulator or screenshot
+/// run never reaches a real Plex service.
+pub fn watchlist_base() -> &'static str {
+    if super::account::plex_tv_stand_in() { super::account::plex_tv() } else { DISCOVER }
+}
+
+/// Why a Watchlist call produced nothing usable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchlistFailure {
+    /// plex.tv refused the identity the request carried (401/403): this profile has no Watchlist
+    /// it may read or edit, a managed Plex Home user, as far as is known. Retrying will not help.
+    Refused(u16),
+    /// No answer, a 5xx, or a body that did not read. Retryable.
+    Unreachable,
+}
+
+impl WatchlistFailure {
+    fn of(evidence: &super::account::CallEvidence) -> Self {
+        match super::account::refused_identity(evidence) {
+            Some(status) => Self::Refused(status),
+            None => Self::Unreachable,
+        }
+    }
+}
+
+/// One page of the Watchlist, newest addition first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WatchlistPage {
+    pub items: Vec<WatchItem>,
+    /// The provider's `totalSize` (or the row count when it states none): more than
+    /// `items.len()` means the list was cut at [`WATCHLIST_MAX`].
+    pub total: usize,
+}
+
+impl AccountClient {
+    /// GET {base}/library/sections/watchlist/all, the profile's Watchlist, newest addition first
+    /// (`sort=watchlistedAt:desc`), one page of [`WATCHLIST_MAX`] (`X-Plex-Container-Size`, a
+    /// HEADER as python-plexapi sends it). `includeCollections`/`includeExternalMedia` are what that
+    /// library sends; the rows are Discover items, not a server's.
+    pub fn watchlist(&self) -> Result<WatchlistPage, WatchlistFailure> {
+        let url = format!(
+            "{}/library/sections/watchlist/all?includeCollections=1&includeExternalMedia=1&sort=watchlistedAt:desc",
+            watchlist_base());
+        let paging = [
+            "X-Plex-Container-Start: 0".to_string(),
+            format!("X-Plex-Container-Size: {WATCHLIST_MAX}"),
+        ];
+        let env: WatchlistEnvelope = super::account::decode_evidence("GET", &url,
+            self.request_with("GET", &url, &paging)).map_err(|e| WatchlistFailure::of(&e))?;
+        // A body with no MediaContainer at all is not an empty watchlist, it is a body this
+        // client cannot read, retried like a transport failure (the `person_credits` bargain).
+        let Some(container) = env.media_container else {
+            plx_base::eventlog::log("watchlist: 200 with no MediaContainer; treating as a failure");
+            return Err(WatchlistFailure::Unreachable);
+        };
+        Ok(watchlist_page(container))
+    }
+
+    /// PUT {base}/actions/addToWatchlist or …/removeFromWatchlist `?ratingKey={id}`, the id is the
+    /// TAIL of the item's `plex://movie|show/<id>` guid, never a server's ratingKey
+    /// (python-plexapi `addToWatchlist`: `item.guid.rsplit('/', 1)[-1]`).
+    pub fn watchlist_edit(&self, guid: &str, add: bool) -> Result<(), WatchlistFailure> {
+        let id = guid_tail(guid);
+        if id.is_empty() {
+            return Err(WatchlistFailure::Unreachable);
+        }
+        let action = if add { "addToWatchlist" } else { "removeFromWatchlist" };
+        let url = format!("{}/actions/{action}?ratingKey={id}", watchlist_base());
+        match self.request_with("PUT", &url, &[]) {
+            Ok(resp) if resp.ok() => Ok(()),
+            Ok(resp) => Err(WatchlistFailure::of(&Ok(resp.status))),
+            Err(failure) => Err(WatchlistFailure::of(&Err(failure))),
+        }
+    }
+}
+
+/// The id a Watchlist action names: the last path segment of a `plex://` guid. Empty for a guid
+/// that is not one of the provider's own (a legacy-agent `com.plexapp.agents.imdb://…` item has
+/// no Discover identity, and python-plexapi's own split would produce a bogus id from it).
+pub fn guid_tail(guid: &str) -> &str {
+    guid.strip_prefix("plex://")
+        .and_then(|rest| rest.rsplit_once('/'))
+        .map(|(_, id)| id)
+        .filter(|id| !id.is_empty() && !id.contains(['?', '&', '#']))
+        .unwrap_or("")
+}
+
+/// Whether `guid` names a title a Watchlist can hold: a movie or a show on the provider's own
+/// agent. Seasons and episodes are not watchlisted; a legacy-agent guid has no Discover identity.
+pub fn watchlistable(guid: &str) -> bool {
+    (guid.starts_with("plex://movie/") || guid.starts_with("plex://show/")) && !guid_tail(guid).is_empty()
+}
+
+fn watchlist_page(container: WatchlistContainer) -> WatchlistPage {
+    let items: Vec<WatchItem> = container.metadata.into_iter()
+        .filter(|item| watchlistable(&item.guid))
+        .take(WATCHLIST_MAX)
+        .collect();
+    let total = (container.total_size.max(container.size).max(0) as usize).max(items.len());
+    WatchlistPage { items, total }
+}
+
+#[derive(Deserialize, Default)]
+struct WatchlistEnvelope {
+    #[serde(rename = "MediaContainer")]
+    media_container: Option<WatchlistContainer>,
+}
+
+#[derive(Deserialize, Default)]
+struct WatchlistContainer {
+    #[serde(rename = "totalSize", default, deserialize_with = "de_i64")]
+    total_size: i64,
+    #[serde(default, deserialize_with = "de_i64")]
+    size: i64,
+    /// Absent on an empty watchlist (as on every empty Plex container), which is an answer.
+    #[serde(rename = "Metadata", default)]
+    metadata: Vec<WatchItem>,
+}
+
+/// One title on the Watchlist, as the provider describes it, a DISCOVER row: `rating_key` is the
+/// provider's id and `thumb` an absolute URL on another host, so nothing here addresses a server.
+/// [`guid`](Self::guid) is the one key both sides share (`plex::Metadata::guid` on a server's row),
+/// which is how the app finds whether one of your servers holds it.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, serde::Serialize)]
+pub struct WatchItem {
+    #[serde(default)]
+    pub guid: String,
+    #[serde(rename = "ratingKey", default)]
+    pub rating_key: String,
+    /// `movie` or `show`.
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default, deserialize_with = "de_i64")]
+    pub year: i64,
+    /// Whether the listing carries a summary at all is not verified; a row without one shows none.
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub thumb: String,
+}
+
+impl WatchItem {
+    /// The id the add/remove actions name ([`guid_tail`]).
+    pub fn id(&self) -> &str {
+        guid_tail(&self.guid)
+    }
+
+    pub fn is_show(&self) -> bool {
+        self.kind == "show" || self.guid.starts_with("plex://show/")
+    }
+}
+
 // ---- serde DTOs (only the fields the page consumes; all optional to tolerate shape drift) ----
 
 #[derive(Deserialize, Default)]
@@ -299,4 +468,88 @@ pub struct CreditItem {
     /// shipped with no posters at all. Nothing was measured before that claim was written down.
     #[serde(default)]
     pub thumb: String,
+}
+
+#[cfg(test)]
+mod watchlist_tests {
+    use super::*;
+
+    fn page(body: &str) -> Option<WatchlistPage> {
+        let env: WatchlistEnvelope = serde_json::from_str(body).expect("json");
+        env.media_container.map(watchlist_page)
+    }
+
+    /// The row shape the mock serves and python-plexapi reads (`guid`, `ratingKey`, `type`,
+    /// `title`, `year`, `thumb`), numbers as strings or integers alike, in the order the provider
+    /// sent them (newest first is the request's `sort`, not something re-derived here).
+    #[test]
+    fn a_watchlist_page_parses_rows_in_wire_order() {
+        let got = page(r#"{"MediaContainer":{"size":2,"totalSize":"2","Metadata":[
+            {"guid":"plex://movie/5d776825880197001ec967c6","ratingKey":"5d776825880197001ec967c6",
+             "type":"movie","title":"Newest","year":"2019","thumb":"https://metadata-static.plex.tv/p.jpg",
+             "summary":"A film."},
+            {"guid":"plex://show/5d9c086c46115600200aa2fe","ratingKey":"5d9c086c46115600200aa2fe",
+             "type":"show","title":"Older","year":2001}]}}"#).expect("a container");
+        assert_eq!(got.total, 2);
+        assert_eq!(got.items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), ["Newest", "Older"]);
+        assert_eq!((got.items[0].year, got.items[0].id()), (2019, "5d776825880197001ec967c6"));
+        assert_eq!(got.items[0].summary, "A film.");
+        assert!(!got.items[0].is_show() && got.items[1].is_show());
+        assert_eq!(got.items[1].summary, "", "a row without a summary shows none");
+    }
+
+    /// An empty watchlist is a container with no `Metadata`, an ANSWER. A body with no container
+    /// at all is not one: it is the shape drift that must stay retryable.
+    #[test]
+    fn an_empty_container_is_an_answer_and_a_missing_one_is_not() {
+        let empty = page(r#"{"MediaContainer":{"size":0}}"#).expect("an empty container");
+        assert!(empty.items.is_empty() && empty.total == 0);
+        assert!(page(r#"{"errors":[{"code":1001}]}"#).is_none());
+    }
+
+    /// Rows a Watchlist cannot act on (no provider guid, an episode, a legacy agent) are dropped
+    /// rather than drawn as cards whose Remove would send a bogus id; the page is cut at the cap.
+    #[test]
+    fn rows_without_a_provider_identity_are_dropped_and_the_page_is_capped() {
+        let mut rows = vec![
+            r#"{"guid":"com.plexapp.agents.imdb://tt0111161?lang=en","type":"movie","title":"Legacy"}"#.to_string(),
+            r#"{"guid":"plex://episode/5fbd929d55d986002d63c021","type":"episode","title":"Ep"}"#.to_string(),
+            r#"{"guid":"","type":"movie","title":"None"}"#.to_string(),
+        ];
+        for n in 0..WATCHLIST_MAX + 5 {
+            rows.push(format!(r#"{{"guid":"plex://movie/5d77{n:020x}","type":"movie","title":"T{n}"}}"#));
+        }
+        let body = format!(r#"{{"MediaContainer":{{"totalSize":{},"Metadata":[{}]}}}}"#, rows.len(), rows.join(","));
+        let got = page(&body).unwrap();
+        assert_eq!(got.items.len(), WATCHLIST_MAX);
+        assert_eq!(got.items[0].title, "T0");
+        assert!(got.total > got.items.len(), "the cut is visible to the caller");
+    }
+
+    #[test]
+    fn the_action_id_is_the_tail_of_a_provider_guid_only() {
+        assert_eq!(guid_tail("plex://movie/5d776825880197001ec967c6"), "5d776825880197001ec967c6");
+        assert_eq!(guid_tail("plex://show/demo-cosmos"), "demo-cosmos");
+        assert_eq!(guid_tail("com.plexapp.agents.imdb://tt0111161?lang=en"), "");
+        assert_eq!(guid_tail("plex://movie/"), "");
+        assert_eq!(guid_tail("plex://movie/x?y=1"), "", "nothing that could smuggle a query");
+        assert!(watchlistable("plex://movie/abc") && watchlistable("plex://show/abc"));
+        assert!(!watchlistable("plex://episode/abc") && !watchlistable("plex://season/abc"));
+        assert!(!watchlistable("collection://10c9bd0a"));
+    }
+
+    /// A refused identity is a verdict about the profile; anything else stays retryable.
+    #[test]
+    fn a_refusal_is_told_apart_from_no_answer() {
+        assert_eq!(WatchlistFailure::of(&Ok(401)), WatchlistFailure::Refused(401));
+        assert_eq!(WatchlistFailure::of(&Ok(403)), WatchlistFailure::Refused(403));
+        assert_eq!(WatchlistFailure::of(&Ok(500)), WatchlistFailure::Unreachable);
+        assert_eq!(WatchlistFailure::of(&Ok(200)), WatchlistFailure::Unreachable);
+    }
+
+    /// No stand-in is armed in the host suite, so the calls address the provider itself.
+    #[test]
+    fn the_watchlist_lives_on_the_discover_provider() {
+        assert_eq!(watchlist_base(), DISCOVER);
+    }
 }

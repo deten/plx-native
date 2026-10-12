@@ -54,6 +54,7 @@ pub mod search;
 pub mod subsearch;
 pub mod tape;
 pub mod viewstate;
+pub mod watchlist;
 
 /// Production store aggregate. All seven stores are physical owners here — Browse, Person and
 /// ViewState landed first; Search, Hubs and Metadata completed the port.
@@ -70,6 +71,8 @@ pub struct Stores {
     /// The player's subtitle search & download (`crate::subsearch`). Appended last.
     pub subtitle_search: subsearch::SubSearchStore,
     pub viewstate: std::cell::RefCell<viewstate::ViewStateStore>,
+    /// The profile's Plex Watchlist (`crate::watchlist`). Appended last.
+    pub watchlist: watchlist::WatchlistStore,
 }
 
 impl Default for Stores {
@@ -85,6 +88,7 @@ impl Default for Stores {
             search: search::SearchStore::default(),
             subtitle_search: subsearch::SubSearchStore::default(),
             viewstate: std::cell::RefCell::new(viewstate::ViewStateStore::default()),
+            watchlist: watchlist::WatchlistStore::default(),
         }
     }
 }
@@ -111,6 +115,17 @@ impl Stores {
 
     pub fn collection_view(&self) -> crate::collection::CollectionView<'_> {
         self.collection.view()
+    }
+
+    pub fn watchlist_run(&mut self, cmd: watchlist::WatchlistCmd) -> bool {
+        self.watchlist.run(cmd)
+    }
+
+    /// `wanted`: the Watchlist page or a detail page is on top (see `crate::watchlist`).
+    pub fn watchlist_pump(&mut self, wanted: bool) -> bool { self.watchlist.pump(&self.landgate, wanted) }
+
+    pub fn watchlist_view(&self) -> crate::watchlist::WatchlistView<'_> {
+        self.watchlist.view()
     }
 
     pub fn subtitle_search_run(&mut self, cmd: subsearch::SubSearchCmd) -> bool {
@@ -241,6 +256,7 @@ impl Stores {
             StoreId::Search => self.search.gen(),
             StoreId::SubtitleSearch => self.subtitle_search.gen(),
             StoreId::ViewState => self.viewstate.borrow().gen(),
+            StoreId::Watchlist => self.watchlist.gen(),
         }
     }
 
@@ -270,6 +286,9 @@ impl Stores {
         if let Some(generation) = self.viewstate.borrow().take_notice() {
             notices.push((StoreId::ViewState, generation));
         }
+        if let Some(generation) = self.watchlist.take_notice() {
+            notices.push((StoreId::Watchlist, generation));
+        }
         notices
     }
 }
@@ -287,6 +306,8 @@ pub enum StoreId {
     Collection,
     /// Appended for the same reason: every earlier store keeps its recorded ordinal.
     SubtitleSearch,
+    /// Appended for the same reason.
+    Watchlist,
 }
 
 /// Route-scoped background work, distinct from a user command. Polling an idle store must not
@@ -312,7 +333,7 @@ impl StoreWork {
 }
 
 impl StoreId {
-    pub const ALL: [StoreId; 8] = [
+    pub const ALL: [StoreId; 9] = [
         StoreId::Browse,
         StoreId::Hubs,
         StoreId::Metadata,
@@ -321,6 +342,7 @@ impl StoreId {
         StoreId::ViewState,
         StoreId::Collection,
         StoreId::SubtitleSearch,
+        StoreId::Watchlist,
     ];
 
     /// The library's ordinal for this store (spec §5.1: the library never names `StoreId`).
@@ -342,6 +364,7 @@ impl StoreId {
             StoreId::SubtitleSearch => "subsearch",
             StoreId::Person => "person",
             StoreId::ViewState => "viewstate",
+            StoreId::Watchlist => "watchlist",
         }
     }
 }
@@ -358,6 +381,7 @@ pub enum StoreCmd {
     Collection(collection::CollectionCmd),
     ViewState(viewstate::ViewStateCmd),
     SubtitleSearch(subsearch::SubSearchCmd),
+    Watchlist(watchlist::WatchlistCmd),
 }
 
 impl StoreCmd {
@@ -371,6 +395,7 @@ impl StoreCmd {
             StoreCmd::Collection(_) => StoreId::Collection,
             StoreCmd::ViewState(_) => StoreId::ViewState,
             StoreCmd::SubtitleSearch(_) => StoreId::SubtitleSearch,
+            StoreCmd::Watchlist(_) => StoreId::Watchlist,
         }
     }
 }
@@ -670,6 +695,6 @@ mod tests {
         for id in StoreId::ALL {
             assert_eq!(StoreId::from_ord(id.ord()), Some(id));
         }
-        assert_eq!(StoreId::from_ord(StoreOrd(8)), None);
+        assert_eq!(StoreId::from_ord(StoreOrd(9)), None);
     }
 }

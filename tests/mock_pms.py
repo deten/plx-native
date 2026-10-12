@@ -58,6 +58,12 @@ QR image, and `/api/v2/user`) with a fixed demo code, for an app booted with
 without touching plex.tv. The poll stays pending unless `--authorize-after N` (implied, N=2, by
 `--plaintext-only-lan`) links the code on the Nth poll with a synthetic account token, so a
 sign-in completes end to end without any real account.
+Every mode also stands in for plex.tv's Watchlist (the Discover provider's
+`/library/sections/watchlist/all` and its `/actions/addToWatchlist` and `removeFromWatchlist`) and
+answers the PMS `/library/all?guid=` lookup that matches a Watchlist title to this server's copy:
+the library's first three movies and first two shows plus two titles no server holds, newest first,
+edited in memory until the mock stops. `POST /_mock/config {"watchlist_refused": true}` makes plex.tv
+refuse the profile a Watchlist (401), the managed-profile case.
 `GET`/`PUT /api/v2/user/profile` also reads and edits an in-memory synthetic profile;
 `/api/v2/user` returns the same preferences for playback warmup. Changes last only until the
 mock stops, and PUTs are recorded in the mock write log. Ordinary mode advertises itself through
@@ -1613,6 +1619,12 @@ class MockPms:
         # subtitle search: rk -> {candidate key -> row} for the latest search; id sequences
         self.sub_candidates, self.sub_candidate_seq, self.sub_install_seq = {}, 0, 0
         self.sub_downloaded = set()  # stream ids the search flow installed and PMS has not yet discarded
+        # The profile's Plex Watchlist (plex.tv's Discover provider), built from the library on
+        # first use (`watchlist_rows`). `POST /_mock/config {"watchlist_refused": true}` answers
+        # every Watchlist call 401, as plex.tv does for a profile it gives no Watchlist.
+        self.watchlist = None
+        self.watchlist_pool = {}
+        self.watchlist_refused = False
 
     @staticmethod
     def safe_path(path):
@@ -1704,6 +1716,71 @@ class MockPms:
                         lib.sub_discarded = set()
                     lib.sub_discarded.add(sid)
                     getattr(lib, "sidecars", {}).pop(sid, None)
+
+    # --- the plex.tv Watchlist (`docs/pms-api.md` 2d) ----------------------------------------
+
+    # Two titles the Watchlist holds that no server does, so a run shows the "Not on your server"
+    # card. The catalog's are public-domain films (the demo library is photographed); the
+    # generated library's come from the closed alphabet like every other string it serves.
+    CATALOG_WATCHLIST_ELSEWHERE = (
+        ("plex://movie/demo-elsewhere-nosferatu", "movie", "Nosferatu", 1922,
+         "A silent horror film: an estate agent travels to the castle of a count who is not what he seems."),
+        ("plex://movie/demo-elsewhere-the-general", "movie", "The General", 1926,
+         "A silent comedy: a locomotive engineer chases the stolen train he loves across the lines."),
+    )
+
+    @staticmethod
+    def _watchlist_row(guid, kind, title, year, summary, at):
+        """One Watchlist row in the provider's shape: its own id (the guid's tail) as the
+        ratingKey, never a server's, and no artwork the mock could serve."""
+        tail = guid.rsplit("/", 1)[-1]
+        return {"ratingKey": tail, "key": f"/library/metadata/{tail}", "guid": guid, "type": kind,
+                "title": title, "year": year, "summary": summary, "thumb": "", "watchlistedAt": at}
+
+    def watchlist_rows(self):
+        """The Watchlist, newest addition first, built once from the library: its first three
+        movies and first two shows (each held by this server, matched by guid) and two titles no
+        server holds, interleaved. `watchlist_pool` is every title an add may name."""
+        with self.lock:
+            if self.watchlist is not None:
+                return self.watchlist
+            lib = self.lib
+            ordered = sorted(lib.items.values(), key=lambda it: int(it["ratingKey"]))
+            movies = [it for it in ordered if it["type"] == "movie"]
+            shows = [it for it in ordered if it["type"] == "show"]
+            held = [(it["guid"], it["type"], it["title"], it.get("year", 0), it.get("summary", ""))
+                    for it in movies + shows]
+            if isinstance(lib, CatalogLibrary):
+                elsewhere = list(self.CATALOG_WATCHLIST_ELSEWHERE)
+            else:
+                rng = random.Random(0x5714)
+                elsewhere = [(f"plex://movie/{sname(rng)}", "movie", sname(rng), 2001, swords(rng, 6))
+                             for _ in range(2)]
+            self.watchlist_pool = {g.rsplit("/", 1)[-1]: (g, k, t, y, s) for g, k, t, y, s in held + elsewhere}
+            listed = held[:3] + held[len(movies):len(movies) + 2]
+            # Newest first: a held movie, a title held nowhere, the rest, the other title held nowhere.
+            order = listed[:1] + elsewhere[:1] + listed[1:] + elsewhere[1:]
+            base = int(getattr(lib, "now", 1_700_000_000))
+            self.watchlist = [self._watchlist_row(*row, at=base - 3600 * n) for n, row in enumerate(order)]
+            return self.watchlist
+
+    def watchlist_edit(self, method, path, q, add):
+        """`PUT /actions/addToWatchlist|removeFromWatchlist?ratingKey=<id>`: the provider's id, the
+        tail of the title's guid. 200 with an empty body, as python-plexapi expects."""
+        if method != "PUT":
+            return (405, "text/plain", b"")
+        self.watchlist_rows()
+        self.note_write(method, path)
+        rid = q.get("ratingKey", "")
+        with self.lock:
+            known = self.watchlist_pool.get(rid)
+            if known is None:
+                return (404, "application/json", json.dumps({"error": "unknown ratingKey"}).encode())
+            self.watchlist = [row for row in self.watchlist if row["ratingKey"] != rid]
+            if add:
+                newest = max((row["watchlistedAt"] for row in self.watchlist), default=0) + 1
+                self.watchlist.insert(0, self._watchlist_row(*known, at=newest))
+        return (200, "text/plain", b"")
 
     # --- containers ------------------------------------------------------------------------
 
@@ -1802,7 +1879,8 @@ class MockPms:
                 return j({"error": "invalid JSON body"}, 400)
             if not isinstance(patch, dict):
                 return j({"error": "body must be a JSON object"}, 400)
-            allowed = {"refuse_enhancements", "ignore_enhancements", "plex_pass", "subtitle_auto_sync"}
+            allowed = {"refuse_enhancements", "ignore_enhancements", "plex_pass", "subtitle_auto_sync",
+                       "watchlist_refused"}
             unknown = set(patch) - allowed
             if unknown:
                 return j({"error": f"unknown config key(s): {sorted(unknown)}"}, 400)
@@ -1888,12 +1966,41 @@ class MockPms:
                 return j(plaintext_only_lan_resources(
                     lib, cfg["ip"], cfg["http_port"], cfg["fail_port"], cfg["access_token"]))
             return j([self.account_resource] if self.account_resource is not None else [])
+        # The profile's Watchlist on plex.tv's Discover provider, which the app reaches on this
+        # same port through the `plxnative-plextv` stand-in (`docs/pms-api.md` 2d).
+        watchlist_list = len(segs) == 4 and segs[:3] == ["library", "sections", "watchlist"]
+        if (watchlist_list or p in ("/actions/addToWatchlist", "/actions/removeFromWatchlist")) \
+                and self.watchlist_refused:
+            return j({"errors": [{"code": 1001, "message": "User could not be authenticated"}]}, 401)
+        if watchlist_list:
+            rows = sorted(self.watchlist_rows(), key=lambda row: row["watchlistedAt"],
+                          reverse=q.get("sort", "watchlistedAt:desc") != "watchlistedAt:asc")
+            if q.get("type") in ("1", "2"):
+                rows = [row for row in rows if row["type"] == {"1": "movie", "2": "show"}[q["type"]]]
+            page, extra = paged(rows)
+            mc = {"identifier": "tv.plex.provider.discover", "librarySectionTitle": "Watchlist", **extra}
+            if page:
+                mc["Metadata"] = page
+            mc["size"] = len(page)
+            return j({"MediaContainer": mc})
+        if p == "/actions/addToWatchlist":
+            return self.watchlist_edit(method, path, q, True)
+        if p == "/actions/removeFromWatchlist":
+            return self.watchlist_edit(method, path, q, False)
         catalog = isinstance(lib, CatalogLibrary)
         if p == "/" or p == "/identity":
             return j(self.container(machineIdentifier=lib.machine, friendlyName=lib.friendly,
                                     version="1.41.0.0000-synthetic",
                                     myPlexSubscription=self.plex_pass,
                                     platform="Linux", myPlex=True))
+        if p == "/library/all":
+            # The cross-library guid lookup (`plex::Client::find_by_guid`): the rows holding this
+            # guid, of this type when one is named. A server that holds nothing answers size 0.
+            want = q.get("guid", "")
+            kind = {"1": "movie", "2": "show", "4": "episode"}.get(q.get("type", ""))
+            rows = [it for it in lib.items.values()
+                    if want and it.get("guid") == want and (kind is None or it["type"] == kind)]
+            return j(self.container(Metadata=rows))
         if p == "/library/sections":
             return j(self.container(Directory=[dict(s, agent="tv.plex.agents.movie",
                                                     scanner="Plex Movie", language="en-US",

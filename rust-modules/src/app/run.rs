@@ -2148,9 +2148,9 @@ pub(crate) unsafe fn update(app: &mut App, fr: &mut Frame) {
             });
             fr.underlay_moving |= moving;
         } else if !super::bridge::host_frozen(&app.pages)
-            && matches!(app.route(), AppArg::Search)
+            && matches!(app.route(), AppArg::Search | AppArg::Watchlist)
         {
-            // Search wears the same shared bar as Home/Library (`ScreenArg::chrome() ==
+            // Search and the Watchlist wear the same shared bar as Home/Library (`ScreenArg::chrome() ==
             // Chrome::TabBar`, `screens/registry.rs`), and
             // `SearchScreen::tick` only steps the screen's OWN rows/springs — it never touches
             // the strip's capsule/scroll/chip springs, which live in `Bridge`'s own
@@ -2325,6 +2325,12 @@ pub(crate) unsafe fn update(app: &mut App, fr: &mut Frame) {
         super::bridge::execute_endpoint_outcomes(&mut app.pages, upgrades);
         app.bridge.person_pump();
         app.bridge.collection_pump();
+        // The Watchlist: lists and matches only while a page that reads it is on top (the
+        // Watchlist page, or a detail page whose Watchlist control it answers); an add or remove
+        // already pressed is sent wherever the person has gone since.
+        let watchlist_wanted = matches!(app.route(),
+            AppArg::Watchlist | AppArg::Content(plx_screens::registry::ContentArg::Detail { .. }));
+        app.bridge.watchlist_pump(watchlist_wanted);
         if let Some(target) = app.bridge.take_detail_refresh() {
             refresh_content(&mut app.pages, &mut app.bridge, target);
         }
@@ -2703,6 +2709,7 @@ pub(crate) unsafe fn report(app: &mut App, fr: &mut Frame) {
                 AppArg::Content(plx_screens::registry::ContentArg::Collection(_)) =>
                     crate::focusprobe::Screen::Collection,
                 AppArg::Search => crate::focusprobe::Screen::Search,
+                AppArg::Watchlist => crate::focusprobe::Screen::Watchlist,
                 // The same words the heartbeat's `overlay=` uses, and — since phase 9 — from the
                 // same place: the SURFACE that is up. There is no second table; see
                 // `heartbeat_word_tests::focusprobe_player_overlay_delegates_to_the_shared_overlay_word_function`.

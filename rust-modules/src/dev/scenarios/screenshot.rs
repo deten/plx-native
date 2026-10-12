@@ -34,6 +34,8 @@ pub(crate) struct ScreenshotArms {
     libshelf: SeatArm,
     libmenu_done: bool,
     libmenu_sent: Option<u32>,
+    watchlist: KeyWalk,
+    herowatchlist: KeyWalk,
     /// `clockstop`'s position, read once (`None` = not read yet), and whether it was reached.
     clockstop: Option<Option<u32>>,
     #[cfg(feature = "hostsim")]
@@ -49,6 +51,8 @@ impl ScreenshotArms {
     #[cfg(feature = "hostsim")]
     pub(crate) fn pending(&self) -> bool {
         !self.libtype_done
+            || !self.watchlist.done
+            || !self.herowatchlist.done
             || !self.libgrid.done
             || !self.libshelf.done
             || !self.libmenu_done
@@ -279,6 +283,104 @@ pub(crate) fn libmenu_arm(app: &mut App, fr: &Frame) {
     {
         app.scenarios.shots.libmenu_sent = Some(fr.now);
         crate::app::bridge::Bridge::library_command(&mut app.pages, LibraryCmd::OpenMenu(kind));
+    }
+}
+
+/// A latch for an arm that reaches its state with scripted RIGHT/LEFT presses, the same keys a
+/// person would press, paced at [`RESEND_MS`] so each lands before the next is judged.
+#[derive(Default)]
+pub(crate) struct KeyWalk {
+    done: bool,
+    sent: Option<u32>,
+}
+
+impl KeyWalk {
+    fn finish(&mut self, line: &str) {
+        plx_base::eventlog::log(line);
+        self.done = true;
+    }
+}
+
+fn press(app: &mut App, key: plx_machine::machine::Key, now: u32) {
+    for ev in crate::app::bridge::script_key(key, plx_machine::machine::Tick { ms: now, dt_us: 0 }) {
+        app.inputs.push(ev);
+    }
+}
+
+/// `/tmp/plxnative-watchlist[=<card>]`, with the boot arm's `SelectTab` onto the Watchlist page
+/// (`grid_library_search_heroidx_arm`), wait for the list and every server answer to land; with
+/// `<card>`, then walk focus to that card (0 is the newest title) with RIGHT presses. Done when
+/// the page REPORTS the list landed, or focus on that card.
+pub(crate) fn watchlist_arm(app: &mut App, fr: &Frame) {
+    if app.scenarios.shots.watchlist.done {
+        return;
+    }
+    let Some(v) = plx_base::devtrig::read("watchlist") else {
+        app.scenarios.shots.watchlist.done = true;
+        return;
+    };
+    let want = v.trim().parse::<usize>().ok();
+    if fr.now.wrapping_sub(app.t0) > CEILING_MS {
+        app.scenarios.shots.watchlist.finish("watchlist: gave up; the list never settled on the page");
+        return;
+    }
+    let view = app.bridge.watchlist_view();
+    let settled = view.status() == plx_data::watchlist::WatchlistStatus::Ready
+        && view.entries().iter().all(|e| !matches!(e.avail, plx_data::watchlist::Availability::Checking));
+    let count = view.entries().len();
+    if !matches!(app.route(), AppArg::Watchlist) || !settled {
+        return;
+    }
+    let Some(want) = want else {
+        app.scenarios.shots.watchlist.finish(&format!("watchlist: landed with {count} titles"));
+        return;
+    };
+    let at = crate::app::bridge::Bridge::watchlist_focus_index(&app.pages);
+    if at == Some(want) {
+        app.scenarios.shots.watchlist.finish(&format!("watchlist: focus on card {want}"));
+        return;
+    }
+    if due(app.scenarios.shots.watchlist.sent, fr.now) {
+        app.scenarios.shots.watchlist.sent = Some(fr.now);
+        // Off the grid (the bar), DOWN into it; on it, along the row toward the card.
+        let key = match at {
+            None => plx_machine::machine::Key::Down,
+            Some(at) if at < want => plx_machine::machine::Key::Right,
+            Some(_) => plx_machine::machine::Key::Left,
+        };
+        press(app, key, fr.now);
+    }
+}
+
+/// `/tmp/plxnative-herowatchlist`, on a detail page (`detail=<rk>`), walk the hero's focus RIGHT
+/// to the Watchlist toggle once the Watchlist has answered for the title, so its verb unfurls.
+/// Done when focus is on the toggle (either face).
+pub(crate) fn herowatchlist_arm(app: &mut App, fr: &Frame) {
+    if app.scenarios.shots.herowatchlist.done {
+        return;
+    }
+    if !plx_base::devtrig::flag("herowatchlist") {
+        app.scenarios.shots.herowatchlist.done = true;
+        return;
+    }
+    if fr.now.wrapping_sub(app.t0) > CEILING_MS {
+        app.scenarios.shots.herowatchlist.finish("herowatchlist: gave up; no Watchlist toggle to focus");
+        return;
+    }
+    if !matches!(app.route(), AppArg::Content(plx_screens::registry::ContentArg::Detail { .. })) {
+        return;
+    }
+    let focus = app.pages.focus().map(|key| key.elem);
+    if let Some(on) = focus.and_then(plx_screens::detail::watchlist_toggle_face) {
+        let face = if on { "remove" } else { "add" };
+        app.scenarios.shots.herowatchlist.finish(&format!("herowatchlist: focus on the Watchlist toggle ({face})"));
+        return;
+    }
+    let ready = app.bridge.watchlist_view().status() == plx_data::watchlist::WatchlistStatus::Ready;
+    let on_hero = focus.is_some_and(plx_screens::detail::is_hero_elem);
+    if ready && on_hero && due(app.scenarios.shots.herowatchlist.sent, fr.now) {
+        app.scenarios.shots.herowatchlist.sent = Some(fr.now);
+        press(app, plx_machine::machine::Key::Right, fr.now);
     }
 }
 

@@ -29,6 +29,7 @@ pub mod item_menu;
 pub mod library;
 pub mod library_order;
 pub mod search;
+pub mod watchlist;
 pub mod family;
 pub mod legal;
 pub mod login;

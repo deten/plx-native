@@ -657,6 +657,11 @@ pub(super) unsafe fn apply_item_action<R: super::playback::PlaybackResources>(
                 sid, rk: rk.to_string(), write: w, detail, guid: String::new(),
             });
         }
+        // The menu sends this one to the Watchlist store itself (`ItemMenuScreen::activate`);
+        // should it ever arrive here it means the same thing, through the same command.
+        Action::RemoveFromWatchlist(guid) => {
+            bridge.watchlist_run(plx_data::stores::watchlist::WatchlistCmd::Remove { guid });
+        }
         Action::RemoveFromDeck(rk) => {
             // A HIDE, not a reset: the server keeps the item's `viewOffset`, so the card leaves
             // the shelf while the resume point survives and playing it again picks up where it

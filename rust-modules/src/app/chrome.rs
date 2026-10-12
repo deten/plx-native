@@ -11,11 +11,14 @@ use plx_data::stores::browse::{DirectoryView, SecKind};
 pub(crate) enum Pill {
     Home,
     Section(SecKind),
+    /// The profile's Watchlist, always present, just before Search.
+    Watchlist,
     Search,
 }
 
+/// Home, one pill per type, Watchlist, Search.
 pub(crate) fn tab_count(directory: DirectoryView<'_>) -> usize {
-    1 + directory.tab_count() + 1
+    1 + directory.tab_count() + 2
 }
 
 pub(crate) fn pill_at(directory: DirectoryView<'_>, i: usize) -> Pill {
@@ -29,6 +32,8 @@ fn pill_in(
 ) -> Pill {
     if i == search {
         Pill::Search
+    } else if i + 1 == search {
+        Pill::Watchlist
     } else if let Some(section) = i.checked_sub(1) {
         kind_at(section).map(Pill::Section).unwrap_or(Pill::Home)
     } else {
@@ -49,6 +54,7 @@ fn pill_index(
     match pill {
         Pill::Home => Some(0),
         Pill::Section(kind) => tab_of(kind).map(|i| i + 1),
+        Pill::Watchlist => Some(search - 1),
         Pill::Search => Some(search),
     }
 }
@@ -88,6 +94,10 @@ impl ChromeSnapshot {
                     SecKind::Show => 2,
                 });
             }
+            // The Watchlist pill, a word, keyed +5 (+4 is the profile chip): a key is the pill's
+            // identity, never its position.
+            self.labels.push(plx_platform::i18n::msg::browse_watchlist_title().into());
+            self.keys.push(STRIP_BASE + 5);
             self.labels.push(String::new());
             self.keys.push(STRIP_BASE + 3);
             self.widths = widgets::tab_widths(&self.labels, measure);
@@ -120,6 +130,10 @@ impl ChromeSnapshot {
 
     pub(crate) fn search_selection(&self) -> u32 {
         self.keys.iter().position(|key| *key == STRIP_BASE + 3).unwrap_or(0) as u32
+    }
+
+    pub(crate) fn watchlist_selection(&self) -> u32 {
+        self.keys.iter().position(|key| *key == STRIP_BASE + 5).unwrap_or(0) as u32
     }
 
     pub(crate) fn profile(&self) -> ProfileChipRead<'_> {
@@ -219,12 +233,35 @@ mod tests {
             profile_generation: Some(plx_plex::plex::session::current_gen()), ..Default::default()
         };
         snapshot.refresh(&plx_ui::fixture::FixtureMeasure, directory.view());
-        assert_eq!(snapshot.keys, vec![STRIP_BASE, STRIP_BASE + 1, STRIP_BASE + 2, STRIP_BASE + 3]);
-        assert_eq!(&snapshot.labels[..3], &["Home", "Movies", "TV Shows"]);
+        assert_eq!(snapshot.keys, vec![STRIP_BASE, STRIP_BASE + 1, STRIP_BASE + 2, STRIP_BASE + 5, STRIP_BASE + 3]);
+        assert_eq!(&snapshot.labels[..4], &["Home", "Movies", "TV Shows", "Watchlist"]);
+        assert_eq!(snapshot.labels[4], "", "Search stays the last pill, the one drawn as a mark");
         let mut members = Vec::new();
         snapshot.members(0, None, 0.0, &mut members);
         assert_eq!(members.iter().map(|member| member.elem).collect::<Vec<_>>(),
-            vec![STRIP_BASE + 4, STRIP_BASE, STRIP_BASE + 1, STRIP_BASE + 2, STRIP_BASE + 3]);
+            vec![STRIP_BASE + 4, STRIP_BASE, STRIP_BASE + 1, STRIP_BASE + 2, STRIP_BASE + 5, STRIP_BASE + 3]);
+    }
+
+    /// The bar reads Home, Movies, TV Shows, Watchlist, then the Search mark, and the Watchlist
+    /// pill is there whatever types the profile favours (a profile with no libraries at all
+    /// still has a Watchlist).
+    #[test]
+    fn the_watchlist_pill_stands_between_the_types_and_search() {
+        for kinds in [&[SecKind::Movie, SecKind::Show][..], &[SecKind::Show], &[]] {
+            let directory = directory(kinds);
+            let mut snapshot = ChromeSnapshot {
+                profile_generation: Some(plx_plex::plex::session::current_gen()), ..Default::default()
+            };
+            snapshot.refresh(&plx_ui::fixture::FixtureMeasure, directory.view());
+            let n = snapshot.keys.len();
+            assert_eq!(n, kinds.len() + 3);
+            assert_eq!(&snapshot.keys[n - 2..], &[STRIP_BASE + 5, STRIP_BASE + 3]);
+            assert_eq!(snapshot.watchlist_selection() as usize, n - 2);
+            assert_eq!(snapshot.search_selection() as usize, n - 1);
+            assert_eq!(pill_at(directory.view(), n - 2), Pill::Watchlist);
+            assert_eq!(pill_of(directory.view(), Pill::Watchlist), Some(n - 2));
+            assert_eq!(pill_of(directory.view(), Pill::Search), Some(n - 1));
+        }
     }
 
     #[test]
@@ -232,10 +269,11 @@ mod tests {
         use plx_data::stores::browse::SecKind::{Movie, Show};
         let kinds = [Movie, Show];
         let at = |i| kinds.get(i).copied();
-        let search = kinds.len() + 1;
+        let search = kinds.len() + 2;
         assert_eq!(pill_in(0, search, at), Pill::Home);
         assert_eq!(pill_in(1, search, at), Pill::Section(Movie));
         assert_eq!(pill_in(2, search, at), Pill::Section(Show));
+        assert_eq!(pill_in(search - 1, search, at), Pill::Watchlist);
         assert_eq!(pill_in(search, search, at), Pill::Search);
         assert_eq!(pill_in(search + 1, search, at), Pill::Home);
         let pos = |kind| kinds.iter().position(|&candidate| candidate == kind);

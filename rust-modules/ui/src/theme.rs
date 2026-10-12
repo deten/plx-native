@@ -651,6 +651,12 @@ pub const SCRIM_BLACK_INK: [f32; 3] = [BLACK[0], BLACK[1], BLACK[2]];
 /// everywhere.
 pub const SCRIM_TEXT_A: f32 = 0.72;
 
+/// The weight a poster is dimmed by when it stands for something the viewer cannot open here, a
+/// Watchlist title none of their servers holds (`widgets::poster_note`). Heavy enough that the
+/// card reads as set back from its playable neighbours at a glance, light enough that the
+/// artwork still says which title it is. An alpha on [`SCRIM_INK`], like [`SCRIM_TEXT_A`].
+pub const CARD_UNAVAILABLE_A: f32 = 0.58;
+
 /// **White overlay at alpha `a`** — the ramp every overlay on this palette rides.
 ///
 /// The palette's rule is that an overlay is a WEIGHT, never a new hue (`with_a(WHITE, a)`), and

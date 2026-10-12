@@ -492,5 +492,24 @@
   "browse.clock.notice_year": "Час на тэлевізары, здаецца, няправільны ({year}). Злучэнне па захаваным ключы.",
   "browse.clock.notice": "Час на тэлевізары, здаецца, няправільны. Злучэнне па захаваным ключы.",
   "browse.clock.no_key": "Час на тэлевізары, здаецца, няправільны. Злучыце тэлевізар з інтэрнэтам адзін раз і паспрабуйце зноў.",
-  "browse.clock.key_changed": "Ключ вашага сервера змяніўся. Злучыце тэлевізар з інтэрнэтам адзін раз, каб праграма магла праверыць яго зноў."
+  "browse.clock.key_changed": "Ключ вашага сервера змяніўся. Злучыце тэлевізар з інтэрнэтам адзін раз, каб праграма магла праверыць яго зноў.",
+  "browse.watchlist.title": "Мой спіс",
+  "browse.watchlist.count": {
+    "one": "{count} назва",
+    "few": "{count} назвы",
+    "many": "{count} назваў",
+    "other": "{count} назвы"
+  },
+  "browse.watchlist.loading": "Загрузка вашага спіса…",
+  "browse.watchlist.empty": "Ваш спіс пусты",
+  "browse.watchlist.empty_reason": "Дадавайце фільмы і серыялы з іх старонак кнопкай «Мой спіс».",
+  "browse.watchlist.unavailable": "У гэтага профілю няма спіса",
+  "browse.watchlist.unavailable_reason": "Plex вядзе спіс для профіляў, якія ўваходзяць з уласным уліковым запісам Plex.",
+  "browse.watchlist.failed": "Не ўдаецца загрузіць ваш спіс",
+  "browse.watchlist.failed_reason": "Plex не адказаў. Вашы бібліятэкі гэта не закранае.",
+  "browse.watchlist.not_on_server": "Няма на вашым серверы",
+  "browse.watchlist.missing_note": "Гэтай назвы няма ні на адным з вашых сервераў, таму яе нельга прайграць тут.",
+  "browse.watchlist.add": "Дадаць у Мой спіс",
+  "browse.watchlist.remove": "Прыбраць з Майго спіса",
+  "browse.watchlist.close": "Закрыць"
 }

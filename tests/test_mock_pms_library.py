@@ -920,5 +920,86 @@ class DetailFixtures(unittest.TestCase):
                                  "regenerate with `python3 tools/demo_library.py fixtures`")
 
 
+class Watchlist(unittest.TestCase):
+    """The plex.tv Watchlist the mock serves for a `plxnative-plextv` stand-in: titles this server
+    holds (matched by guid through `/library/all`), titles it does not, and working edits."""
+
+    LIST = "/library/sections/watchlist/all?includeCollections=1&includeExternalMedia=1&sort=watchlistedAt:desc"
+
+    def rows(self, pms):
+        status, ctype, body = pms.handle("GET", self.LIST, headers={
+            "X-Plex-Container-Start": "0", "X-Plex-Container-Size": "100"})
+        self.assertEqual((status, ctype), (200, "application/json"))
+        return json.loads(body)["MediaContainer"].get("Metadata", [])
+
+    def held(self, pms, row):
+        kind = {"movie": "1", "show": "2"}[row["type"]]
+        found = get(pms, f"/library/all?guid={urllib.parse.quote(row['guid'], safe='')}&type={kind}")
+        return found.get("Metadata", [])
+
+    def test_the_list_mixes_held_and_unheld_titles_newest_first(self):
+        pms = MockPms(Library())
+        rows = self.rows(pms)
+        self.assertEqual(len(rows), 7)
+        stamps = [row["watchlistedAt"] for row in rows]
+        self.assertEqual(stamps, sorted(stamps, reverse=True), "newest addition first")
+        held = [bool(self.held(pms, row)) for row in rows]
+        self.assertEqual(held.count(True), 5)
+        self.assertEqual(held.count(False), 2, "two titles no server holds")
+        self.assertEqual({row["type"] for row in rows}, {"movie", "show"})
+        for row in rows:
+            self.assertEqual(row["ratingKey"], row["guid"].rsplit("/", 1)[-1],
+                             "the provider's id is the guid's tail, never a server's ratingKey")
+            self.assertRegex(row["title"], r"^s[0-9a-f]{8}$", "the generated library keeps its closed alphabet")
+        for row in rows:
+            for match in self.held(pms, row):
+                self.assertEqual(match["guid"], row["guid"])
+                self.assertEqual(match["type"], row["type"])
+
+    def test_library_all_answers_nothing_for_an_unknown_guid_or_the_wrong_type(self):
+        pms = MockPms(Library())
+        movie = next(row for row in self.rows(pms) if row["type"] == "movie" and self.held(pms, row))
+        guid = urllib.parse.quote(movie["guid"], safe="")
+        self.assertEqual(get(pms, f"/library/all?guid={guid}&type=2").get("Metadata", []), [])
+        self.assertEqual(get(pms, "/library/all?guid=plex%3A%2F%2Fmovie%2Fnowhere&type=1").get("Metadata", []), [])
+
+    def test_add_and_remove_edit_the_list_and_are_logged_as_writes(self):
+        pms = MockPms(Library())
+        rows = self.rows(pms)
+        gone = rows[2]["ratingKey"]
+        self.assertEqual(pms.handle("PUT", f"/actions/removeFromWatchlist?ratingKey={gone}")[0], 200)
+        after = self.rows(pms)
+        self.assertNotIn(gone, [row["ratingKey"] for row in after])
+        self.assertEqual(pms.handle("PUT", f"/actions/addToWatchlist?ratingKey={gone}")[0], 200)
+        again = self.rows(pms)
+        self.assertEqual(again[0]["ratingKey"], gone, "an added title is the newest")
+        self.assertEqual(len(again), len(rows))
+        self.assertEqual(pms.handle("PUT", "/actions/addToWatchlist?ratingKey=nothing-like-it")[0], 404)
+        self.assertEqual(pms.handle("GET", f"/actions/addToWatchlist?ratingKey={gone}")[0], 405)
+        self.assertEqual([w[0] for w in pms.writes], ["PUT", "PUT", "PUT"])
+
+    def test_a_refused_profile_gets_401_everywhere(self):
+        pms = MockPms(Library())
+        status, _, body = pms.handle("POST", "/_mock/config", json.dumps({"watchlist_refused": True}).encode())
+        self.assertEqual((status, json.loads(body)["watchlist_refused"]), (200, True))
+        self.assertEqual(pms.handle("GET", self.LIST)[0], 401)
+        self.assertEqual(pms.handle("PUT", "/actions/addToWatchlist?ratingKey=x")[0], 401)
+
+    def test_the_list_needs_no_unknown_path(self):
+        pms = MockPms(Library())
+        for row in self.rows(pms):
+            self.held(pms, row)
+        self.assertEqual(pms.unknown, [])
+
+    @unittest.skipUnless(HAS_DEMO_CACHE, "no derived demo cache (make demo-library) or no ffmpeg/ffprobe")
+    def test_the_demo_library_watchlist_matches_its_own_films_and_two_public_domain_ones(self):
+        pms = MockPms(CatalogLibrary(CATALOG))
+        rows = self.rows(pms)
+        held = [row["title"] for row in rows if self.held(pms, row)]
+        missing = [row["title"] for row in rows if not self.held(pms, row)]
+        self.assertEqual(len(held), 5)
+        self.assertEqual(sorted(missing), ["Nosferatu", "The General"])
+
+
 if __name__ == "__main__":
     unittest.main()

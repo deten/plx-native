@@ -111,6 +111,9 @@ pub(crate) struct AppViews<'a> {
     pub(crate) metadata: plx_data::metadata::MetadataView<'a>,
     /// The player's subtitle search (`plx_data::subsearch`).
     pub(crate) subtitle_search: plx_data::subsearch::SubSearchView<'a>,
+    /// The profile's Watchlist (`plx_data::watchlist`): the Watchlist page and the detail page's
+    /// Watchlist control read it.
+    pub(crate) watchlist: plx_data::watchlist::WatchlistView<'a>,
     /// **The playback session, as this frame's publication** (spec §2.3, phase 9). The Player
     /// machine (`App.player`) owns the value; `Split` can only lend what the RIG owns, so the loop
     /// copies the decisions in once per frame ([`plx_media::route::PlaybackSession::publication`]) and
@@ -132,7 +135,7 @@ impl Bridge {
         AppViews { auth: self.session.read(), hubs: self.hubs.view(), listing: self.listing.view(),
             directory: self.directory.view(), section_hubs: self.section_hubs.view(),
             search: self.search.view(), metadata: self.stores.metadata_view(),
-            person: self.stores.person_view(), collection: self.stores.collection_view(), subtitle_search: self.stores.subtitle_search_view(), session }
+            person: self.stores.person_view(), collection: self.stores.collection_view(), subtitle_search: self.stores.subtitle_search_view(), watchlist: self.stores.watchlist_view(), session }
     }
 }
 
@@ -240,6 +243,9 @@ impl plx_screens::registry::MetadataLike for AppHost {
     fn metadata<'a>(cx: &Cx<'a, Self>) -> plx_data::metadata::MetadataView<'a> { cx.views.metadata }
     fn subtitle_search<'a>(cx: &Cx<'a, Self>) -> Option<plx_data::subsearch::SubSearchView<'a>> {
         Some(cx.views.subtitle_search)
+    }
+    fn watchlist<'a>(cx: &Cx<'a, Self>) -> Option<plx_data::watchlist::WatchlistView<'a>> {
+        Some(cx.views.watchlist)
     }
 }
 
@@ -351,6 +357,7 @@ pub(crate) struct Bridge {
     home_reqs: Vec<(MachineId, HomeReq, ReturnState<u32, PageMemory>)>,
     library_reqs: Vec<(MachineId, LibraryReq, ReturnState<u32, PageMemory>)>,
     search_reqs: Vec<(MachineId, plx_screens::registry::SearchReq, ReturnState<u32, PageMemory>)>,
+    watchlist_reqs: Vec<(MachineId, plx_screens::registry::WatchlistReq, ReturnState<u32, PageMemory>)>,
     /// What the player's overlay surfaces asked of the loop this frame (§14) — drained by
     /// `playback::player_requests`, which holds the `MainThread` token they cannot.
     player_reqs: Vec<plx_screens::registry::PlayerReq>,
@@ -560,6 +567,7 @@ impl Bridge {
             home_reqs: Vec::new(),
             library_reqs: Vec::new(),
             search_reqs: Vec::new(),
+            watchlist_reqs: Vec::new(),
             player_reqs: Vec::new(),
             item_menu_reqs: Vec::new(),
             #[cfg(test)]
@@ -629,6 +637,24 @@ impl Bridge {
         std::mem::take(&mut self.search_reqs)
     }
 
+    pub(crate) fn take_watchlist_reqs(&mut self) -> Vec<(MachineId, plx_screens::registry::WatchlistReq, ReturnState<u32, PageMemory>)> {
+        std::mem::take(&mut self.watchlist_reqs)
+    }
+
+    /// The Watchlist page's focused card, as the store's entry, and where it sits, the
+    /// selection a press or a hold on that page is checked against.
+    pub(crate) fn watchlist_selection(&self, d: &Dispatcher<AppHost>, entry: EntryId, focus: Option<FocusKey<u32>>)
+        -> Option<(plx_data::watchlist::Entry, plx_ui::popover::Opener)> {
+        let e = d.nav.entry(entry).filter(|e| e.arg == AppArg::Watchlist)?;
+        let screen = &e.inst.as_ref()?.screen;
+        let parts = CxParts { tick: Tick::default(), press: Default::default(),
+            focus: plx_machine::machine::FocusRead { current: focus, ..Default::default() }, owner: InputOwner::Entry(entry) };
+        let cx = parts.cx::<AppHost>(self.views(), &self.measure);
+        let card = screen.focused_card(&cx, focus, Some(At::Drawn))?;
+        let item = card.item.downcast_ref::<plx_data::watchlist::Entry>()?.clone();
+        Some((item, plx_ui::popover::Opener { rect: card.rest_rect, ..plx_ui::popover::Opener::NONE }))
+    }
+
     pub(crate) fn search_selection(&self, d: &Dispatcher<AppHost>, entry: EntryId, focus: Option<FocusKey<u32>>)
         -> Option<(plx_data::search::Item, plx_ui::popover::Opener)> {
         let e = d.nav.entry(entry).filter(|e| e.arg == AppArg::Search)?;
@@ -681,6 +707,19 @@ impl Bridge {
     }
 
     /// The Library page's focused grid cell, `(row, col)`, if focus is on its grid.
+    /// The Watchlist page's focused card, as its index in the list, when the page is on top.
+    pub(crate) fn watchlist_focus_index(d: &Dispatcher<AppHost>) -> Option<usize> {
+        let entry = d.nav.top_page()?;
+        let page = entry.inst.as_ref().and_then(|instance| instance.screen.as_any())
+            .and_then(|page| page.downcast_ref::<plx_screens::watchlist::WatchlistScreen>())?;
+        page.focused_index(d.input.engine.current(InputOwner::Entry(entry.id)))
+    }
+
+    /// The Watchlist store's read surface (the screenshot arms wait on its landings).
+    pub(crate) fn watchlist_view(&self) -> plx_data::watchlist::WatchlistView<'_> {
+        self.stores.watchlist_view()
+    }
+
     pub(crate) fn library_grid_position(d: &Dispatcher<AppHost>) -> Option<(usize, usize)> {
         let entry = d.nav.top_page()?;
         let page = entry.inst.as_ref().and_then(|instance| instance.screen.as_any())
@@ -847,8 +886,11 @@ impl Bridge {
         let route = d.top_or_mounting_arg().cloned().unwrap_or(AppArg::Home);
         let route = &route;
         let search = *route == AppArg::Search;
-        if matches!(route, AppArg::Home | AppArg::Library) || search {
-            d.nav.tabs.strip_fallback = Some(if search { plx_ui::dispatch::STRIP_BASE + 3 } else { plx_screens::home::STRIP_HOME_ELEM });
+        let watchlist = *route == AppArg::Watchlist;
+        if matches!(route, AppArg::Home | AppArg::Library) || search || watchlist {
+            d.nav.tabs.strip_fallback = Some(if search { plx_ui::dispatch::STRIP_BASE + 3 }
+                else if watchlist { plx_screens::home::STRIP_WATCHLIST_ELEM }
+                else { plx_screens::home::STRIP_HOME_ELEM });
             if let Some(io) = &self.home_io {
                 refresh_chrome(&mut self.chrome, &self.measure, self.directory.view(),
                     Some((&io.profile, &io.preferences)));
@@ -857,7 +899,8 @@ impl Bridge {
             }
             self.chrome_selection = if *route == AppArg::Library {
                 self.directory.view().current().map(|i| self.chrome.library_selection(self.directory.view().sections()[i].kind)).unwrap_or(0)
-            } else if search { self.chrome.search_selection() } else { 0 };
+            } else if search { self.chrome.search_selection() }
+            else if watchlist { self.chrome.watchlist_selection() } else { 0 };
             let selected = self.navigation_presentation().view_tab.unwrap_or(self.chrome_selection) as i32;
             self.chrome.members(selected, Self::home_focus(d), self.strip.scroll_pos(), &mut d.nav.tabs.strip);
         } else {
@@ -1111,6 +1154,14 @@ impl Bridge {
     }
 
     pub(crate) fn collection_pump(&mut self) -> bool { self.stores.collection_pump() }
+
+    pub(crate) fn watchlist_run(&mut self, cmd: plx_data::stores::watchlist::WatchlistCmd) -> bool {
+        self.stores.watchlist_run(cmd)
+    }
+
+    /// `wanted`: the Watchlist page or a detail page is on top, the only pages that read it, so a
+    /// session that opens neither asks plex.tv for nothing (`plx_data::watchlist`).
+    pub(crate) fn watchlist_pump(&mut self, wanted: bool) -> bool { self.stores.watchlist_pump(wanted) }
 
     pub(crate) fn metadata_mut(&mut self) -> &mut plx_data::stores::metadata::MetadataStore {
         &mut self.stores.metadata
@@ -1384,7 +1435,7 @@ impl Rig<AppHost> for Bridge {
                 hubs: self.hubs.view(),
                 listing: self.listing.view(),
                 directory: self.directory.view(),
-                section_hubs: self.section_hubs.view(), search: self.search.view(), metadata: self.stores.metadata_view(), person: self.stores.person_view(), collection: self.stores.collection_view(), subtitle_search: self.stores.subtitle_search_view(), session: &self.playback,
+                section_hubs: self.section_hubs.view(), search: self.search.view(), metadata: self.stores.metadata_view(), person: self.stores.person_view(), collection: self.stores.collection_view(), subtitle_search: self.stores.subtitle_search_view(), watchlist: self.stores.watchlist_view(), session: &self.playback,
             },
             measure: &self.measure,
         }
@@ -1415,7 +1466,7 @@ impl Rig<AppHost> for Bridge {
             let publication = self.session.publication();
             let cx = parts.cx::<AppHost>(AppViews { auth: publication.read(),
                 hubs: self.hubs.view(), listing: self.listing.view(), directory: self.directory.view(),
-                section_hubs: self.section_hubs.view(), search: self.search.view(), metadata: self.stores.metadata_view(), person: self.stores.person_view(), collection: self.stores.collection_view(), subtitle_search: self.stores.subtitle_search_view(), session: &self.playback,
+                section_hubs: self.section_hubs.view(), search: self.search.view(), metadata: self.stores.metadata_view(), person: self.stores.person_view(), collection: self.stores.collection_view(), subtitle_search: self.stores.subtitle_search_view(), watchlist: self.stores.watchlist_view(), session: &self.playback,
             }, &self.measure);
             let handled = self.session.step(event, &cx, fx);
             // #132: the owner logs nothing, and the Profiles screen cannot see a read-out that
@@ -1488,6 +1539,10 @@ impl Rig<AppHost> for Bridge {
             }
             AppMsg::Store(StoreCmd::SubtitleSearch(command)) => {
                 self.stores.subtitle_search_run(command.clone());
+                return Handled::Yes;
+            }
+            AppMsg::Store(StoreCmd::Watchlist(command)) => {
+                self.watchlist_run(command.clone());
                 return Handled::Yes;
             }
             AppMsg::Store(StoreCmd::ViewState(command)) => {
@@ -1629,6 +1684,7 @@ impl Bridge {
             AppFx::Home(req) => self.home_reqs.push((from, req, self.effect_return.clone())),
             AppFx::Library(req) => self.library_reqs.push((from, req, self.effect_return.clone())),
             AppFx::Search(req) => self.search_reqs.push((from, req, self.effect_return.clone())),
+            AppFx::Watchlist(req) => self.watchlist_reqs.push((from, req, self.effect_return.clone())),
             AppFx::Player(req) => self.player_reqs.push(req),
             AppFx::ItemMenu(req) => self.item_menu_reqs.push(req),
         }
@@ -1749,6 +1805,7 @@ fn step_store(cmd: &StoreCmd, _cx: &Cx<'_, AppHost>, _fx: &mut Effects<'_, AppHo
         StoreCmd::Collection(_) => unreachable!("Collection is stepped by Bridge's owned store"),
         StoreCmd::ViewState(_) => unreachable!("ViewState is stepped by Bridge with its Browse owner"),
         StoreCmd::SubtitleSearch(_) => unreachable!("SubtitleSearch is stepped by Bridge's owned store"),
+        StoreCmd::Watchlist(_) => unreachable!("Watchlist is stepped by Bridge's owned store"),
     }
 }
 
@@ -2822,6 +2879,7 @@ fn pill_of_arg(arg: &AppArg, directory: plx_data::stores::browse::DirectoryView<
     match arg {
         AppArg::Home => pill_of(directory, Pill::Home),
         AppArg::Search => pill_of(directory, Pill::Search),
+        AppArg::Watchlist => pill_of(directory, Pill::Watchlist),
         AppArg::Library => {
             let kind = directory.current().map(|i| directory.sections()[i].kind)?;
             pill_of(directory, Pill::Section(kind))
@@ -2859,6 +2917,7 @@ pub(crate) fn nav_tab(
                 let want = match pill {
                     Pill::Home => HomeTab::Home,
                     Pill::Search => HomeTab::Search,
+                    Pill::Watchlist => HomeTab::Watchlist,
                     Pill::Section(plx_data::browse::SecKind::Movie) => HomeTab::Movies,
                     Pill::Section(plx_data::browse::SecKind::Show) => HomeTab::Shows,
                 };
@@ -2873,6 +2932,7 @@ pub(crate) fn nav_tab(
             AppArg::Library
         }
         HomeTab::Search => AppArg::Search,
+        HomeTab::Watchlist => AppArg::Watchlist,
     };
     nav_peer(d, arg, ret);
 }

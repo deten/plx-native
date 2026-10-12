@@ -163,7 +163,9 @@ pub struct DecisionAlert {
     controls: CtlPop<2>,
     /// Stored with the body so draw and pointer hit-testing use the same measured wrapping even on
     /// the first frame after open.
-    question: &'static str,
+    /// Owned-or-static, like the body: a card about one TITLE (the Watchlist's item card) is
+    /// headed by that title, which no `c"…"` literal can carry.
+    question: Cow<'static, str>,
     /// The optional paragraphs under the question, held on the ALERT rather than passed to
     /// [`draw`](Self::draw). It has to be here because the body changes where the buttons are, and
     /// [`frames`](Self::frames) must compute the same panel as the last draw did. A body passed
@@ -203,7 +205,7 @@ impl DecisionAlert {
             pop: Popover::new().caching_host(),
             choice: Choice::Cancel,
             controls: CtlPop::new(),
-            question: "",
+            question: Cow::Borrowed(""),
             body: Vec::new(),
             scroll: Spring::at(0.0),
             scroll_target: 0.0,
@@ -229,7 +231,7 @@ impl DecisionAlert {
     }
     /// Ask the question alone.
     pub fn open(&mut self, question: &'static core::ffi::CStr) {
-        self.question = question.to_str().unwrap_or("");
+        self.question = Cow::Borrowed(question.to_str().unwrap_or(""));
         self.body.clear();
         self.answers = Answers::Two;
         self.open_inner();
@@ -257,6 +259,27 @@ impl DecisionAlert {
         self.open(question);
         self.reconcile_card(question, paragraphs, answers);
     }
+    /// [`open_card`](Self::open_card) headed by a title the caller owns rather than an app string
+    /// a card about a server- or provider-named item. The title wraps like any question.
+    pub fn open_card_titled(
+        &mut self,
+        title: String,
+        paragraphs: Vec<Cow<'static, str>>,
+        answers: Answers,
+    ) {
+        self.open(c"");
+        let _own = crate::popover::own_motion();
+        self.question = Cow::Owned(title);
+        self.body = paragraphs;
+        self.answers = answers;
+        self.choice = self.valid_choice(self.choice);
+        crate::popover::host::ground_invalidate();
+        plx_machine::idle::invalidate();
+    }
+    /// The title the alert is headed by, as last opened.
+    pub fn title(&self) -> &str {
+        &self.question
+    }
     /// Reconcile the content an OPEN card renders, without reopening or resetting its spring.
     /// Equality is over the title, paragraphs and answers, not an owner's incident ID or state
     /// tag: a receipt can arrive while both of those stay the same. Returns whether paint/layout
@@ -274,7 +297,7 @@ impl DecisionAlert {
             return false;
         }
         let _own = crate::popover::own_motion();
-        self.question = question;
+        self.question = Cow::Borrowed(question);
         self.body = paragraphs;
         self.answers = answers;
         self.choice = self.valid_choice(self.choice);
@@ -304,7 +327,7 @@ impl DecisionAlert {
     }
     /// Measure retained content through the caller's capability, before paint or during replay.
     fn measured(&self, measure: &dyn Measure) -> Layout {
-        let qh = Self::question_view(self.question).with_measure(measure).measure_h(BODY_W);
+        let qh = Self::question_view(&self.question).with_measure(measure).measure_h(BODY_W);
         let heights: Vec<f32> = self.body.iter()
             .map(|body| Self::body_view(body).with_measure(measure).measure_h(BODY_W)).collect();
         layout_with(qh, body_h(&heights), self.answers)
@@ -416,7 +439,7 @@ impl DecisionAlert {
             let scroll = self.scroll.pos.clamp(0.0, l.scroll_max);
             if l.scroll_max > 0.0 { p.clip(l.text_viewport); }
             let text_painter = p.translate(0.0, -scroll);
-            Self::question_view(self.question).with_measure(measure).draw(text_painter, l.question);
+            Self::question_view(&self.question).with_measure(measure).draw(text_painter, l.question);
             let mut y = l.body.y;
             for para in &self.body {
                 let view = Self::body_view(para).with_measure(measure);

@@ -104,6 +104,10 @@ pub enum Action {
     /// playing the item again picks up where it left off (see
     /// `plex::Client::remove_from_continue_watching`).
     RemoveFromDeck(String),
+    /// take this title off the profile's Plex Watchlist. Carries the title's provider GUID, not a
+    /// ratingKey: the Watchlist is plex.tv's, and the guid is the one key it shares with a server's
+    /// row. Never sent to the loop as an [`ItemMenuReq`], it is a Watchlist store command.
+    RemoveFromWatchlist(String),
 }
 
 impl Action {
@@ -136,6 +140,8 @@ impl Action {
             | Action::Shuffle(rk)
             | Action::RemoveFromDeck(rk) => rk,
             Action::PlayTrailer { rk, .. } => rk,
+            // The guid stands where the ratingKey would: the non-empty check is the same question.
+            Action::RemoveFromWatchlist(guid) => guid,
         }
     }
 
@@ -151,6 +157,7 @@ impl Action {
             Action::PlayTrailer { .. } => 7,
             Action::Play(_) => 8,
             Action::Shuffle(_) => 9,
+            Action::RemoveFromWatchlist(_) => 10,
         };
         c.u32(tag).str(self.rk());
         if let Action::GoToShow(_, season) = self {
@@ -208,6 +215,7 @@ pub enum ItemRow {
     Play,
     ShuffleSeason,
     ShuffleShow,
+    RemoveFromWatchlist,
 }
 
 impl ItemRow {
@@ -231,6 +239,7 @@ impl FormId for ItemRow {
             ItemRow::Play => 8,
             ItemRow::ShuffleSeason => 9,
             ItemRow::ShuffleShow => 10,
+            ItemRow::RemoveFromWatchlist => 11,
         })
     }
 }
@@ -261,6 +270,16 @@ fn build_with(
     deck_press: DeckPress,
     trailer: Option<&plx_data::metadata::Extra>,
 ) -> ItemForm {
+    Form::new().section(card_section(m, from_deck, deck_press, trailer))
+}
+
+/// [`build_with`]'s one section, for a caller that appends to it ([`build_watchlist`]).
+fn card_section(
+    m: &PmsMovie,
+    from_deck: bool,
+    deck_press: DeckPress,
+    trailer: Option<&plx_data::metadata::Extra>,
+) -> FormSection<ItemRow, Action, Infallible> {
     let leaf = m.kind == 0 || m.kind == 3;
     let opens_details = from_deck && !deck_press.press_plays();
     let mut sec = FormSection::new(""); // no header: the card behind the panel IS the title
@@ -362,7 +381,25 @@ fn build_with(
         Action::RemoveFromDeck(m.rk.clone()),
         Row::new(plx_platform::i18n::msg::browse_menu_remove_deck()).licon(Icon::Close).destructive(true),
     );
-    Form::new().section(sec)
+    sec
+}
+
+/// A Watchlist card's menu: the ordinary card menu over the server row it was matched to, then ,
+/// last, where [`build_with`] puts the deck's own removal and for the same reason, *Remove from
+/// Watchlist*, destructive, so the menu never opens on it.
+fn build_watchlist(
+    m: &PmsMovie,
+    guid: &str,
+    deck_press: DeckPress,
+    trailer: Option<&plx_data::metadata::Extra>,
+) -> ItemForm {
+    Form::new().section(card_section(m, false, deck_press, trailer).item_if(
+        !guid.is_empty(),
+        ItemRow::RemoveFromWatchlist,
+        RowKind::Button,
+        Action::RemoveFromWatchlist(guid.to_string()),
+        Row::new(plx_platform::i18n::msg::browse_watchlist_remove()).licon(Icon::Close).destructive(true),
+    ))
 }
 
 /// The state group every menu ends with: the watch-state row (or ROWS), then (for a leaf) Play from
@@ -589,6 +626,10 @@ impl ItemMenuScreen {
             }
             ItemMenuKind::Episode { mark } => build_episode(&self.arg.rk, *mark),
             ItemMenuKind::Season { mark, show_rk } => build_season(&self.arg.rk, show_rk, *mark),
+            ItemMenuKind::WatchlistCard { row, guid } => {
+                let trailer = cached_trailer(self.arg.sid, row, meta);
+                build_watchlist(row, guid, plx_media::route::deck_press(), trailer.as_ref())
+            }
         };
         // a short list of one-line actions — BODY labels, not menu-size HEADLINE
         self.form.table.compact = true;
@@ -633,12 +674,20 @@ impl ItemMenuScreen {
         // empty one would fetch nothing and land on a blank page. `build` already refuses to offer
         // such a row — this is the belt to that braces, since the rows are data-driven off hub
         // rows. A key that names no row (the separator has none) only dismisses.
-        if let Some(act) = act.filter(|act| !act.rk().is_empty()) {
+        if let Some(Action::RemoveFromWatchlist(guid)) = act.as_ref().filter(|act| !act.rk().is_empty()) {
+            // The Watchlist is a STORE the screen may command directly (optimistic, sent off the
+            // frame thread); nothing in the loop's `apply_item_action` has a part in it.
+            fx.push(Fx::App(AppFx::Store(
+                plx_data::stores::StoreId::Watchlist,
+                plx_data::stores::StoreCmd::Watchlist(
+                    plx_data::stores::watchlist::WatchlistCmd::Remove { guid: guid.clone() }),
+            )));
+        } else if let Some(act) = act.filter(|act| !act.rk().is_empty()) {
             fx.push(Fx::App(AppFx::ItemMenu(ItemMenuReq {
                 act,
                 sid: self.arg.sid,
                 item: match &self.arg.kind {
-                    ItemMenuKind::Card { row, .. } => Some((**row).clone()),
+                    ItemMenuKind::Card { row, .. } | ItemMenuKind::WatchlistCard { row, .. } => Some((**row).clone()),
                     _ => None,
                 },
                 loaded_episode: self.arg.loaded_episode,
@@ -934,6 +983,10 @@ mod tests {
     }
     fn build_episode(rk: &str, mark: PosterMark) -> Built {
         built(super::build_episode(rk, mark))
+    }
+    /// A Watchlist card's menu over server row `m`.
+    fn build_watchlist(m: &PmsMovie) -> Built {
+        built(super::build_watchlist(m, "plex://movie/5d776825880197001ec967c6", DeckPress::Play, None))
     }
     fn build_season(rk: &str, mark: PosterMark) -> Built {
         built(super::build_season(rk, "", mark))
@@ -1792,6 +1845,37 @@ mod tests {
         }
     }
 
+    /// **A Watchlist card's menu is the card menu plus *Remove from Watchlist*, last and
+    /// destructive** (so the menu never opens on it), carrying the title's provider guid, and its
+    /// press is a Watchlist STORE command, never a request of the loop's item dispatch.
+    #[test]
+    fn a_watchlist_card_menu_ends_in_remove_from_watchlist() {
+        for kind in [0, 1] {
+            let plain = build(&item(kind, PosterMark::None), false);
+            let menu = build_watchlist(&item(kind, PosterMark::None));
+            let ids = menu.ids();
+            assert_eq!(&ids[..ids.len() - 1], plain.ids().as_slice(), "kind={kind}: the card menu, unchanged");
+            assert_eq!(ids.last(), Some(&ItemRow::RemoveFromWatchlist));
+            assert!(menu.is_destructive(ItemRow::RemoveFromWatchlist));
+            assert_eq!(menu.action(ItemRow::RemoveFromWatchlist),
+                Action::RemoveFromWatchlist("plex://movie/5d776825880197001ec967c6".into()));
+        }
+        let form = super::build_watchlist(&item(0, PosterMark::None), "plex://movie/abc", DeckPress::Play, None);
+        let mut s = screen_with(form);
+        let elem = first_action(&s, |a| matches!(a, Action::RemoveFromWatchlist(_)));
+        let mut out = Vec::new();
+        let mut present = plx_machine::present::Present::new();
+        let mut fx = Effects::new(&mut out,
+            plx_machine::machine::MachineId::Instance(plx_machine::machine::InstanceId(8)), &mut present);
+        s.activate::<HostFixture>(elem, &mut fx);
+        drop(fx);
+        assert!(out.iter().any(|e| matches!(&e.fx, Fx::App(AppFx::Store(plx_data::stores::StoreId::Watchlist,
+            plx_data::stores::StoreCmd::Watchlist(plx_data::stores::watchlist::WatchlistCmd::Remove { guid })))
+            if guid == "plex://movie/abc")), "the remove is a store command");
+        assert!(!out.iter().any(|e| matches!(&e.fx, Fx::App(AppFx::ItemMenu(_)))), "and nothing for the loop");
+        assert!(out.iter().any(|e| matches!(&e.fx, Fx::Nav(NavOp::Dismiss(_)))), "the menu closes");
+    }
+
     /// A mounted screen whose row set is already built, so a test can state a property about the
     /// walk or the cadence without going through the container.
     fn screen_with(form: ItemForm) -> ItemMenuScreen {
@@ -2059,6 +2143,11 @@ mod tests {
                                 build_with(&item(kind, mark), from_deck, t)));
                         }
                     }
+                }
+            }
+            for kind in [0, 1] {
+                for mark in marks {
+                    menus.push((format!("watchlist card kind={kind} {mark:?}"), build_watchlist(&item(kind, mark))));
                 }
             }
             for mark in marks {

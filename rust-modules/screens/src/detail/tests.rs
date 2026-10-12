@@ -62,9 +62,23 @@ pub(super) fn test_store() -> &'static mut plx_data::stores::metadata::MetadataS
     TEST_METADATA.with(|cell| unsafe { &mut *cell.get() })
 }
 
+thread_local! {
+    // TEST ONLY, `TEST_METADATA`'s twin: the Watchlist this file's host answers with. Empty (no
+    // list landed) unless a test installs one, so every other test sees the row it always saw.
+    static TEST_WATCHLIST: std::cell::UnsafeCell<plx_data::stores::watchlist::WatchlistStore> =
+        std::cell::UnsafeCell::new(plx_data::stores::watchlist::WatchlistStore::default());
+}
+
+pub(super) fn test_watchlist() -> &'static mut plx_data::stores::watchlist::WatchlistStore {
+    TEST_WATCHLIST.with(|cell| unsafe { &mut *cell.get() })
+}
+
 impl crate::registry::MetadataLike for TestHost {
     fn metadata<'a>(_cx: &Cx<'a, Self>) -> plx_data::metadata::MetadataView<'a> {
         test_store().view()
+    }
+    fn watchlist<'a>(_cx: &Cx<'a, Self>) -> Option<plx_data::watchlist::WatchlistView<'a>> {
+        Some(test_watchlist().view())
     }
 }
 
@@ -145,7 +159,8 @@ pub(super) fn bare_held(sid: ServerId, rk: &str) -> DetailScreen {
         tabs: TabStrip::new(),
         season_pop: CtlPop::new(),
         ctl_pop: CtlPop::new(),
-        disc_unfurl: [Spring::at(0.0); 3],
+        disc_unfurl: [Spring::at(0.0); hero::DISCS],
+        watchlisted: None,
         season_metrics: season::Metrics::new(),
         about_rows: about::Rows::new(),
         ground: AmbientWash::flat(theme::SURFACE_APP),
@@ -983,6 +998,7 @@ fn hero_focus_survives_a_control_appearing_in_the_middle_of_the_row() {
         trailer: false,
         alt: false,
         mark: PosterMark::None,
+        watchlist: None,
     };
     let after = hero::HeroSet {
         alt: true,
@@ -1145,11 +1161,12 @@ fn a_pointer_lands_on_the_capsule_the_unfurl_drew() {
         trailer: false,
         alt: false,
         mark: PosterMark::InProgress,
+        watchlist: None,
     };
     let index = hero::watch_index(set).unwrap();
     assert_eq!(hero::ctl_at(set, index - 1), Some(hero::HeroCtl::Restart));
     for unfurl in [0.2, 0.6, 1.0] {
-        let disc = hero::disc_caps_at(set, 230.0, 0.0, [0.0, 0.0, unfurl], [201.0, 0.0, 267.0]);
+        let disc = hero::disc_caps_at(set, 230.0, 0.0, [0.0, 0.0, unfurl, 0.0], [201.0, 0.0, 267.0, 0.0]);
         let widths = hero::HeroWidths {
             pill: 230.0,
             alt: 0.0,
@@ -1220,12 +1237,12 @@ fn hero_action_row_hit_matches_the_drawn_controls_at_every_set_size() {
                     assert_eq!(n, 2 + usize::from(restart) + usize::from(alt));
                     sizes.insert(n);
                     for unfurl in [
-                        [0.0, 0.0, 0.0],
-                        [0.0, 0.0, 1.0],
-                        [0.0, 1.0, 0.0],
-                        [0.3, 0.0, 0.7],
-                        [1.0, 0.0, 0.0],
-                        [0.0, 1.0, 1.0],
+                        [0.0, 0.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.3, 0.0, 0.7, 0.0],
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 1.0, 0.0],
                     ] {
                         screen.disc_unfurl = unfurl.map(Spring::at);
                         for scroll in [0.0, 48.0] {
@@ -2133,6 +2150,94 @@ fn a_watch_disc_press_emits_an_addressed_viewstate_effect_without_global_apply()
         "the screen must not call the process-global compatibility facade itself");
     clear();
     plx_plex::plex::reset_servers_for_test();
+}
+
+/// **The Watchlist toggle**: absent while the Watchlist cannot answer for the title (nothing
+/// landed, an episode), the stroked face while it is off the list, the filled face once on it; a
+/// press is the store's optimistic add or remove, and the focus rides the toggle across the flip.
+#[test]
+fn the_watchlist_toggle_follows_the_store_and_its_press_is_an_optimistic_edit() {
+    use plx_data::stores::watchlist::WatchlistCmd;
+    let _guard = plx_base::testlock::serial();
+    plx_plex::plex::reset_servers_for_test();
+    let sid = plx_plex::plex::register_for_test("detail-watchlist", "127.0.0.1", 1, "t", "c");
+    let guid = "plex://movie/demo-watchlisted";
+    plx_data::metadata::set_current_for_test(test_store().state_mut(), Some(Detail {
+        sid, rk: "wl".into(), kind: "movie".into(), guid: guid.into(), title: "Listed".into(), year: 2019,
+        thumb: "/library/metadata/wl/thumb".into(), ..Default::default()
+    }));
+    *test_watchlist() = plx_data::stores::watchlist::WatchlistStore::default();
+    let mut screen = bare(&_guard, sid, "wl");
+    step(&mut screen, &ScreenEvent::Tick(plx_machine::machine::Tick { ms: 16, dt_us: 16_667 }), None);
+    assert_eq!(screen.hero_set(test_store().view()).watchlist, None, "no list landed: no control");
+    assert!(hero::watchlist_index(screen.hero_set(test_store().view())).is_none());
+
+    // The list lands without this title: the stroked face, after the watched toggle.
+    test_watchlist().install_for_test(Vec::new());
+    step(&mut screen, &ScreenEvent::Tick(plx_machine::machine::Tick { ms: 32, dt_us: 16_667 }), None);
+    let set = screen.hero_set(test_store().view());
+    assert_eq!(set.watchlist, Some(false));
+    let (controls, n) = hero::hero_ctls(set);
+    assert_eq!(controls[n - 1], hero::HeroCtl::WatchlistAdd, "the toggle closes the row");
+    assert_eq!(controls[n - 2], hero::HeroCtl::MarkWatched);
+
+    let (_, effects) = step(&mut screen,
+        &ScreenEvent::PressCommit(plx_machine::machine::PressId(1)), Some(hero::ELEM_WATCHLIST_ADD));
+    let added: Vec<_> = effects.iter().filter_map(|e| match &e.fx {
+        Fx::App(AppFx::Store(StoreId::Watchlist, plx_data::stores::StoreCmd::Watchlist(WatchlistCmd::Add { item, row }))) =>
+            Some((item.guid.clone(), item.kind.clone(), item.title.clone(), row.as_ref().map(|r| (r.sid, r.rk.clone())))),
+        _ => None,
+    }).collect();
+    assert_eq!(added, [(guid.to_string(), "movie".to_string(), "Listed".to_string(), Some((sid, "wl".to_string())))]);
+
+    // The store applies it at once (optimistic), and the next event wears the filled face with
+    // focus carried onto it.
+    for e in &effects {
+        if let Fx::App(AppFx::Store(_, plx_data::stores::StoreCmd::Watchlist(cmd))) = &e.fx {
+            test_watchlist().run(cmd.clone());
+        }
+    }
+    step(&mut screen, &ScreenEvent::Tick(plx_machine::machine::Tick { ms: 48, dt_us: 16_667 }), None);
+    let set = screen.hero_set(test_store().view());
+    assert_eq!(set.watchlist, Some(true));
+    let measure = plx_ui::fixture::FixtureMeasure;
+    let want = FocusKey { entry: EntryId(7), elem: hero::ELEM_WATCHLIST_ADD };
+    assert_eq!(Focusable::<TestHost>::reconcile(&screen, want, &cx(&measure, Some(hero::ELEM_WATCHLIST_ADD))).elem,
+        hero::ELEM_WATCHLIST_REMOVE, "focus rides the toggle across the flip");
+    let (_, effects) = step(&mut screen,
+        &ScreenEvent::PressCommit(plx_machine::machine::PressId(2)), Some(hero::ELEM_WATCHLIST_REMOVE));
+    assert!(effects.iter().any(|e| matches!(&e.fx, Fx::App(AppFx::Store(StoreId::Watchlist,
+        plx_data::stores::StoreCmd::Watchlist(WatchlistCmd::Remove { guid: g }))) if g == guid)));
+
+    // An episode is never watchlisted: no control, whatever the list says.
+    plx_data::metadata::set_current_for_test(test_store().state_mut(), Some(Detail {
+        sid, rk: "ep".into(), kind: "episode".into(), guid: "plex://episode/demo".into(), ..Default::default()
+    }));
+    let mut episode = bare(&_guard, sid, "ep");
+    step(&mut episode, &ScreenEvent::Tick(plx_machine::machine::Tick { ms: 16, dt_us: 16_667 }), None);
+    assert_eq!(episode.hero_set(test_store().view()).watchlist, None);
+
+    *test_watchlist() = plx_data::stores::watchlist::WatchlistStore::default();
+    clear();
+    plx_plex::plex::reset_servers_for_test();
+}
+
+/// A profile the Watchlist is refused to (a managed Home user) shows no Watchlist control.
+#[test]
+fn a_profile_without_a_watchlist_gets_no_toggle() {
+    let _guard = plx_base::testlock::serial();
+    let sid = ServerId::UNSET;
+    plx_data::metadata::set_current_for_test(test_store().state_mut(), Some(Detail {
+        sid, rk: "m".into(), kind: "movie".into(), guid: "plex://movie/x".into(), ..Default::default()
+    }));
+    *test_watchlist() = plx_data::stores::watchlist::WatchlistStore::default();
+    test_watchlist().install_for_test(Vec::new());
+    test_watchlist().state_for_test().set_status_for_test(plx_data::watchlist::WatchlistStatus::Unavailable);
+    let mut screen = bare(&_guard, sid, "m");
+    step(&mut screen, &ScreenEvent::Tick(plx_machine::machine::Tick { ms: 16, dt_us: 16_667 }), None);
+    assert_eq!(screen.hero_set(test_store().view()).watchlist, None);
+    *test_watchlist() = plx_data::stores::watchlist::WatchlistStore::default();
+    clear();
 }
 
 #[test]

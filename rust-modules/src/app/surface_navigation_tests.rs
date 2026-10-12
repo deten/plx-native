@@ -27,7 +27,7 @@ fn content_instances_compare_item_identity_and_keep_distinct_entries() {
 #[test]
 fn a_page_arg_wears_the_chrome_its_own_table_says() {
     for r in every_route() {
-        let want = if matches!(r, AppArg::Home | AppArg::Library | AppArg::Search) {
+        let want = if matches!(r, AppArg::Home | AppArg::Library | AppArg::Search | AppArg::Watchlist) {
             Chrome::TabBar
         } else {
             Chrome::None
@@ -51,6 +51,24 @@ fn a_page_arg_wears_the_chrome_its_own_table_says() {
 /// because `page_of` is gone with the two routes that made it more than the identity: since
 /// phase 10 the profile and card menus are SURFACES, their words are the overlay alphabet's
 /// (`overlay_word`), and `every_route()` is nine pages with nothing to fold.
+/// The Watchlist pill opens the Watchlist as a PEER of Home (the bar holds still: a tab select,
+/// not a push), and the Home destination brings Home back without stacking.
+#[test]
+fn the_watchlist_pill_opens_the_watchlist_as_a_peer_of_home() {
+    let _g = plx_base::testlock::serial();
+    let mut d = Dispatcher::<AppHost>::new();
+    let mut rig = Bridge::for_test(|| 0);
+    frame(&mut d, &mut rig, AppArg::Home, tick(0), vec![]);
+    nav_tab(&mut d, &mut rig, HomeTab::Watchlist, None, None);
+    for i in 1..40 { super::frame(&mut d, &mut rig, tick(i), vec![]); }
+    assert!(d.top_arg() == Some(&AppArg::Watchlist));
+    assert_eq!(d.top_screen().map(|s| s.name()), Some("watchlist"));
+    assert!(d.top_arg().map(|a| a.chrome()) == Some(Chrome::TabBar), "the shared bar stays up");
+    nav_tab(&mut d, &mut rig, HomeTab::Home, None, None);
+    for i in 40..80 { super::frame(&mut d, &mut rig, tick(i), vec![]); }
+    assert!(d.top_arg() == Some(&AppArg::Home));
+}
+
 #[test]
 fn every_route_mounts_a_screen_that_names_the_heartbeat_word() {
     let _g = plx_base::testlock::serial();

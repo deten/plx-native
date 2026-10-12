@@ -223,8 +223,15 @@ pub struct DetailScreen {
     cast: Shelf,
     tabs: TabStrip,
     season_pop: CtlPop<1>,
-    ctl_pop: CtlPop<5>,
-    disc_unfurl: [Spring; 3],
+    ctl_pop: CtlPop<{ hero::MAX_CTLS }>,
+    disc_unfurl: [Spring; hero::DISCS],
+    /// Whether this page's title is on the profile's Watchlist, as the Watchlist store last said
+    /// (`MetadataLike::watchlist`), `None` while it cannot say. Read into [`HeroSet`] by
+    /// [`hero_set`](Self::hero_set); re-derived from the store at the head of every event
+    /// ([`sync_watchlist`](Self::sync_watchlist)), so it is a cache of one store read and never
+    /// logical state: not hashed, not in [`SHAPE`] (the store never runs under a controlled
+    /// recording, where this stays `None` and the row is the row it always was).
+    watchlisted: Option<bool>,
     season_metrics: season::Metrics,
     about_rows: about::Rows,
     /// The page's own keyed ground. Deliberately a bare [`AmbientWash`] and not the shared
@@ -394,6 +401,21 @@ impl Drop for LayoutPin<'_> {
     }
 }
 
+/// Whether `elem` is the hero's Watchlist toggle, and which face (`Some(true)`: the title is on the
+/// Watchlist), the screenshot pipeline's `herowatchlist` arm asks.
+pub fn watchlist_toggle_face(elem: u32) -> Option<bool> {
+    match hero::HeroCtl::of_elem(elem)? {
+        hero::HeroCtl::WatchlistAdd => Some(false),
+        hero::HeroCtl::WatchlistRemove => Some(true),
+        _ => None,
+    }
+}
+
+/// Whether `elem` is one of the hero row's controls.
+pub fn is_hero_elem(elem: u32) -> bool {
+    hero::HeroCtl::of_elem(elem).is_some()
+}
+
 impl DetailScreen {
     pub fn new(entry: EntryId, sid: ServerId, rk: String, hubs: plx_data::pms::HubsView<'_>) -> Self {
         let selected = hubs.find(sid, &rk).cloned();
@@ -446,7 +468,8 @@ impl DetailScreen {
             tabs: TabStrip::new(),
             season_pop: CtlPop::new(),
             ctl_pop: CtlPop::new(),
-            disc_unfurl: [Spring::at(0.0); 3],
+            disc_unfurl: [Spring::at(0.0); hero::DISCS],
+            watchlisted: None,
             season_metrics: season::Metrics::new(),
             about_rows: about::Rows::new(),
             ground,
@@ -1582,6 +1605,12 @@ impl<H: ContentLike + crate::registry::MetadataLike> Focusable<H> for DetailScre
                         elem: controls[hero::watch_index(set).unwrap()].elem(),
                     };
                 }
+                // The Watchlist toggle is carried by its job too; a toggle that left the row
+                // (the store can no longer answer) falls through to the shared recovery.
+                if let Some(i) = hero::watchlist_index(set).filter(|_| ctl.is_watchlist()) {
+                    let (controls, _) = hero::hero_ctls(set);
+                    return FocusKey { entry: want.entry, elem: controls[i].elem() };
+                }
             }
         }
         if self
@@ -1709,6 +1738,10 @@ impl<H: ContentLike + crate::registry::MetadataLike> Machine<H> for DetailScreen
 
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
         let meta = H::metadata(cx);
+        // The Watchlist toggle's face, current before anything below reads the row.
+        if self.sync_watchlist(cx) {
+            fx.invalidate(Provenance::Input);
+        }
         // The cards component's one entry: every event reaches every shelf it owns (its pop,
         // scroll and let-go ride the Tick, its placement the FocusMoved). What a card DOES stays
         // in `activate` below.
@@ -2690,6 +2723,8 @@ impl DetailScreen {
                         hero::HeroCtl::Trailer => plx_ui::icons::Icon::Trailer,
                         hero::HeroCtl::MarkWatched => plx_ui::icons::Icon::Check,
                         hero::HeroCtl::MarkUnwatched => plx_ui::icons::Icon::Minus,
+                        hero::HeroCtl::WatchlistAdd => plx_ui::icons::Icon::Bookmark,
+                        hero::HeroCtl::WatchlistRemove => plx_ui::icons::Icon::BookmarkFill,
                         _ => unreachable!(),
                     };
                     let mut button = CircleButton::new(c"".as_ptr())
@@ -3683,7 +3718,45 @@ impl DetailScreen {
             trailer: false,
             alt: self.alt_available(meta),
             mark,
+            watchlist: self.watchlisted,
         }
+    }
+
+    /// Re-read [`watchlisted`](Self::watchlisted) from the store; answers whether it moved.
+    fn sync_watchlist<H: crate::registry::MetadataLike>(&mut self, cx: &Cx<'_, H>) -> bool {
+        let now = H::watchlist(cx).and_then(|w| {
+            let d = self.detail(H::metadata(cx))?;
+            w.membership(&d.guid)
+        });
+        std::mem::replace(&mut self.watchlisted, now) != now
+    }
+
+    /// The press on the Watchlist toggle: an optimistic store command (the face flips on this
+    /// frame's notice; the request goes out off the frame thread).
+    fn toggle_watchlist<H: ContentLike>(&self, add: bool, fx: &mut Effects<'_, H>, meta: plx_data::metadata::MetadataView<'_>) {
+        use plx_data::stores::watchlist::WatchlistCmd;
+        let Some(d) = self.detail(meta) else { return };
+        if !plx_plex::plex::discover::watchlistable(&d.guid) { return; }
+        let cmd = if add {
+            let item = plx_plex::plex::discover::WatchItem {
+                guid: d.guid.clone(),
+                rating_key: plx_plex::plex::discover::guid_tail(&d.guid).to_string(),
+                kind: if d.is_show { "show" } else { "movie" }.into(),
+                title: d.title.clone(),
+                year: d.year as i64,
+                summary: d.summary.clone(),
+                thumb: String::new(),
+            };
+            let row = plx_data::pms::PmsMovie {
+                sid: d.sid, rk: d.rk.clone(), title: d.title.clone(), year: d.year as _,
+                thumb: d.thumb.clone(), art: d.art.clone(), summary: d.summary.clone(),
+                kind: if d.is_show { 1 } else { 0 }, ..Default::default()
+            };
+            WatchlistCmd::Add { item, row: Some(Box::new(row)) }
+        } else {
+            WatchlistCmd::Remove { guid: d.guid.clone() }
+        };
+        fx.push(Fx::App(AppFx::Store(StoreId::Watchlist, StoreCmd::Watchlist(cmd))));
     }
 
     /// **Is a second pinned source holding THIS page's item?** — the *Also available* pill's gate,
@@ -3864,6 +3937,9 @@ impl DetailScreen {
                         }),
                     );
                 }
+            }
+            hero::HeroCtl::WatchlistAdd | hero::HeroCtl::WatchlistRemove => {
+                self.toggle_watchlist(ctl == hero::HeroCtl::WatchlistAdd, fx, meta);
             }
             hero::HeroCtl::MarkWatched | hero::HeroCtl::MarkUnwatched => {
                 if let Some(d) = self.detail(meta) {
