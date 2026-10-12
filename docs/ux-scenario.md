@@ -93,6 +93,7 @@ pointer** — an IR remote with only a four-way pad reaches every control.
                     └─ (session) ──────────────────┘        (only when the roster has >1 profile)
 
   HOME ──── tab strip ────→ LIBRARY (one pill per library section)
+   │  └───────────────────→ WATCHLIST
    │  └───────────────────→ SEARCH
    │  └── profile chip ───→ Account menu (popover)
    │  └── press-and-hold ─→ Card context menu (popover)
@@ -102,8 +103,8 @@ pointer** — an IR remote with only a four-way pad reaches every control.
                           └── Play ──→ PLAYER ──→ overlays: track menu · chapters · info
 ```
 
-Home, Library and Search are **peers**: they share the top tab strip, and moving between them
-cross-fades the page while the chrome holds still. Detail and Person **stack** — they have no tab
+Home, Library, the Watchlist and Search are **peers**: they share the top tab strip, and moving
+between them cross-fades the page while the chrome holds still. Detail and Person **stack**, they have no tab
 strip, so entering or leaving one fades the whole screen including the bar.
 
 ### 2.2 The BACK trail
@@ -113,7 +114,7 @@ BACK steps back through a real trail of visited nodes (`ui::trail`), not a hardc
 QA:
 
 - **Search is a peer, not a page.** BACK from Search returns to Home. What Search *opens* stacks;
-  Search itself does not.
+  Search itself does not. The Watchlist behaves the same way.
 - **BACK at Home's own root is the end of the chain.** It does not quit and it does not ask. It
   hands the screen back to the television's own Home, with the app still running (§5.9).
 
@@ -172,14 +173,14 @@ it never takes focus and it has no hit rect. The hero is paged by **RIGHT past t
 dots under the row show the position.
 
 **Above it**, the top tab strip: **Home**, then **one pill per library section the server reports**
-(here *Movies* and *TV Shows*), then the **Search** pill — drawn as a magnifier mark, not a word.
+(here *Movies* and *TV Shows*), then **Watchlist**, then the **Search** pill, drawn as a magnifier mark, not a word.
 The strip is uncapped and scrolls once it outgrows the bar, so every discovered section is
 focusable. At the left margin, outside the group, sits the **profile chip** (§5.7).
 
 **UP from the hero reaches the bar**, landing on the profile chip; LEFT and RIGHT then walk the
-whole band — **chip → Home → Movies → TV Shows → … → Search**. DOWN leaves the bar: back to the
-hero action row from the chip, or into the shelves from a pill. The bar is worn by Home, the Library
-and Search and by nothing else — the detail, person, player and onboarding screens have none, which
+whole band, **chip → Home → Movies → TV Shows → … → Watchlist → Search**. DOWN leaves the bar: back to the
+hero action row from the chip, or into the shelves from a pill. The bar is worn by Home, the Library,
+the Watchlist and Search and by nothing else, the detail, person, player and onboarding screens have none, which
 is why moving to or from them fades the whole screen rather than just the page.
 
 **Below the hero**, the shelves.
@@ -340,6 +341,30 @@ results are deliberately out of scope, by decision rather than by omission.
 *The figure searches the demo library's mock server, so its scope line names that server,
 "Demo Library".*
 
+### 5.5a Watchlist
+
+The pill between the library pills and Search. The page is the signed-in profile's **Plex
+Watchlist** as one poster grid, newest addition first, under a *Watchlist · 7 titles* heading. The
+Watchlist lives on plex.tv, not on a server, so each title is looked up on the user's own servers
+by its Plex identity:
+
+- **A title a server holds** wears that server's poster and resume bar, and **OK opens its normal
+  detail page**, where Play and Resume work as anywhere else. A hold opens the card menu (§5.6)
+  with one more row at the end, **Remove from Watchlist**.
+- **A title no server holds** is drawn **dimmed, under "Not on your server"**. OK (or a hold) opens a
+  small card with its title, year and summary and two answers, **Close** (where focus starts) and
+  **Remove from Watchlist**. BACK closes it.
+- A title still being looked up is drawn plainly and answers OK once the answer is in.
+
+LEFT/RIGHT/UP/DOWN walk the grid; UP from the first row reaches the bar. **BACK returns to Home**:
+the Watchlist is a peer, not a page (§2.2). While the list loads the page reads *Loading your
+Watchlist…*; an empty Watchlist says how to fill one (the Watchlist button on a movie or show page);
+a profile plex.tv gives no Watchlist reads *No Watchlist for this profile*; and a list plex.tv did
+not send reads *Can't load your Watchlist* with **Try again**.
+
+*The figures for this page come from the demo library's mock server, which stands in for plex.tv:
+five of its titles are on the demo Watchlist, and two public-domain films no server holds.*
+
 ### 5.6 Card context menu
 
 ![Card context menu](screenshots/ux-item-menu.jpg)
@@ -394,6 +419,7 @@ The action row:
 | **Play** / **Resume** | start, or resume from the stored position |
 | **↺** | play from the start (shown when there is a resume point) |
 | the watched disc | toggle watched — it **wears the face of the write it would perform**, so it is a **✓** on an unwatched item and a **−** on a watched one |
+| the Watchlist disc | on a movie or show: a stroked bookmark unfurling to **Add to Watchlist**, or, once the title is on the Watchlist, a filled one unfurling to **Remove from Watchlist**. The face changes at once; if plex.tv refuses the change it changes back. Absent while the Watchlist cannot answer for the title (still loading, or a profile without one) |
 
 Below, **Cast & Crew** — OK on a headshot opens that person's page, from which their other titles
 lead back into more detail pages. The BACK trail unwinds the whole chain.

@@ -236,6 +236,54 @@ the spec but **this server does not emit it on `Role[]`** — treat 0 as unknown
 
 ---
 
+## 2d. The Watchlist: plex.tv's Discover provider, matched to a server by guid (UNVERIFIED against a live account)
+
+The Watchlist is the signed-in profile's list on plex.tv, not anything a server holds. Nothing
+below has been measured from this app against a real account; every endpoint is taken from
+python-plexapi 4.18.3 (`plexapi/myplex.py`, read from the PyPI wheel) and exercised only against
+`tests/mock_pms.py`. Treat each line as a claim to confirm with a signed-in debug build.
+
+| what | request | evidence |
+|---|---|---|
+| the list | `GET https://discover.provider.plex.tv/library/sections/watchlist/all?includeCollections=1&includeExternalMedia=1&sort=watchlistedAt:desc` with headers `X-Plex-Container-Start: 0`, `X-Plex-Container-Size: 100` | `MyPlexAccount.watchlist` (myplex.py:924-967): `DISCOVER` constant (myplex.py:128), the two `include*` params, `sort` values `watchlistedAt`/`titleSort`/`originallyAvailableAt`/`rating` with `:asc`/`:desc`, paging by HEADER (`PlexObject.fetchItems`, base.py:338-374, default size 100) |
+| add | `PUT https://discover.provider.plex.tv/actions/addToWatchlist?ratingKey=<id>` | `addToWatchlist` (myplex.py:978-997), `method=self._session.put` |
+| remove | `PUT https://discover.provider.plex.tv/actions/removeFromWatchlist?ratingKey=<id>` | `removeFromWatchlist` (myplex.py:999-1018) |
+| does a server hold it | `GET /library/all?guid=<plex://movie/…>&type=1` (`type=2` for a show) on each server | `Library.search` builds `/library/all` (library.py:162-179); the docstring's own recipe is `plex.library.search(guid=item.guid, libtype=item.type)` (myplex.py:948-949). The app already sent this request for *Also available* (`plex::Client::find_by_guid`, measured live 2026-08-14, §4) |
+
+- **`<id>` is the tail of the title's guid**, never a server's ratingKey: python-plexapi computes
+  `item.guid.rsplit('/', 1)[-1]` for both actions. So `plex://movie/5d776825880197001ec967c6`
+  is added as `ratingKey=5d776825880197001ec967c6`. A legacy-agent guid
+  (`com.plexapp.agents.imdb://…`) has no such id; the app offers no Watchlist control for one
+  (`discover::watchlistable`), and `LibrarySection.getGuid`'s docstring says the guid lookup
+  works for the Plex Movie and Plex TV Series agents only.
+- **The token is the profile's own plex.tv credential.** python-plexapi sends the account's token,
+  or the switched Home user's (`switchHomeUser`, myplex.py:500-526). The app sends
+  `session::plex_tv_credential` for the active profile, or the account token for the owner with
+  no Home profile chosen. A 401 or 403 is read as "this profile has no Watchlist" and stops; it is
+  not retried. Whether a managed Home profile is refused, or simply has its own empty list, is
+  not known.
+- **The JSON shape is assumed, not seen.** python-plexapi parses the XML form (it sends no
+  `Accept` header); the app sends `Accept: application/json`, as it does for the person
+  biography on the same host, and reads `MediaContainer.Metadata[]` rows of `guid`, `ratingKey`,
+  `type`, `title`, `year`, `summary` and `thumb`. Whether a listing row carries `summary` at all
+  is unknown; a row without one shows none. `watchlistedAt` is parsed by python-plexapi only on
+  `UserState` (myplex.py:2590-2618), so the order is the request's `sort`, not something the app
+  re-derives.
+- **Membership on a detail page comes from the list**, not from the per-item
+  `GET https://metadata.provider.plex.tv/library/metadata/<id>/userState` python-plexapi uses for
+  `onWatchlist` (myplex.py:969-976, 1020-1028). That keeps the app on one host and one request per
+  visit; the cost is that a Watchlist longer than 100 titles answers only for its newest 100.
+- **Matching is cheap by construction**: one `/library/all?guid=` per title per server, in batches
+  of 12, only while the Watchlist page or a detail page is showing, and cached per guid until the
+  profile or the server roster changes (`plx_data::watchlist`). The current server is asked first,
+  so OK opens the copy being browsed. A server that ignores the filter answers other titles; only a
+  row carrying the same guid counts (`watchlist::matching_row`).
+- **In a developer build the requests follow the `plxnative-plextv` loopback stand-in**
+  (`discover::watchlist_base`), so the simulator and the screenshot pipeline never reach plex.tv;
+  the mock serves all four requests above.
+
+---
+
 ## 3. Hubs (home shelves)
 
 ```

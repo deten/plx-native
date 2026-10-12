@@ -1,6 +1,6 @@
 # PlxNative Privacy Policy
 
-Applies to PlxNative 0.6.0. Last updated 4 September 2026.
+Applies to PlxNative 0.6.0. Last updated 11 October 2026.
 
 ## Who is responsible for PlxNative data
 
@@ -14,6 +14,13 @@ account features, the app communicates directly with Plex services. Plex process
 received by those services under [Plex’s own Privacy
 Policy](https://www.plex.tv/about/privacy-legal/). PlxNative’s developer does not receive that
 information.
+
+The Plex services it reaches are `plex.tv` (sign-in, servers, profiles and your audio and
+subtitle preferences) and `discover.provider.plex.tv`, Plex's metadata service, for cast
+biographies and filmographies and for your Watchlist. The Watchlist is read only while the
+Watchlist page or a movie or show page is open, with the current profile's own Plex credential,
+and changed only when you add or remove a title. To show which Watchlist titles you can play, the
+app asks your own Plex Media Servers whether they hold each title, by its Plex identifier.
 
 ## Plex Media Servers
 

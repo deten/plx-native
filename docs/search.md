@@ -6,7 +6,8 @@ went. If you read one section of this file before touching text entry, make it �
 
 **Scope: the user's own servers, and nothing else.** Every result comes from a PMS the account can
 reach. Plex Discover / Watchlist / the "Movies & Shows on Plex" catalog are deliberately absent —
-see §6.
+see §6. (The Watchlist has its own page since 2026-10-11, the pill just before this one; Search
+still returns no Watchlist or catalog hits.)
 
 ---
 
@@ -38,6 +39,11 @@ tables rather than transcribing them, because a word the app cannot print reads 
 as "0 post-warmup samples", which is indistinguishable from a real regression.
 
 ### The pill goes LAST
+
+The Watchlist pill (2026-10-11) sits immediately before it and was added the same way: a word pill
+keyed `STRIP_BASE + 5` (an identity past the profile chip's `+ 4`, never a position), an
+`AppArg::Watchlist` peer with `Chrome::TabBar`, and a `HomeTab::Watchlist` every bar-wearing page
+maps its pill to.
 
 `ui/widgets.rs::search_pill()` is `tab_count() - 1` — Search is always the LAST pill, and since
 2026-09-05 that is the only thing about its position that holds still. The row is

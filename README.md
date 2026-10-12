@@ -145,7 +145,7 @@ the final release over it either: reinstall the final by hand once it is out.
 ## Privacy
 
 **Your library data never reaches me.** The app talks to your Plex server, to `plex.tv` to sign in,
-and to `discover.provider.plex.tv` for cast biographies.
+and to `discover.provider.plex.tv` for cast biographies and your Watchlist.
 
 **Crash reports and usage analytics are off until you turn them on** — two separate first-run
 questions, each answerable with Don't Share, both reversible later under Account → Settings →

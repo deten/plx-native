@@ -2278,6 +2278,13 @@ path. Never run only this one before a release. `tests/README.md` has the tier t
   oscillator does NOT reach the screen on its own: pair it with `plxnative-search`, and with a query
   the library actually matches, or `fps:search-type` has no shelves to sweep. Design, and the
   on-screen-keyboard research behind the field (three traps, two dead ends): **`docs/search.md`**.
+  The Watchlist pair, for the screenshot pipeline: `/tmp/plxnative-watchlist[=<card>]` (boot onto
+  the Watchlist page, a peer of Home like Search; with `<card>`, walk focus to that card once the
+  list and every server answer have landed, logging `watchlist: focus on card <card>`) and
+  `/tmp/plxnative-herowatchlist` (on a `detail=<rk>` boot, walk the hero's focus to its Watchlist
+  toggle once the Watchlist has answered, logging `herowatchlist: focus on the Watchlist toggle
+  (add|remove)`). Both need `plxnative-plextv` pointed at `tests/mock_pms.py`, which serves the
+  Watchlist (`docs/pms-api.md` §2d).
   Plus
   `/tmp/plxnative-navosc[=<ratingKey>]` (bounce the ROUTE every 1400 ms through the real press path —
   the only scenes that change route, and so the only ones that sample the whole-screen page

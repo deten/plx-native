@@ -270,7 +270,8 @@ full-screen sheet, not a centred modal. Construction, from the reference:
 - Reference rows, in order: `Go to Episode` · `Go to Show` — separator — `Remove from Watchlist` ·
   `Mark as Watched` · `Browse Continue Watching`.
 
-Our rows, adapted (Watchlist doesn't exist yet; see the account domain):
+Our rows, adapted (a card on the Watchlist page also ends its menu in *Remove from Watchlist*, since
+2026-10-11; see the account domain):
 
 | Row | Status |
 |---|---|
@@ -344,7 +345,7 @@ The reference detail page has **six circular action buttons**; we have two (`det
 |---|---|---|
 | 1 | ▶ Play | ✅ |
 | 2 | ↺ Play from start / restart | ❌ (cheap win #4) |
-| 3 | 🔖 Watchlist | ❌ (plex.tv — see the account domain) |
+| 3 | 🔖 Watchlist | ✅ the hero's Watchlist toggle, since 2026-10-11 (see the account domain) |
 | 4 | ⊘✓ Mark as watched | ✅ but wrong scope — see below |
 | 5 | ↥ Share | ❌ (plex.tv/social) |
 | 6 | … More | ❌ — and this is the one that matters, because it hosts the rest |
@@ -415,6 +416,8 @@ Corrections to the gap list, all verified live against the PMS on 2026-07-29 unl
 - **Remove from Continue Watching.** Not in this spec. `GET /hubs/continueWatching` exists (fetch), but
   no removal action — Plex's own client uses a newer `/actions/…` route this 1.2.2 spec predates.
 - **Watchlist** and everything Discover — plex.tv, not PMS, so it is out of this spec by construction.
+  The Watchlist itself has since been built on plex.tv's Discover provider; its endpoints, their
+  evidence and what is still unverified are `docs/pms-api.md` §2d.
 - **BIF scrub thumbnails** — `GET /library/sections/{id}/indexes` appears; the per-part index path the
   player would actually stream is not described.
 
@@ -494,7 +497,15 @@ player, transport and tracks auditors, and is counted once in the themes above.
   without blocking the frame loop, and stale same-slot landings are rejected by client lifecycle,
   token generation, hub generation and sequence.
 
-- **Watchlist is absent (adjacent catalog: plex.tv Discover)** — `major` / `large`
+- **Watchlist is absent (adjacent catalog: plex.tv Discover)**: **addressed 2026-10-11.**
+  The Watchlist is a peer top destination: the bar reads Home, Movies, TV Shows, Watchlist, then
+  the Search mark. The page is a poster grid of the signed-in profile's Watchlist, newest addition
+  first. Each title is matched by its guid against the user's own servers; a title a server holds
+  opens that server's detail page, and one no server holds is dimmed under *Not on your server* and
+  opens a card with its title, year, summary and *Remove from Watchlist*. A profile plex.tv refuses
+  a Watchlist reads as such. `plex/discover.rs` (the requests), `plx_data::watchlist` (the store),
+  `screens/watchlist` (the page). Endpoints, evidence and what is unverified: `docs/pms-api.md` §2d.
+  The original finding follows.
   The official rail carries Watchlist between Home and the libraries, plus an 'Add to Watchlist' action on items. This is a plex.tv Discover feature rather than a PMS library feature, but it is a first-class movie/show surface in the reference client. We have no watchlist state, screen, or API binding.
   *Where:* New rust-modules/src/plex/discover.rs (metadata.provider.plex.tv / discover.provider.plex.tv over net.rs's libcurl TLS transport, since stream.rs cannot do DNS/TLS) + a new rust-modules/src/ui/watchlist.rs screen and a rail entry in rust-modules/src/ui/widgets.rs.
   *Verified:* Confirmed: case-insensitive grep for 'watchlist' over rust-modules/src returns nothing, and over docs/ nothing. plex/account.rs is only PIN create/poll (account.rs:60-80), GET /api/v2/resources (account.rs:83-90), GET /api/v2/home/users and POST .../switch (account.rs:92-110) — no discover.provider.plex.tv or metadata.provider.plex.tv client. One correction in the fix plan's favour: the TLS transport already exists and is already used for plex.tv — net.rs (libcurl) is what AccountClient rides on, precisely because stream.rs does no DNS/TLS — so a Discover client is a new module over an existin
@@ -652,7 +663,11 @@ player, transport and tracks auditors, and is counted once in the themes above.
   *Where:* plex/models.rs (`Tag.id`), metadata.rs (`Cast.id`), ui/detail.rs (`on_ok` section 4), and a results screen — the Library grid could host it via `section_items_query` with an `actor=<id>` filter (plex/params.rs `SectionQuery.filters` already takes arbitrary key/value pairs).
   *Verified:* CONFIRMED. ui/detail.rs:1217 is literally `_ => false, // cast (4): headshots are not actionable`. Cast (metadata.rs:38-42) is tag/role/thumb; fetch_detail (metadata.rs:343-347) drops everything else off the Role[] entry, and plex/models.rs Tag (the struct with tag/role/thumb) has no id field to drop in the first place — so the gap starts at the DTO. SectionQuery.filters (plex/params.rs:38) is indeed `&[(String,String)]` appended verbatim, so an actor=<id> filter needs no new param plumbing. minor/large confirmed — the 'large' is the results screen, since ui/library.rs is entered by section in
 
-- **No Watchlist button (adjacent-catalog / Plex Discover feature)** — `minor` / `large`
+- **No Watchlist button (adjacent-catalog / Plex Discover feature)**: **addressed 2026-10-11.**
+  The detail hero's action row ends in a Watchlist toggle on movies and shows: a stroked bookmark
+  that unfurls to *Add to Watchlist*, a filled one to *Remove from Watchlist*. The press is
+  optimistic (the face flips at once and a failed request flips it back), and the toggle is absent
+  while the Watchlist cannot answer for the title. The original finding follows.
   The reference action row includes a bookmark = Add to Watchlist. This is a plex.tv Discover-graph action (`PUT https://discover.provider.plex.tv/actions/addToWatchlist?ratingKey=…`), not a PMS one, and nothing in the app talks to that host. Marked as an adjacent-catalog feature rather than a library feature.
   *Where:* plex/account.rs or a new plex/discover.rs (the Discover host + the watchlist add/remove actions, over net.rs's libcurl TLS path), plus a control in ui/detail.rs `draw_buttons`.
   *Verified:* CONFIRMED. Grepped watchlist case-insensitively across rust-modules/src — zero hits. plex/account.rs's only plex.tv methods are new/create_pin/poll_pin/resources/home_users/switch_user (+ is_server/local_connection helpers); there is no Discover provider host anywhere, and the only non-PMS hosts in the crate are plex.tv's account endpoints. minor/large confirmed as an adjacent-catalog feature. One correction to the hosting note: net.rs's libcurl TLS path already exists and is what account.rs uses (the raw-socket stream.rs cannot do DNS/TLS), so a new plex/discover.rs would reuse it rather than
@@ -697,7 +712,8 @@ player, transport and tracks auditors, and is counted once in the themes above.
   *Where:* rust-modules/src/ui/detail.rs:824 (draw_buttons: label swap + a progress rail under the hero text, ui/fmt.rs:time_left for the caption). No new endpoint.
   *Verified:* Confirmed as a PRESENTATION-only gap, which the auditor undersells. ui/detail.rs:833 `Button::new(c"Play".as_ptr(), …)` is unconditional and NBTN=2 (detail.rs:88); draw_hero (743-822) draws title/meta/synopsis/date/buttons/Starring and no rail. But the BEHAVIOUR is already correct: detail.rs:1191-1194 set_resume feeds metadata::resume_ns(resume_ms, dur_ms) and app.rs seeks there, so pressing Play on a half-watched movie already resumes — it just lies about it. Both halves of the fix exist one call away: home.rs:425 does the exact label swap (`if hero.resume_ms > 0 { c"Continue" } else { c"Play
 
-- **Watchlist button** — `major` / `medium`
+- **Watchlist button**: **addressed 2026-10-11** (the hero toggle above; its state is the
+  Watchlist's own list, not a per-item `userState` read).
   The official hero action row has Watchlist (add/remove) as a primary control. We have exactly two hero controls and no watchlist concept.
   *Where:* rust-modules/src/plex/account.rs (PUT/DELETE https://metadata.provider.plex.tv/actions/addToWatchlist|removeFromWatchlist?ratingKey={guid}, and the item's Guid[] must first be parsed in plex/models.rs — it is not), rust-modules/src/metadata.rs (Detail.on_watchlist), rust-modules/src/ui/detail.rs:824 + :1148 (third control + on_ok arm)
   *Verified:* Confirmed. ui/detail.rs:824-849 draw_buttons draws exactly two controls (Play pill + Check disc) and detail.rs:88 NBTN=2; crate-wide grep for watchlist/Watchlist returns nothing. plex/account.rs exposes only new/create_pin/poll_pin/resources/home_users/switch_user (lines 29-104) — no metadata.provider.plex.tv surface. The Guid[] the watchlist API keys on is also unparsed (plex/models.rs Metadata 114-187 has no guid field; docs/pms-api.md:182 lists Guid[] as one of the arrays we ignore), so this needs a DTO addition before the mutation. crate::net (libcurl HTTPS) is indeed already the working p
@@ -851,6 +867,8 @@ player, transport and tracks auditors, and is counted once in the themes above.
   through the Source panel. There is no longer a one-pill-per-section cap.
 
 - **Adjacent catalog: no Plex Discover / "Movies & Shows on Plex" and no Watchlist** — `major` / `large`
+  **The Watchlist half is addressed (2026-10-11)**: the Watchlist page, the hero toggle and the card
+  menu row, over `plex/discover.rs`. The free catalog and Discover hits in Search remain open.
   The official client's sidebar carries the free ad-supported Movies & Shows catalog and the user's Watchlist, and its search returns catalog + Discover results alongside server results. We have zero support: no discover.provider.plex.tv client, no watchlist read/toggle, and our search op (unused anyway) is server-only. Flagged as an adjacent-catalog feature, not a library one.
   **Still open, and the half of the search story that stays open even once §1.1 closes**
   (2026-08-14): the Search screen is server-only **by decision**, not by omission — "unused anyway"
@@ -949,6 +967,9 @@ player, transport and tracks auditors, and is counted once in the themes above.
   *Verified:* CONFIRMED, with a useful partial: the DATA layer already carries per-card watched state, only the toggle is missing. pms.rs:36 `PmsMovie.unwatched` is parsed for every catalog item including episodes (pms.rs:115-119, viewCount for movie/episode, viewedLeafCount for show/season) and widgets.rs:50-53 already DRAWS the unwatched dot on home and library grid cards — so grid cards display watch state they cannot change. What is genuinely unmodelled is the detail EPISODE row: metadata.rs:64-78 `struct Episode` carries resume_ms but no watched/view_count field (detail.rs:963-965 draws only a resume b
 
 - **No Watchlist (add / remove) — and no Plex Discover integration at all** — `major` / `large`
+  **The Watchlist rows are addressed (2026-10-11)**: a Watchlist card's hold menu is the ordinary
+  card menu plus *Remove from Watchlist*, last and destructive; adding is the detail hero's toggle.
+  The Discover catalog and social graph remain open.
   "Remove Show from Watchlist" is row 6 of the reference context menu. We have no watchlist state on any item, no add/remove call, and no plex.tv Discover surface whatsoever (the adjacent free ad-supported catalog and the social graph). Our plex.tv client covers only pins, resources and Home users. NOTE: the Discover catalog half is an adjacent-catalog feature, not a library feature; the Watchlist rows are the part the context menu needs.
   *Where:* plex/account.rs (PUT/DELETE https://discover.provider.plex.tv/actions/addToWatchlist|removeFromWatchlist?ratingKey={guid} over crate::net's libcurl HTTPS — the PMS raw socket can't do TLS/DNS), plex/models.rs (add `guid` + a userState block), metadata.rs (carry the flag onto Detail), ui/item_menu.rs (the row).
   *Verified:* CONFIRMED. plex/account.rs is exactly create_pin(:73)/poll_pin(:79)/resources(:88)/home_users(:96)/switch_user(:104) against https://plex.tv (:17) — nothing else; grep for watchlist/discover/userState/guid/slug over rust-modules/src returns only server-DISCOVERY comments in auth.rs/plex/session.rs and browse.rs's section discovery. plex/models.rs:113-190 Metadata has no `guid`, no `userState`, no `watchlistedAt`, so the client cannot even tell whether an item is watchlisted. CORRECTION to the auditor's plan: crate::net exposes only https_get (net.rs:140) and https_post (net.rs:144) — there is
