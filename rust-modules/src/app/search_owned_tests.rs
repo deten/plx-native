@@ -961,8 +961,9 @@ fn update_still_steps_the_shared_strip_on_search_the_way_home_and_library_do() {
     let fn_start = src.find("unsafe fn update(app: &mut App, fr: &mut Frame)")
         .expect("app::run::update must exist with its documented signature");
     // `page_of(app.route)` until restructure phase 10, when the two popover routes it resolved
-    // were deleted and `page_of` became the identity function and went with them.
-    let needle = "matches!(app.route(), AppArg::Search)";
+    // were deleted and `page_of` became the identity function and went with them. The arm also
+    // steps the strip for the Watchlist, the other bar-wearing peer, since 2026-10-11.
+    let needle = "matches!(app.route(), AppArg::Search | AppArg::Watchlist)";
     let arm_at = src[fn_start..].find(needle).map(|i| fn_start + i).expect(
         "update must still branch on AppArg::Search to step the shared strip — no arm of this \
          shape was found after fn update's own start",
