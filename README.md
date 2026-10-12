@@ -107,8 +107,36 @@ Hold OK on a show for **Shuffle Show**, which plays episodes from every season i
 or on a season for **Shuffle Season**. The season tabs on a show's page offer both. Up Next keeps
 following the shuffled order until you play something else.
 
-Code: branch [`library-views`](../../tree/library-views) holds everything above, built on
+Code: branch [`library-views`](../../tree/library-views) holds the four sections above, built on
 `subtitle-autosync`.
+
+### Watchlist (in testing)
+
+The top bar now reads **Home, Movies, TV Shows, Watchlist**, then Search. The Watchlist page shows
+your Plex Watchlist for the profile you are signed in as, newest first.
+
+- **Titles on one of your servers** show that server's poster and progress. Select one to open its
+  usual page, where Play and Resume work as always.
+- **Titles on none of your servers** appear dimmed with **Not on your server**. Selecting one opens
+  a short summary with a **Remove from Watchlist** button.
+- **Movie and show pages** have an **Add to Watchlist** button at the end of the button row. It
+  changes to **Remove from Watchlist** once the title is on the list.
+- **Hold OK** on a Watchlist poster for **Remove from Watchlist**.
+
+Each Plex Home profile sees its own Watchlist. Plex keeps a Watchlist for profiles that sign in
+with their own Plex account, so other profiles see a short message on the page and no button on
+detail pages. The Watchlist comes from Plex's online service, the same one the app already uses
+for cast biographies.
+
+| Watchlist page | A title on none of your servers |
+|---|---|
+| ![The Watchlist page](docs/fork/watchlist-page.jpg) | ![A dimmed Watchlist card](docs/fork/watchlist-not-on-server.jpg) |
+
+| Detail page button |
+|---|
+| ![Remove from Watchlist on a movie page](docs/fork/watchlist-detail.jpg) |
+
+Code: branch [`watchlist`](../../tree/watchlist), built on `library-views`.
 
 ## Try a test build
 
@@ -119,7 +147,7 @@ tile and sign-in. It sits alongside your regular PlxNative and the official Plex
 On a rooted television with Homebrew Channel, install the `.ipk` from a release. To remove it,
 uninstall **PlxNative debug** like any other app.
 
-The newest test build, [Test 5](../../releases/tag/test-5), carries every feature above. Test
+The newest test build, [Test 6](../../releases/tag/test-6), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
