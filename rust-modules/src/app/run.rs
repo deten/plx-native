@@ -64,6 +64,8 @@ pub(crate) struct Frame {
     /// The viewer set this segment's kind to skip automatically (`player_hud::auto_skips`),
     /// decided from the same sample as `ctrl`.
     pub(crate) ctrl_auto: bool,
+    /// `ctrl` comes from a server marker rather than the synthesized tail (logged with a skip).
+    pub(crate) ctrl_from_server: bool,
     /// `clock::now()` at the ingest boundary — THE frame time every phase after it uses.
     pub(crate) now: u32,
     /// Seconds since the previous frame's `now`, clamped to 50 ms (the animation timestep).
@@ -90,6 +92,7 @@ impl Frame {
         Frame {
             ctrl: row.slot,
             ctrl_auto: row.auto_skip,
+            ctrl_from_server: row.from_server,
             now: 0,
             dt: 0.0,
             underlay_moving: false,
@@ -808,6 +811,20 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
     }
     if (0x103..=0x106).contains(&et) {
         app.rec.input(super::recorder::enc_lifecycle(et));
+    }
+    // webOS taking the screen (or closing the app) ends or parks whatever is playing: say so with
+    // the facts, on each edge, whenever there is playback to speak of.
+    if matches!(et, 0x103..=0x106 | SDL_QUIT)
+        && (matches!(app.route(), AppArg::Player) || app.adapters.player.is_live())
+    {
+        let edge = match et {
+            0x103 => "lifecycle-will-background",
+            0x104 => "lifecycle-did-background",
+            0x105 => "lifecycle-will-foreground",
+            0x106 => "lifecycle-did-foreground",
+            _ => "lifecycle-quit",
+        };
+        super::playback::log_end_reason(&app.player.session, app.bridge.metadata_view(), edge);
     }
     if et == SDL_QUIT {
         app.running = false;
@@ -1574,7 +1591,12 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         // show has another episode queued and the Next episode preference is not Off, else leave
         // the player (back to the detail page or home, whichever is behind), instead of freezing
         // on the last frame.
+        if super::bridge::player(&app.pages).is_some() {
+            // Once per item: the markers it arrived with and the choices it plays under.
+            super::playback::note_playstart(&app.player.session, app.bridge.metadata_view());
+        }
         if playback_may_run(app) && super::bridge::player(&app.pages).is_some() && plx_media::player::ended() {
+            super::playback::log_end_reason(&app.player.session, app.bridge.metadata_view(), "eos");
             let handed_off_to_up_next = finish_playback(&mut app.player.session,
                 &mut app.adapters.player,
                 &mut app.refresh_hubs_at,
@@ -1597,6 +1619,7 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
             // The same end with no player page to leave: nothing else would ever stop this
             // engine, and its reporter would keep posting the final position forever.
             log("EOS: stopping an off-route engine nothing owns");
+            super::playback::log_end_reason(&app.player.session, app.bridge.metadata_view(), "eos-off-route");
             plx_media::player::stop_bufferfeed(&mut app.player.session, &mut app.adapters.player);
         }
         // Up Next countdown elapsed → start the queued episode on its own. Beside the EOS
@@ -1604,6 +1627,7 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         if playback_may_run(app)
             && super::bridge::player(&app.pages).is_some_and(|p| p.up_next.expired(fr.now))
         {
+            super::playback::log_end_reason(&app.player.session, app.bridge.metadata_view(), "upnext-countdown");
             if !play_up_next(&mut app.player.session,
                 &mut app.adapters.player,
                 HUD_LINGER_MS,
@@ -1711,6 +1735,21 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
             if let Some((kind, _)) = fr.ctrl.offer() {
                 log(&format!("marker auto-skip: {kind:?}"));
             }
+            // The occupant acted on, its marker, and where it came from; the skip modes and the
+            // next-episode mode that chose to act ride in the facts.
+            let (what, marker) = match fr.ctrl {
+                plx_appkit::player_hud::ControlSlot::Skip(pr) => ("skip", Some(pr.marker)),
+                plx_appkit::player_hud::ControlSlot::UpNext(m) => ("upnext", Some(m)),
+                plx_appkit::player_hud::ControlSlot::Discs => ("discs", None),
+            };
+            let marker = marker.map_or_else(|| "-".to_string(), |m| {
+                format!("{:?}:{}-{}{}", m.kind, m.start_ms, m.end_ms, if m.final_seg { ":final" } else { "" })
+            });
+            super::playback::log_end_reason(
+                &app.player.session,
+                app.bridge.metadata_view(),
+                &format!("auto-skip slot={what} marker={marker} from_server={}", fr.ctrl_from_server as u8),
+            );
             activate_ctrl_row(&mut app.player.session,
                 &mut app.adapters.player,
                 fr.ctrl,

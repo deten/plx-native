@@ -103,8 +103,9 @@ overwrites the regular app's logs.
 | --- | --- |
 | PlxNative (release) | directly in `/tmp/`, for example `/tmp/plxnative-events.log` |
 | PlxNative Nightly | in the folder `/tmp/com.beb.plxnative.nightly/` |
+| A test or developer build (`com.beb.plxnative.debug`) | in the folder `/tmp/com.beb.plxnative.debug/` |
 
-The three files have the same names in both places:
+The three files have the same names in every place:
 
 - `plxnative-events.log` — the event log: what the app did, line by line.
 - `plxnative-crash.log` — the crash log: a record each time the app was stopped by a fault.
@@ -121,6 +122,16 @@ the problem, close PlxNative and open it again, the log of the failure is gone. 
 
 The crash log is different: it only grows, so earlier crashes stay in it across relaunches. It is
 cleared when the TV restarts, because `/tmp` is.
+
+A test or developer build (`com.beb.plxnative.debug`) also keeps `plxnative-history.log` in its
+folder: every event-log line, cleaned the same way and stamped with the time (UTC), kept across
+relaunches. It holds up to 1 MB; past that the older part moves to `plxnative-history.log.1`, so
+the two together never pass 2 MB. Each launch starts with a `history: launch` line giving the
+date. Playback writes greppable lines there: `playstart:` once per item (its intro and credits
+markers, the Skip intro, Skip credits and Next episode settings, shuffle), `endreason:` for each
+way an item ends or hands over to the next one, `advance:` when the next episode starts,
+`playstate:` for each change of playback state, and `stop:` and `reopen:` when the player is torn
+down or reloaded.
 
 ### Fetching them with Dev Manager
 

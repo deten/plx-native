@@ -563,9 +563,11 @@ pub(crate) fn player_requests(
     for req in reqs {
         match req {
             PlayerReq::RetryPlayback => {
+                log(&format!("reopen: retry-playback {}", plx_media::player::end_facts(ps)));
                 retry_failed_playback(ps, pa, bridge.metadata_mut(), None);
             }
             PlayerReq::PlayAutomatically => {
+                log(&format!("reopen: play-automatically {}", plx_media::player::end_facts(ps)));
                 play_automatically(ps, pa, bridge.metadata_mut());
             }
             PlayerReq::RepairSandbox => {
@@ -640,6 +642,7 @@ pub(crate) fn player_requests(
             // The STOP key, a BACK with nothing else open and the failure read-out's own BACK
             // escape all reach the same ritual.
             PlayerReq::Exit => {
+                log_end_reason(ps, bridge.metadata_view(), "user-exit");
                 exit_player(ps, pa, refresh_hubs_at, pages);
             }
         }
@@ -685,6 +688,76 @@ pub(super) fn return_from_player(
     }
 }
 
+/// The playing item's markers as one `markers=` value: `kind:start-end` in ms, `:final` on a
+/// segment that runs to the end, comma-separated; `none` for an item with none, `unknown` before
+/// the item's metadata has landed. Markers of another item than the one playing (the store still
+/// describing the previous episode) are prefixed with that item's key, so they cannot be mistaken
+/// for this one's.
+pub(crate) fn markers_field(markers: Option<(&str, &[plx_data::metadata::Marker])>, cur_rk: &str) -> String {
+    let Some((item_rk, markers)) = markers else {
+        return "unknown".into();
+    };
+    let mut out = String::new();
+    if item_rk != cur_rk {
+        out.push_str(&format!("of:{item_rk}:"));
+    }
+    if markers.is_empty() {
+        out.push_str("none");
+    }
+    for (i, m) in markers.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let kind = match m.kind {
+            plx_data::metadata::MarkerKind::Intro => "intro",
+            plx_data::metadata::MarkerKind::Credits => "credits",
+        };
+        out.push_str(&format!("{kind}:{}-{}{}", m.start_ms, m.end_ms, if m.final_seg { ":final" } else { "" }));
+    }
+    out
+}
+
+/// [`plx_media::player::end_facts`] with the playing item's markers added: what every app-side
+/// `endreason:` line carries.
+pub(crate) fn end_facts(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>) -> String {
+    let markers = meta.playing().map(|p| (p.rk.as_str(), p.markers.as_slice()));
+    format!(
+        "{} markers={}",
+        plx_media::player::end_facts(ps),
+        markers_field(markers, &plx_media::route::cur_rk(ps))
+    )
+}
+
+/// **One `endreason:` line**: why the current item is ending or handing over, with the facts it
+/// ended on. Logged by every path that can end the item or start another, BEFORE it acts, so the
+/// line describes the item that is ending rather than its successor.
+pub(crate) fn log_end_reason(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>, reason: &str) {
+    log(&format!("endreason: {reason} {}", end_facts(ps, meta)));
+}
+
+/// The once-per-item `playstart:` line: the markers the item arrived with, beside the skip,
+/// next-episode and shuffle state it will be played under. Called every frame the player is up;
+/// it compares one key and returns, and logs only when the playing item (or its marker count)
+/// changes. MAIN THREAD.
+pub(crate) fn note_playstart(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>) {
+    thread_local! {
+        static LAST: std::cell::RefCell<(String, usize)> = const { std::cell::RefCell::new((String::new(), 0)) };
+    }
+    let Some(item) = meta.playing() else { return };
+    let fresh = LAST.with(|last| {
+        let mut last = last.borrow_mut();
+        if last.0 == item.rk && last.1 == item.markers.len() {
+            return false;
+        }
+        last.0.clone_from(&item.rk);
+        last.1 = item.markers.len();
+        true
+    });
+    if fresh {
+        log(&format!("playstart: {}", end_facts(ps, meta)));
+    }
+}
+
 /// The ONE leave-playback ritual (Stop key, BACK, EOS): close the overlays, stop the
 /// engine, put the page the session was LAUNCHED FROM back on screen, and arm the deferred
 /// hub refresh so Continue Watching reflects the session that just ended. A new exit path
@@ -702,6 +775,8 @@ pub(crate) fn exit_player(
     refresh_hubs_at: &mut u32,
     pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
 ) {
+    // The common tail of every exit; the caller's own `endreason:` line names why.
+    log(&format!("player-exit: {}", plx_media::player::end_facts(ps)));
     plx_media::route::cancel_play(ps); // BACK during a load: supersede, drop the landing
     close_player_overlays(pages);
     plx_media::player::stop_bufferfeed(ps, pa);
@@ -777,8 +852,10 @@ pub(crate) fn activate_ctrl_row(
         // being caught out.
         ControlSlot::UpNext(_) => {
             if btn == plx_appkit::up_next::BTN_NEXT {
+                log_end_reason(ps, bridge.metadata_view(), "next-episode-button");
                 play_up_next(ps, pa, HUD_LINGER_MS, pages, bridge)
             } else {
+                log(&format!("upnext: watch-credits {}", plx_media::player::end_facts(ps)));
                 if let Some(player) = super::bridge::player_mut(pages) {
                     player.up_next.cancel();
                 }
@@ -796,6 +873,14 @@ pub(crate) fn activate_ctrl_row(
             });
             match pr.action {
                 SkipAction::Seek(ns) => {
+                    log(&format!(
+                        "skip: seek {:?} {}-{} to={} {}",
+                        pr.kind,
+                        pr.marker.start_ms,
+                        pr.marker.end_ms,
+                        ns / 1_000_000,
+                        end_facts(ps, bridge.metadata_view())
+                    ));
                     // Retire the segment FIRST: the seek lands on the preceding keyframe, which
                     // is usually still inside it, so without this the button comes straight back
                     // (see `metadata::mark_skipped`).
@@ -806,6 +891,7 @@ pub(crate) fn activate_ctrl_row(
                 }
                 // a `final` credits segment: skipping it IS finishing the item
                 SkipAction::Finish => {
+                    log_end_reason(ps, bridge.metadata_view(), "skip-final-credits");
                     let _ = finish_playback(ps, pa, refresh_hubs_at, pages, bridge);
                     true
                 }
@@ -841,6 +927,7 @@ pub(crate) fn play_up_next(
     // category this app's Data Safety declaration answers "Not collected" to. `eventlog::scrub` is a
     // backstop for shapes like this; not writing it is the mechanism.
     log(&format!("up next: S{}E{} rk={}", u.season, u.index, u.rk));
+    log(&format!("advance: to={} {}", u.rk, end_facts(ps, bridge.metadata_view())));
     let (rk, resume) = (
         u.rk.clone(),
         plx_data::metadata::resume_ns(u.resume_ms, u.dur_ms),
@@ -995,6 +1082,7 @@ fn apply_info_action(
                 let sid = bridge.metadata_view().playing()
                     .map(|p| p.sid)
                     .unwrap_or_else(plx_plex::plex::current_server);
+                log_end_reason(ps, bridge.metadata_view(), "info-go-to-detail");
                 exit_player(ps, pa, refresh_hubs_at, pages);
                 // A LANDING, not a navigation, so the page is SHOWN rather than pushed blindly:
                 // the exit above has usually already put this very page on top (the show playback
@@ -1676,5 +1764,33 @@ mod player_return_tests {
             assert!(matches!(p.top(), AppArg::Home));
         }
         plx_plex::plex::reset_servers_for_test();
+    }
+}
+
+/// The `markers=` field of the `endreason:` and `playstart:` lines.
+#[cfg(test)]
+mod end_reason_tests {
+    use super::markers_field;
+    use plx_data::metadata::{Marker, MarkerKind};
+
+    #[test]
+    fn markers_read_as_kind_range_and_final() {
+        let markers = [
+            Marker { kind: MarkerKind::Intro, start_ms: 12_000, end_ms: 45_500, final_seg: false },
+            Marker { kind: MarkerKind::Credits, start_ms: 1_250_000, end_ms: 1_320_000, final_seg: true },
+        ];
+        assert_eq!(
+            markers_field(Some(("7", &markers)), "7"),
+            "intro:12000-45500,credits:1250000-1320000:final"
+        );
+        assert_eq!(markers_field(Some(("7", &[])), "7"), "none");
+        assert_eq!(markers_field(None, "7"), "unknown");
+    }
+
+    /// Markers the store still holds for the previous item are labelled with that item's key.
+    #[test]
+    fn another_items_markers_name_that_item() {
+        let markers = [Marker { kind: MarkerKind::Intro, start_ms: 0, end_ms: 1, final_seg: false }];
+        assert_eq!(markers_field(Some(("6", &markers)), "7"), "of:6:intro:0-1");
     }
 }

@@ -1664,6 +1664,7 @@ fn reload_transcode_start(ps: &mut crate::route::PlaybackSession, pa: &mut super
         "reload_transcode: fresh Load at offset {}s",
         offset_ns / 1_000_000_000
     ));
+    log(&format!("reopen: reload_transcode offset={} {}", offset_ns / 1_000_000, super::end_facts(ps)));
     teardown(ps, pa, true); // keep the session; reload mode
     SHARED.disp_base.store(offset_ns, Ordering::Relaxed); // transcode is 0-based at content=offset
     SHARED.playpos_ns.store(offset_ns, Ordering::Relaxed);
@@ -1683,6 +1684,7 @@ pub fn reload_at(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter
         "reload_at: fresh Load at {}s",
         target_ns / 1_000_000_000
     ));
+    log(&format!("reopen: reload_at target={} {}", target_ns / 1_000_000, super::end_facts(ps)));
     teardown(ps, pa, true); // reload mode: preserve the session (no url-clear / stop-scrobble)
     arm_seek(target_ns);
     reload_start_outcome(ps, pa, ticket)
@@ -1774,6 +1776,15 @@ pub fn suspend_bufferfeed_if_attempt(
 /// stop: preserve the playback session so start_bufferfeed can restart the SAME item — skip
 /// the "stopped" timeline scrobble, the server transcode stop, and the URL clear.
 fn teardown(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, for_reload: bool) {
+    // The engine goes, with the facts it went with: a real stop (end of the item, Back, the next
+    // episode's start) or a reload/suspend that keeps the playback. Read before anything resets.
+    if pa.is_live() {
+        log(&format!(
+            "stop: {} {}",
+            if for_reload { "keep-session" } else { "end-session" },
+            super::end_facts(ps)
+        ));
+    }
     // A prepared route whose native start failed has no Engine but still owns its exact PMS
     // resource and Session projection. A real stop must retire that ownership exactly once;
     // returning here used to leak the candidate forever while the reducer remained Failed.
@@ -2520,7 +2531,13 @@ fn feed_stream(mt: &MainThread, eng: &mut Engine) {
                 if eof != 0 && !eng.eos_pushed && eng.stage >= Stage::Streaming {
                     unsafe { sink().push_eos(mt) };
                     eng.eos_pushed = true;
-                    log("EOS pushed at true EOF");
+                    // The playhead and duration at the push are what tell a real end from a
+                    // producer that gave up early (a read error ends the demux as EOF too).
+                    log(&format!(
+                        "EOS pushed at true EOF pos={} dur={}",
+                        SHARED.playpos_ns.load(Ordering::Relaxed) / 1_000_000,
+                        SHARED.duration_ns.load(Ordering::Relaxed) / 1_000_000
+                    ));
                 }
                 // Nothing to send. THE case the read-out's Feed row exists to name: a dead
                 // PRODUCER, which every other field on the panel cannot tell from a dead sink.

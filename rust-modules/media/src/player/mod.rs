@@ -548,6 +548,34 @@ pub fn seek_pending() -> i64 {
 pub fn ended() -> bool {
     SHARED.ended.load(Relaxed)
 }
+
+/// **The playback facts every `endreason:`, `reopen:`, `stop:` and `playstate:` line carries**, in
+/// one fixed `key=value` order so the lines grep and diff alike: the item, where the playhead is
+/// against the duration (ms), the published state, the delivery mode, the viewer's skip and
+/// next-episode choices, whether a shuffle is running and what Up Next would start.
+///
+/// The markers are not here: they live in the metadata store, which this layer is not handed on
+/// these paths; the app's `playback::end_facts` adds them in front of this.
+///
+/// Called only on the rare edges those lines mark, never per frame.
+pub fn end_facts(ps: &crate::route::PlaybackSession) -> String {
+    let lower = |v: &dyn std::fmt::Debug| format!("{v:?}").to_ascii_lowercase();
+    format!(
+        "rk={} pos={} dur={} state={} ended={} mode={}{} skip=intro:{},credits:{} next={} shuffle={} upnext={}",
+        crate::route::cur_rk(ps),
+        playpos_ns() / 1_000_000,
+        duration_ns() / 1_000_000,
+        lower(&state(ps)),
+        ended() as u8,
+        report::mode(ps),
+        if crate::route::is_preview(ps) { " preview=1" } else { "" },
+        lower(&crate::route::skip_intro()),
+        lower(&crate::route::skip_credits()),
+        lower(&crate::route::next_episode_mode()),
+        crate::route::shuffle_active(ps) as u8,
+        crate::route::up_next(ps).map_or("-", |u| u.rk.as_str()),
+    )
+}
 pub fn request_seek(ns: i64) {
     report::note_seek_for(crate::route::playback_trace_generation());
     crate::route::note_user_seek_intent(ns);

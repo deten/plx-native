@@ -827,6 +827,8 @@ pub fn slot(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::Me
 pub struct RowResolution {
     pub slot: ControlSlot,
     pub auto_skip: bool,
+    /// The occupant comes from a server marker, not the synthesized tail (for the event log).
+    pub from_server: bool,
 }
 
 /// [`slot`] plus the automatic-skip decision, from the same single sample of the playhead.
@@ -850,7 +852,7 @@ pub fn resolve(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata:
             .flatten()
     });
     let slot = slot_for_with(m, has_next, mode, skips);
-    RowResolution { slot, auto_skip: auto_skips(slot, server.is_some(), skips) }
+    RowResolution { slot, auto_skip: auto_skips(slot, server.is_some(), skips), from_server: server.is_some() }
 }
 
 /// PURE edge: has a stand-in just vanished OUT FROM UNDER the focus ring, so the ring has to go

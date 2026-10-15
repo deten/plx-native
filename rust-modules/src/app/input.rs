@@ -319,6 +319,13 @@ pub(crate) unsafe fn shuffle_tick(
         return;
     };
     let Some(first) = plx_media::route::shuffle_first(&queue) else { return };
+    plx_media::player::log(&format!(
+        "shuffle: start id={} rows={} first={} {}",
+        queue.id,
+        queue.rows.len(),
+        first.rk,
+        plx_media::player::end_facts(ps)
+    ));
     let sid = queue.sid;
     let resume_ns = plx_data::metadata::resume_ns(first.resume_ms, first.dur_ms);
     let intent = plx_screens::registry::PlayIntent::Item {
@@ -1524,6 +1531,7 @@ pub(crate) fn key_back(
 ) {
     if super::bridge::nav_cancel(pages) {
     } else if super::bridge::player(pages).is_some() {
+        plx_base::eventlog::log(&format!("endreason: user-back {}", plx_media::player::end_facts(ps)));
         exit_player(ps, pa, refresh_hubs_at, pages);
     } else if matches!(pages.top_arg(), Some(AppArg::Content(_))) {
         // The two stacking screens, through the page transition. All three

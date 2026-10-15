@@ -499,8 +499,12 @@ pub mod runtime_file {
     pub const GST: &str = "plxnative-gst.log";
     pub const GPU_TIME: &str = "plxnative-gputime.jsonl";
     pub const HARDWARE_COUNTERS: &str = "plxnative-hwcnt.jsonl";
+    /// The debug flavour's kept event log and its one rotated predecessor
+    /// (`eventlog::history`).
+    pub const HISTORY: &str = "plxnative-history.log";
+    pub const HISTORY_OLD: &str = "plxnative-history.log.1";
 
-    pub const LOGS: [&str; 8] = [
+    pub const LOGS: [&str; 10] = [
         EVENTS,
         CRASH,
         STDERR,
@@ -509,6 +513,8 @@ pub mod runtime_file {
         GST,
         GPU_TIME,
         HARDWARE_COUNTERS,
+        HISTORY,
+        HISTORY_OLD,
     ];
 }
 

@@ -66,9 +66,12 @@ pub(crate) mod framedump;
 // `test` as well as the feature: `any_trigger_present` is the only caller and it is cfg'd out of a
 // release build, but the test below asserts this list's contents and runs with default features.
 #[cfg(any(feature = "devtriggers", test))]
-const DIAG: [&str; 36] = [
+const DIAG: [&str; 38] = [
     "plxnative-diag.log",
     "plxnative-events.log",
+    // The debug flavour's kept event log (`eventlog::history`), which outlives the boot that wrote it.
+    "plxnative-history.log",
+    "plxnative-history.log.1",
     "plxnative-stderr.log",
     "plxnative-crash.log",
     "plxnative-anim.log",

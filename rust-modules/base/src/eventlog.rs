@@ -12,6 +12,9 @@
 /// the default `make check`. See the module's doc for why there are two exits and why only the
 /// remote one may drop a line.
 pub mod scrub;
+/// The debug flavour's kept copy of the event log, which a relaunch does not truncate: see the
+/// module's doc. Every line reaches it through [`log`], after the same redaction.
+pub mod history;
 /// The bounded in-memory record ring, tapped by [`log`] one call below the redaction. Behind the
 /// lab feature: a build without it has nothing to put in a ring.
 #[cfg(feature = "lab-diagnostics")]
@@ -261,6 +264,9 @@ pub fn log(m: &str) {
     #[cfg(feature = "lab-diagnostics")]
     crate::eventlog::ring::record(&line);
     let _ = append_record(&p, &line);
+    // The debug flavour also keeps it past the next launch's truncation (`history`'s doc). The
+    // line is the one just written: already scrubbed, never re-derived from `m`.
+    history::keep(&line);
 }
 
 /// The log's credential backstop. These run on the pure function, so they need no filesystem.

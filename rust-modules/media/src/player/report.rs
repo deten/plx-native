@@ -642,6 +642,16 @@ fn transition(
 pub fn tick(ps: &crate::route::PlaybackSession) {
     let now = super::state(ps);
     let prev = super::shared::PlaybackState::from_u8(LAST.swap(now as u8, Relaxed));
+    // Every state EDGE (a stall into Buffering, an Error, the return to Playing) with the facts
+    // an early end is diagnosed from. Edges only, so a steady state costs nothing.
+    if prev != now {
+        super::log(&format!(
+            "playstate: {} -> {} {}",
+            format!("{prev:?}").to_ascii_lowercase(),
+            format!("{now:?}").to_ascii_lowercase(),
+            super::end_facts(ps)
+        ));
+    }
     // A claim's presentation hold answers Buffering on purpose (`state()`), so its
     // Playing -> Buffering edge is the viewer's own pick working, not a stall.
     if !super::claim_hold::active() {
@@ -783,7 +793,7 @@ fn rebuffer_time_class(ms: i64) -> &'static str {
 /// session" is how a direct play is recognised — so this read `direct` for every refusal, the same
 /// false claim [`delivery_class`] made until Sentry PLX-NATIVE-14. The usage funnel's `mode`
 /// domain gained `unknown` for it; `diag::schema::MODE` and `PRIVACY.md` carry the value.
-fn mode(ps: &crate::route::PlaybackSession) -> &'static str {
+pub(crate) fn mode(ps: &crate::route::PlaybackSession) -> &'static str {
     if crate::route::play_refused(ps) || crate::route::play_resolution_failed(ps) {
         "unknown"
     } else if crate::route::is_transcoding(ps) {
