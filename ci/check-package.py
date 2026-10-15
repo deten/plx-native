@@ -232,6 +232,9 @@ RELEASE_LEGITIMATE_TRIGGER_NAMES = {
     # release code names them on purpose.
     "plxnative-gputime.jsonl", "plxnative-gst.log", "plxnative-hwcnt.jsonl",
     "plxnative-anim.log",
+    # The debug flavour's kept event log (`eventlog::history`): a CREATE like the event log itself,
+    # written by a RELEASE=1 debug test build on purpose, never read as a switch.
+    "plxnative-history.log", "plxnative-history.log.1",
 }
 
 
