@@ -147,9 +147,14 @@ tile and sign-in. It sits alongside your regular PlxNative and the official Plex
 On a rooted television with Homebrew Channel, install the `.ipk` from a release. To remove it,
 uninstall **PlxNative debug** like any other app.
 
-The newest test build, [Test 6](../../releases/tag/test-6), carries every feature above. Test
+The newest test build, [Test 7](../../releases/tag/test-7), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
+
+Test builds also keep a playback log at `/tmp/com.beb.plxnative.debug/plxnative-history.log`
+(capped at 2 MB, kept across app restarts, cleared when the television restarts). Each episode or
+film records why it ended, such as reaching the end, the Up Next countdown or Back, which helps
+when reporting playback problems.
 
 ## Building
 
