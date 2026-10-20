@@ -138,6 +138,19 @@ for cast biographies.
 
 Code: branch [`watchlist`](../../tree/watchlist), built on `library-views`.
 
+### Resume and seeking (in testing)
+
+- **Backing out of the player** returns to the title's page with Resume already set to the spot
+  you stopped at. Stopping in the last tenth of a video marks it watched. The page then refreshes
+  from the server, which also moves a show's next episode along.
+- **Quick taps** on Left or Right hop further the longer you keep tapping: one Skip interval for
+  the first three taps, three for the next three, then six. Tapping the other way starts again at
+  one interval for fine adjustments.
+- **Holding** Left or Right starts slowly for precise placement, then doubles in speed every 0.7
+  seconds. At full speed it crosses the whole episode or film in about five seconds.
+
+Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
+
 ## Try a test build
 
 Test builds are published as [pre-releases](../../releases). They use the **debug** flavour, which
@@ -147,7 +160,7 @@ tile and sign-in. It sits alongside your regular PlxNative and the official Plex
 On a rooted television with Homebrew Channel, install the `.ipk` from a release. To remove it,
 uninstall **PlxNative debug** like any other app.
 
-The newest test build, [Test 7](../../releases/tag/test-7), carries every feature above. Test
+The newest test build, [Test 8](../../releases/tag/test-8), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
