@@ -11,6 +11,20 @@ them here rather than upstream.
 
 ## What this fork adds
 
+At a glance:
+
+- [Added Custom Library Order](#library-order-in-testing) for Home and the Movies and TV Shows tabs
+- [Added Subtitle Auto-Sync](#subtitle-auto-sync-built-testing-on-a-real-server)
+- [Added Recommended or All View](#recommended-or-all-per-library-in-testing) for each library
+- [Added Skip Intro and Credits](#skip-intro-and-credits): a button, automatic, or off
+- [Remembers Audio and Subtitle Choices](#audio-and-subtitles-remembered-per-show) per show
+- [Added Shuffle Series or Season](#shuffle-in-testing)
+- [Added Watchlist](#watchlist-in-testing)
+- [Fixed Resume](#resume-and-seeking-in-testing) so it shows where you stopped right away
+- [Improved Seeking](#resume-and-seeking-in-testing): faster taps and holds, and steadier holds
+- [Added a Playback Log](#try-a-test-build) to help diagnose playback problems
+- [Install and Update from Homebrew Channel](#install-with-homebrew-channel)
+
 ### Library order (in testing)
 
 You choose one order for your libraries, per profile, and the app uses it in two places:
