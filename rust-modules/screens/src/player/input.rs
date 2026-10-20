@@ -66,6 +66,7 @@ pub struct Scrub {
     pub hold_since: u32, // when that hold engaged — the acceleration ramp is measured from here
     pub alive: u32,      // last held (0x101) event — for the lost-keyup safety commit
     pub commit_at: u32,  // tap released → commit at this tick (0 = none; a new press cancels)
+    pub taps: u32,       // presses in the current tap burst (`tap_step_multiplier`)
     /// This gesture began on a HIDDEN HUD, so its press was spent raising the transport
     /// (`ScrubPress::Reveal`) rather than hopping. It is still a fully armed scrub — a user who
     /// keeps holding gets the ordinary continuous rewind, and `hold` engaging clears this — but if
@@ -102,6 +103,7 @@ impl Scrub {
         hold_since: 0,
         alive: 0,
         commit_at: 0,
+        taps: 0,
         reveal: false,
         ns: -1,
         drag: false,
@@ -304,8 +306,9 @@ impl HudState {
         }
     }
 }
-// scrub tuning: a press jumps scrub_step_ns() (the Skip interval); holding engages a continuous scrub ramping
-// SCRUB_BASE→SCRUB_MAX (playback-seconds per real-second). Defined in `appkit::player_hud` and
+// scrub tuning: a press jumps scrub_step_ns() (the Skip interval), further within a quick burst
+// (tap_step_multiplier); holding engages a continuous scrub ramping by scrub_speed
+// (playback-seconds per real-second). Defined in `appkit::player_hud` and
 // re-exported here — the trailer transport's own hold-to-scrub (`screens::detail::trailer`) wants
 // the identical feel and cannot name this module directly (`ci/check-deps.sh`'s `sibling` gate).
 // Long enough that a rapid tap burst coalesces into ONE seek (`TAP_COMMIT_MS`) — each
@@ -313,7 +316,7 @@ impl HudState {
 // race the demux (the stale-audio silence incident); short enough that a single tap still feels
 // immediate.
 pub use plx_appkit::player_hud::{
-    scrub_step_ns, SCRUB_ACCEL, SCRUB_BASE, SCRUB_LOST_MS, SCRUB_MAX, TAP_COMMIT_MS,
+    scrub_speed, scrub_step_ns, tap_step_multiplier, SCRUB_LOST_MS, TAP_COMMIT_MS,
 };
 // HUD auto-hide: how long the HUD lingers after the input that raised it.
 pub const HUD_LINGER_MS: u32 = plx_appkit::player_hud::LINGER_MS; // plain transport/nav input
@@ -506,7 +509,7 @@ mod hud_visibility_tests {
     #[test]
     fn disengaging_ends_every_part_of_the_gesture() {
         let mut scrub = Scrub { t: 11, dir: 1, hold: true, hold_since: 12, alive: 13,
-            commit_at: 14, reveal: true, ns: 15, drag: true };
+            commit_at: 14, taps: 2, reveal: true, ns: 15, drag: true };
         scrub.disengage();
         assert_eq!((scrub.dir, scrub.hold, scrub.reveal, scrub.drag), (0, false, false, false));
         assert_eq!(scrub.commit_at, 14, "disengage must preserve the released tap's commit");

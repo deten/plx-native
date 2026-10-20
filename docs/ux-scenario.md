@@ -654,12 +654,16 @@ Seeking is a **preview-then-commit** gesture, not one immediate jump per press.
   band being dragged is on screen.
 - **With the HUD up and the scrubber focused, one press moves the preview by the Skip interval — 10 s unless Settings > Playback says otherwise.** The picture does
   not move yet; the scrubber shows the target, and the state mark shows the direction.
-- **Holding engages a continuous scrub that accelerates** — from 10× up to 140× playback speed — and
-  the key release commits it. A lost key-up is caught by a 400 ms watchdog, so a dropped release
+- **Holding engages a continuous scrub that accelerates** — from 20× playback speed, doubling every
+  0.7 s, up to a top speed that crosses the whole item in about 5 s (never below 140×, never above
+  1500×) — and the key release commits it. A lost key-up is caught by a 400 ms watchdog, so a dropped release
   cannot leave the scrub running.
 - **Quick repeated taps accumulate into one seek.** The commit waits ~450 ms after the last tap, so
   "back thirty seconds" is three presses at the default 10 s step and a single seek rather than three. That matters beyond
   feel: back-to-back in-flight seeks are what stress the demux pipeline.
+- **A longer burst hops further.** The first three taps of a burst move one Skip interval each, the
+  next three move three, and every tap after that moves six. A tap the other way starts a new burst,
+  so stepping back to fine-tune is always one interval.
 - The seek target is clamped to the item, stopping 3 s short of the end.
 
 The pointer can drag the scrubber directly, under the same commit rule.

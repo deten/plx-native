@@ -978,6 +978,11 @@ impl PlayerScreen {
                 // key's repeats engage the continuous ramp below and the release commits; a tap's
                 // release arms the debounce so that a rapid burst coalesces into one seek. The
                 // commit belonging to the press was this package's first regression.
+                // A press that lands while the last tap's commit is still pending, the same way,
+                // continues its burst and hops further (`tap_step_multiplier`).
+                let dir = if fwd { 1 } else { -1 };
+                let burst = self.scrub.commit_at != 0 && self.scrub.dir == dir;
+                self.scrub.taps = if burst { self.scrub.taps.saturating_add(1) } else { 1 };
                 self.scrub.commit_at = 0; // more input → cancel a pending tap commit
                 self.scrub.alive = now;
                 self.scrub.reveal = false; // a visible press is a real gesture whatever raised the HUD
@@ -985,7 +990,8 @@ impl PlayerScreen {
                     self.scrub.ns = plx_media::player::intended_pos_ns(ps);
                 }
                 if !self.scrub.hold {
-                    let step = if fwd { input::scrub_step_ns() } else { -input::scrub_step_ns() };
+                    let hop = input::scrub_step_ns() * input::tap_step_multiplier(self.scrub.taps);
+                    let step = if fwd { hop } else { -hop };
                     self.scrub.ns = Scrub::clamp_target(self.scrub.ns.max(0) + step, dur);
                 }
                 self.scrub.dir = if fwd { 1 } else { -1 };
@@ -1095,20 +1101,20 @@ impl PlayerScreen {
     ///
     /// **The safety commit is not optional.** This remote emits a held key as auto-repeat keydowns
     /// followed by ONE keyup, and a dropped keyup leaves `hold` armed with the preview slewing at
-    /// up to `SCRUB_MAX` for as long as the page is up. `alive` is stamped by every repeat, so
+    /// at top speed for as long as the page is up. `alive` is stamped by every repeat, so
     /// `SCRUB_LOST_MS` without one is the release that never arrived.
     fn step_scrub_hold<H: AppLike>(&mut self, now: u32, fx: &mut Effects<'_, H>) {
         if self.scrub.dir == 0 || !self.scrub.hold || self.scrub.ns < 0 || self.scrub.drag {
             return;
         }
         let held = now.wrapping_sub(self.scrub.hold_since) as f32 / 1000.0;
-        let speed = (input::SCRUB_BASE + input::SCRUB_ACCEL * held).min(input::SCRUB_MAX);
+        let dur = plx_media::player::duration_ns();
+        let speed = input::scrub_speed(held, dur);
         let mut sdt = now.wrapping_sub(self.scrub.t) as f32 / 1000.0;
         if sdt > 0.1 {
             sdt = 0.1;
         }
         let was = self.scrub.ns;
-        let dur = plx_media::player::duration_ns();
         let s = Scrub::clamp_target(
             was + (self.scrub.dir as f64 * speed as f64 * sdt as f64 * 1e9) as i64,
             dur,

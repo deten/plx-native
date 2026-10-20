@@ -1512,7 +1512,7 @@ pub const LINGER_MS: u32 = 4500;
 // ---- scrub tuning, shared by the player HUD's scrubber and the trailer transport's own --------
 //
 // Both hold-to-scrub gestures want the same feel — a press jumps `scrub_step_ns()`; holding engages
-// a continuous scrub ramping `SCRUB_BASE`→`SCRUB_MAX` (playback-seconds per real-second) — but the
+// a continuous scrub ramping by [`scrub_speed`] (playback-seconds per real-second) — but the
 // STATE (`screens::player::input::Scrub`, and `screens::detail::trailer::Transport`'s own fields)
 // cannot live in one shared type: `ci/check-deps.sh`'s `sibling` gate forbids a file under
 // `screens/detail/` from naming `crate::screens::player` at all, the same rule that keeps
@@ -1524,9 +1524,39 @@ pub const LINGER_MS: u32 = 4500;
 pub fn scrub_step_ns() -> i64 {
     plx_media::route::skip_interval().ns()
 }
-pub const SCRUB_BASE: f32 = 10.0;
-pub const SCRUB_ACCEL: f32 = 45.0; // added per second of hold
+pub const SCRUB_BASE: f32 = 20.0;
+/// The ramp doubles the speed every this many seconds of hold: about 55x after one second (where
+/// the old linear ramp was), then quickly past it.
+pub const SCRUB_DOUBLING_S: f32 = 0.7;
+/// The top speed's floor, which a short video (a trailer, a cold open) never needs to pass.
 pub const SCRUB_MAX: f32 = 140.0;
+/// The top speed's ceiling, so a very long video still moves at a speed the eye can follow.
+pub const SCRUB_MAX_LONG: f32 = 1500.0;
+/// A held key at top speed crosses the whole video in about this many seconds, whatever its
+/// length: a fixed 140x took ten seconds to cross a sitcom episode and almost a minute for a film.
+pub const SCRUB_CROSS_S: f32 = 5.0;
+
+/// **The held-key scrub speed**, in playback-seconds per real-second, after `held_s` seconds of
+/// hold on a video `duration_ns` long. One curve for the player HUD and the trailer transport.
+///
+/// It starts slow enough to place a scene and doubles every [`SCRUB_DOUBLING_S`] up to a top speed
+/// sized to the video ([`SCRUB_CROSS_S`]). Precision after a fast scrub comes from the taps.
+pub fn scrub_speed(held_s: f32, duration_ns: i64) -> f32 {
+    let top = (duration_ns as f32 / 1e9 / SCRUB_CROSS_S).clamp(SCRUB_MAX, SCRUB_MAX_LONG);
+    (SCRUB_BASE * (held_s.max(0.0) / SCRUB_DOUBLING_S).exp2()).min(top)
+}
+
+/// What the `taps`-th press of one tap burst hops, as a multiple of the Skip interval: 1x for the
+/// first three, 3x for the next three, 6x after that. A burst is presses that land before the
+/// previous one has committed ([`TAP_COMMIT_MS`]); a press the other way starts a new burst, so
+/// stepping back to fine-tune is always the plain interval.
+pub fn tap_step_multiplier(taps: u32) -> i64 {
+    match taps {
+        0..=3 => 1,
+        4..=6 => 3,
+        _ => 6,
+    }
+}
 // tap released → commit after this (further taps accumulate); see `screens::player::input`'s own
 // doc for why this debounce exists (coalescing a rapid tap burst into one Load/reload).
 pub const TAP_COMMIT_MS: u32 = 450;
@@ -2023,6 +2053,35 @@ mod tests {
     }
 
     use super::*;
+
+    /// A held key starts near the old ramp, then crosses a sitcom episode or a film in a few
+    /// seconds rather than ten or fifty; a short video keeps the old top speed.
+    #[test]
+    fn the_held_scrub_speeds_up_to_a_top_speed_sized_to_the_video() {
+        const MIN: i64 = 60_000_000_000;
+        let episode = 22 * MIN;
+        let film = 120 * MIN;
+        assert_eq!(scrub_speed(0.0, episode), SCRUB_BASE);
+        let one = scrub_speed(1.0, episode);
+        assert!((50.0..60.0).contains(&one), "about 55x after a second, got {one}");
+        assert!(scrub_speed(0.5, episode) < scrub_speed(1.5, episode));
+        // top speed: the whole video in about five seconds
+        let near = |a: f32, b: f32| (a - b).abs() < 0.5;
+        assert!(near(scrub_speed(30.0, episode), 22.0 * 60.0 / SCRUB_CROSS_S));
+        assert!(near(scrub_speed(30.0, film), 120.0 * 60.0 / SCRUB_CROSS_S));
+        // a trailer keeps the floor, a very long video the ceiling
+        assert_eq!(scrub_speed(30.0, 2 * MIN), SCRUB_MAX);
+        assert_eq!(scrub_speed(30.0, 600 * MIN), SCRUB_MAX_LONG);
+        // an unknown duration still scrubs
+        assert_eq!(scrub_speed(30.0, 0), SCRUB_MAX);
+    }
+
+    /// A quick burst of taps hops further the longer it runs.
+    #[test]
+    fn a_tap_burst_grows_its_hop() {
+        let hops: Vec<i64> = (1..=8).map(tap_step_multiplier).collect();
+        assert_eq!(hops, [1, 1, 1, 3, 3, 3, 6, 6]);
+    }
 
     /// **The transport's clocks are resident before the draw, this second's and the next one's.**
     /// On the TV the draw met each new clock string cold AFTER the back-buffer wait (`clear:12.4 …
