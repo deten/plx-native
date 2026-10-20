@@ -287,6 +287,10 @@ pub(crate) struct App {
     pub(crate) menu_play_await: Option<MenuPlayAwait>,
     pub(crate) prev: u32,
     pub(crate) refresh_hubs_at: u32,
+    /// The detail page a player exit uncovered, to refetch once the server holds the new resume
+    /// point (`route::timeline_stop_settled`), or at the deadline beside it whatever the fence
+    /// says. Armed by `content::restore_played_entry`, run by `app/run.rs`.
+    pub(crate) refresh_after_play: Option<(plx_data::stores::viewstate::DetailRefresh, u32)>,
     /// The HTTPS retry for servers on a plaintext grant (`plex::grant::UpgradeRetry`), stepped
     /// every frame beside the view-state pump (`app/run.rs`).
     pub(crate) plaintext_upgrade: plx_plex::plex::grant::UpgradeRetry,

@@ -1740,6 +1740,45 @@ pub fn install_for_test(state: &mut MetadataState, d: Option<Detail>) {
 /// episode keeping its old `viewOffset` would still draw its resume bar and no check.
 ///
 /// The landed refresh is the truth and silently corrects any of this; see [`crate::viewstate`].
+/// The share of the duration past which a stop counts as finished, as Plex Media Server's default
+/// does: the page then shows the item watched rather than a Resume at the credits.
+const WATCHED_AT: f64 = 0.9;
+
+/// **Where playback just stopped, shown at once** on the page the player uncovers. The page is not
+/// torn down under the player, so it would otherwise keep the Resume point it had before Play
+/// until it was opened again.
+///
+/// A stop past [`WATCHED_AT`] is a finish: the item is marked watched through
+/// [`set_watched_local`]. Otherwise the loaded movie, the matching episode, and the show's next-up
+/// episode (`on_deck`, which the show's hero reads) take the new position. The refetch that
+/// follows the server's `stopped` report is the truth and corrects anything this guessed.
+fn set_resume_local(state: &mut MetadataState, sid: plx_plex::plex::ServerId, rk: &str, pos_ms: i64, dur_ms: i64) -> bool {
+    if dur_ms > 0 && pos_ms as f64 >= dur_ms as f64 * WATCHED_AT {
+        return set_watched_local(state, sid, rk, true);
+    }
+    let Some(d) = state.current.as_mut() else {
+        return false;
+    };
+    let pos_ms = pos_ms.max(0);
+    if plx_plex::plex::same_item((d.sid, &d.rk), (sid, rk)) {
+        d.resume_ms = pos_ms;
+        return true;
+    }
+    if d.sid != sid {
+        return false;
+    }
+    let mut hit = false;
+    if let Some(e) = d.episodes.iter_mut().find(|e| e.rk == rk) {
+        e.resume_ms = pos_ms;
+        hit = true;
+    }
+    if let Some(e) = d.on_deck.as_mut().filter(|e| e.rk == rk) {
+        e.resume_ms = pos_ms;
+        hit = true;
+    }
+    hit
+}
+
 fn set_watched_local(state: &mut MetadataState, sid: plx_plex::plex::ServerId, rk: &str, on: bool) -> bool {
     {
         let Some(d) = state.current.as_mut() else {
@@ -3643,6 +3682,9 @@ pub fn run(state: &mut MetadataState, adapter: &std::sync::Arc<MetadataAdapter>,
             true
         }
         MetadataCmd::SetWatchedLocal { sid, rk, on } => set_watched_local(state, sid, &rk, on),
+        MetadataCmd::SetResumeLocal { sid, rk, pos_ms, dur_ms } => {
+            set_resume_local(state, sid, &rk, pos_ms, dur_ms)
+        }
         MetadataCmd::InstallPlaying(p) => {
             install_playing(state, p);
             true

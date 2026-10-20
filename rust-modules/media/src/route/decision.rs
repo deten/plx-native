@@ -5572,6 +5572,14 @@ pub fn scrobble_stop(
         s.tsession.clear();
         s.cur_contract.remux = false;
     } };
+    if let Some((rk, t_ms, d_ms)) = &final_report {
+        *LAST_STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some(StoppedAt {
+            sid: cur_sid(ps),
+            rk: rk.clone(),
+            pos_ms: *t_ms,
+            dur_ms: *d_ms,
+        });
+    }
     if final_report.is_none() && tsession.is_empty() && report_th.is_none() {
         return; // nothing to post and nobody to wait for
     }
@@ -5794,6 +5802,33 @@ impl Drop for TimelineStopCompletion {
             TIMELINE_STOP_FENCE.complete(self.generation);
         }
     }
+}
+
+/// Where a real stop left an item: the position its `stopped` report carries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoppedAt {
+    pub sid: ServerId,
+    pub rk: String,
+    pub pos_ms: i64,
+    pub dur_ms: i64,
+}
+
+/// The last real stop, kept for the page the player uncovers: its Resume button moves to this
+/// spot on the first frame back instead of waiting for a refetch. Written by [`scrobble_stop`],
+/// taken by the app once per player exit.
+static LAST_STOP: std::sync::Mutex<Option<StoppedAt>> = std::sync::Mutex::new(None);
+
+/// Take the last real stop's position (see [`LAST_STOP`]); `None` once taken.
+pub fn take_last_stop() -> Option<StoppedAt> {
+    LAST_STOP.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// Has every `stopped` report announced so far been attempted? A page that refetches an item
+/// after playback waits for this, so the server it asks already holds the new resume point.
+/// Never blocks; a refused or panicked worker still completes its generation (`Drop`).
+pub fn timeline_stop_settled() -> bool {
+    let s = TIMELINE_STOP_FENCE.state.lock().unwrap_or_else(|e| e.into_inner());
+    s.completed >= s.announced
 }
 
 /// Wait for pending [`scrobble_stop`] work to finish its ordered timeline/transcode attempts.

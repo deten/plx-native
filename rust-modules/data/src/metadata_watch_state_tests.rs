@@ -397,3 +397,51 @@ fn a_season_is_watched_only_when_the_server_counted_episodes_and_all_of_them_are
     // more-watched-than-exists is still watched, never a negative remainder.
     assert!(season(10, 11).watched(), "an over-count is still watched");
 }
+
+/// **Backing out of the player moves the Resume point at once.** The page under the player is not
+/// reloaded, so without this it kept the position it had before Play until it was opened again.
+#[test]
+fn a_stop_moves_the_resume_point_of_the_page_under_the_player() {
+    let _serial = plx_base::testlock::serial();
+    const DUR: i64 = 1_320_000;
+
+    // a film: its own Resume point
+    set_current_for_test(test_state(), Some(Detail {
+        sid: SRV_A,
+        rk: "42".into(),
+        resume_ms: 60_000,
+        dur_ms: DUR,
+        ..Default::default()
+    }));
+    assert!(set_resume_local(test_state(), SRV_A, "42", 600_000, DUR));
+    assert_eq!(current(test_state()).unwrap().resume_ms, 600_000);
+    assert!(!set_resume_local(test_state(), SRV_B, "42", 700_000, DUR), "another server's 42");
+    assert_eq!(current(test_state()).unwrap().resume_ms, 600_000);
+
+    // a stop in the credits is a finish: watched, nothing to resume
+    assert!(set_resume_local(test_state(), SRV_A, "42", DUR - 30_000, DUR));
+    let d = current(test_state()).unwrap();
+    assert!(d.watched);
+    assert_eq!(d.resume_ms, 0);
+
+    // a show: the played episode, and the next-up episode the hero reads
+    set_current_for_test(test_state(), Some(Detail {
+        sid: SRV_A,
+        rk: "show".into(),
+        is_show: true,
+        episodes: vec![
+            Episode { rk: "e1".into(), ..Default::default() },
+            Episode { rk: "e2".into(), resume_ms: 5_000, ..Default::default() },
+        ],
+        on_deck: Some(Episode { rk: "e2".into(), resume_ms: 5_000, ..Default::default() }),
+        ..Default::default()
+    }));
+    assert!(set_resume_local(test_state(), SRV_A, "e2", 300_000, DUR));
+    let d = current(test_state()).unwrap();
+    assert_eq!(d.episodes[1].resume_ms, 300_000);
+    assert_eq!(d.on_deck.as_ref().unwrap().resume_ms, 300_000);
+    assert_eq!(d.episodes[0].resume_ms, 0, "no other episode moves");
+    assert!(!set_resume_local(test_state(), SRV_A, "e9", 300_000, DUR), "not on this page");
+
+    set_current_for_test(test_state(), None);
+}

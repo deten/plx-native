@@ -2391,12 +2391,36 @@ fn activate_home_item(app: &mut App, source: MachineId, entry: EntryId,
 // one. `NavStack::request` captures it at the request itself, so there is no window in which a
 // request exists without the state it returns to.)
 
+/// How long a detail page uncovered by a player exit waits at most for the server to record the
+/// stop before it refetches anyway.
+const REFRESH_AFTER_PLAY_MS: u32 = 5_000;
+
 /// Playback restores the retained origin, then asks that instance to reveal the played episode.
-pub(crate) fn restore_played_entry(app: &mut App) {
+///
+/// The origin was only covered by the player, not reloaded, so it also takes the stop's position
+/// at once (`MetadataCmd::SetResumeLocal`) and is refetched once the server has recorded it
+/// (`App::refresh_after_play`): the Resume button shows where playback just stopped.
+pub(crate) fn restore_played_entry(app: &mut App, now: u32) {
+    // Taken on every exit, so a stop never lingers to be applied to a later page.
+    let stop = plx_media::route::take_last_stop();
     // **The origin entry has just been uncovered by `exit_player`'s `PopTo`**, so the page to
     // address is the top one and the `Spot` to restore is its OWN `ReturnState` — the state the
     // container captured when the Play was requested. It was `App.play_from`'s `Node::Detail`
     // spot, a copy of the same thing kept beside the tree.
+    let Some(entry) = app.pages.nav.top_page() else { return };
+    let AppArg::Content(ContentArg::Detail { sid, rk }) = &entry.arg else { return };
+    if let Some(stop) = stop.filter(|s| s.sid == *sid) {
+        // the page's own item, or (a show's page) the episode played from it
+        let keep = (stop.rk != *rk).then(|| stop.rk.clone());
+        app.bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::SetResumeLocal {
+            sid: stop.sid,
+            rk: stop.rk,
+            pos_ms: stop.pos_ms,
+            dur_ms: stop.dur_ms,
+        });
+        let target = plx_data::stores::viewstate::DetailRefresh { sid: *sid, rk: rk.clone(), keep };
+        app.refresh_after_play = Some((target, now.wrapping_add(REFRESH_AFTER_PLAY_MS)));
+    }
     let Some(entry) = app.pages.nav.top_page() else { return };
     let AppArg::Content(ContentArg::Detail { sid, rk }) = &entry.arg else { return };
     let Some(instance) = entry.inst.as_ref().map(|i| i.id) else { return };

@@ -186,6 +186,9 @@ pub enum MetadataCmd {
     SetNowPlaying(Option<crate::metadata::NowPlaying>),
     /// The optimistic half of a view-state write on the loaded item, its episodes and Related.
     SetWatchedLocal { sid: ServerId, rk: String, on: bool },
+    /// Playback just stopped `(sid, rk)` at `pos_ms` of `dur_ms`: move the loaded page's Resume
+    /// point there (or mark it watched) before the server's copy is refetched.
+    SetResumeLocal { sid: ServerId, rk: String, pos_ms: i64, dur_ms: i64 },
     /// The playback plan's leaf (`route.rs`).
     InstallPlaying(Option<crate::metadata::PlayingItem>),
     /// A subtitle the server just installed for the PLAYING item (the player's subtitle search),

@@ -279,7 +279,7 @@ pub(crate) unsafe fn run(app: &mut App) {
         // the wash's own dissolve is in it, and the function itself is gone now — every wash
         // dithers on every frame.)
         fr.underlay_moving |= tree_report.underlay_moving;
-        if was_player && super::bridge::player(&app.pages).is_none() { restore_played_entry(app); }
+        if was_player && super::bridge::player(&app.pages).is_none() { restore_played_entry(app, fr.now); }
         content_requests(app, fr);
         crate::dev::scenarios::advance_content_boot(app, fr);
         loop_requests(app);
@@ -1657,6 +1657,18 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
             // Bridge-owned Browse store through `Bridge::browse_run`.
             app.bridge.browse_run(plx_data::stores::browse::BrowseCmd::HubsInvalidateAll);
             log("home: hubs refresh queued after playback");
+        }
+        // …and the detail page the exit uncovered, once the server has the stop (its Resume
+        // point was already moved locally; this is the server's word, and the next episode).
+        if let Some((_, deadline)) = &app.refresh_after_play {
+            let due = plx_media::route::timeline_stop_settled()
+                || fr.now.wrapping_sub(*deadline) < 0x8000_0000;
+            if due && !matches!(app.route(), AppArg::Player) {
+                if let Some((target, _)) = app.refresh_after_play.take() {
+                    log(&format!("detail: refresh after playback rk={}", target.rk));
+                    refresh_content(&mut app.pages, &mut app.bridge, target);
+                }
+            }
         }
         // (The lost-keyup safety net and the CLIENT-SIDE LONG-PRESS REPEAT stood here — the one
         // hold-to-move path for every discrete focus list, driven by `App::held_key` at 110 ms so
@@ -4193,7 +4205,7 @@ mod lifecycle_regression_tests {
         super::super::bridge::frame(&mut app.pages, &mut app.bridge,
             plx_machine::machine::Tick { ms: *t, dt_us: 16_000 }, std::mem::take(&mut app.inputs));
         if was_player && super::super::bridge::player(&app.pages).is_none() {
-            restore_played_entry(app);
+            restore_played_entry(app, fr.now);
         }
         content_requests(app, &fr);
         loop_requests(app);
