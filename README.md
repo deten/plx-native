@@ -160,7 +160,7 @@ tile and sign-in. It sits alongside your regular PlxNative and the official Plex
 On a rooted television with Homebrew Channel, install the `.ipk` from a release. To remove it,
 uninstall **PlxNative debug** like any other app.
 
-The newest test build, [Test 8](../../releases/tag/test-8), carries every feature above. Test
+The newest test build, [Test 9](../../releases/tag/test-9), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
