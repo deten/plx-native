@@ -157,8 +157,32 @@ Test builds are published as [pre-releases](../../releases). They use the **debu
 installs as its own app, **PlxNative debug** (`com.beb.plxnative.debug`), with its own launcher
 tile and sign-in. It sits alongside your regular PlxNative and the official Plex app.
 
-On a rooted television with Homebrew Channel, install the `.ipk` from a release. To remove it,
-uninstall **PlxNative debug** like any other app.
+### Install with Homebrew Channel
+
+This fork has its own Homebrew Channel repository, so the television can install the newest test
+build directly.
+
+1. Open **Homebrew Channel** and go to its **Settings**.
+2. Select **Add repository** and enter this address:
+
+   ```
+   https://raw.githubusercontent.com/deten/plx-native/main/homebrew/repo.json
+   ```
+
+3. Go back to the app list. **PlxNative debug** now appears beside the other apps. Select it, then
+   **Install**.
+4. Launch **PlxNative debug** from the launcher and sign in.
+
+**Updating.** Every test build carries the same version number, so its Homebrew Channel page shows
+**Launch** once it is installed. To install a newer build, open **PlxNative debug** in Homebrew
+Channel, press **5** on the remote, then select **Reinstall**. Your sign-in and settings stay as
+they are.
+
+**Removing.** Uninstall **PlxNative debug** from Homebrew Channel or the launcher like any other
+app. To remove the repository, select its address under **Settings** in Homebrew Channel.
+
+You can also install by hand: download the `.ipk` from a [release](../../releases) and install it
+with `ares-install` from LG's webOS developer tools.
 
 The newest test build, [Test 9](../../releases/tag/test-9), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is

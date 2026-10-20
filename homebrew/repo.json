@@ -1,0 +1,12 @@
+{
+  "packages": [
+    {
+      "id": "com.beb.plxnative.debug",
+      "title": "PlxNative debug",
+      "shortDescription": "Test builds of this PlxNative fork. Installs beside the regular PlxNative app.",
+      "fullDescriptionUrl": "description.html",
+      "iconUri": "https://raw.githubusercontent.com/deten/plx-native/main/pkg/dev/largeIcon.png",
+      "manifestUrl": "com.beb.plxnative.debug.manifest.json"
+    }
+  ]
+}
