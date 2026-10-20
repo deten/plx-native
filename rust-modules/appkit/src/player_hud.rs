@@ -1561,6 +1561,14 @@ pub fn tap_step_multiplier(taps: u32) -> i64 {
 // doc for why this debounce exists (coalescing a rapid tap burst into one Load/reload).
 pub const TAP_COMMIT_MS: u32 = 450;
 pub const SCRUB_LOST_MS: u32 = 400; // holding but no repeat this long → lost keyup → commit
+/// A held key's release waits this long before it commits. This remote sometimes reports a
+/// release in the middle of a hold and a fresh press ~20 ms later (device log 2026-10-20: keyup,
+/// then keydown 17 ms after, then repeats again ~500 ms on), which committed a seek the viewer
+/// never asked for. A press the same way inside the window carries the hold on.
+pub const HOLD_RELEASE_GRACE_MS: u32 = 200;
+/// After such a press, how long the hold waits for the remote's repeats to come back (its own
+/// first-repeat delay is ~500 ms) before it is treated as a lost key-up and commits.
+pub const HOLD_RESUME_WAIT_MS: u32 = 900;
 
 /// Sets the Skip interval for one test and puts the prior value back on drop. The caller holds
 /// `testlock::serial()`: the live value is a process global, like every preference.

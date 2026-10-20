@@ -981,7 +981,21 @@ impl PlayerScreen {
                 // A press that lands while the last tap's commit is still pending, the same way,
                 // continues its burst and hops further (`tap_step_multiplier`).
                 let dir = if fwd { 1 } else { -1 };
+                if self.scrub.hold && self.scrub.commit_at != 0 && self.scrub.dir != dir {
+                    // released, then a press the other way: the hold is over, and this press is a
+                    // tap hopping back from where it stopped
+                    self.scrub.hold = false;
+                }
                 let burst = self.scrub.commit_at != 0 && self.scrub.dir == dir;
+                if burst && self.scrub.hold {
+                    // the remote's phantom release (`HOLD_RELEASE_GRACE_MS`): the hold carries on
+                    // once its repeats come back, from the preview where it paused
+                    self.scrub.commit_at = 0;
+                    self.scrub.alive = now;
+                    self.scrub.resumed_at = now.max(1);
+                    plx_base::eventlog::log("scrub: hold resumed after a release inside the grace");
+                    return;
+                }
                 self.scrub.taps = if burst { self.scrub.taps.saturating_add(1) } else { 1 };
                 self.scrub.commit_at = 0; // more input → cancel a pending tap commit
                 self.scrub.alive = now;
@@ -1008,6 +1022,10 @@ impl PlayerScreen {
         if self.hud.nav.focus == 0 && self.scrub.dir != 0 {
             self.scrub.alive = now;
             self.scrub.commit_at = 0;
+            if self.scrub.resumed_at != 0 {
+                self.scrub.resumed_at = 0;
+                self.scrub.t = now; // the pause is not travel
+            }
             if !self.scrub.hold {
                 self.scrub.hold = true;
                 self.scrub.hold_since = now;
@@ -1032,9 +1050,11 @@ impl PlayerScreen {
     /// throws the preview away: the press was spent raising the transport and the preview sits on
     /// the seed, so committing it is a full reopen + prime to the spot playback is already on.
     /// Tested BEFORE `hold`, because a hold that engaged but has not TRAVELLED yet is still that
-    /// case — the ramp is what retires `reveal`, on real travel. A travelled hold commits now. A
-    /// plain tap arms the debounce instead, so that a rapid burst of hops becomes one seek.
-    fn key_scrub_release<H: AppLike>(&mut self, now: u32, fx: &mut Effects<'_, H>) {
+    /// case — the ramp is what retires `reveal`, on real travel. A travelled hold commits after
+    /// `HOLD_RELEASE_GRACE_MS`, through the same pending commit as a tap, so that the remote's
+    /// phantom release mid-hold can be taken back by the press that follows it. A plain tap arms
+    /// the debounce, so that a rapid burst of hops becomes one seek.
+    fn key_scrub_release<H: AppLike>(&mut self, now: u32, _fx: &mut Effects<'_, H>) {
         if self.scrub.dir == 0 {
             return;
         }
@@ -1042,12 +1062,9 @@ impl PlayerScreen {
             self.scrub.ns = -1;
             self.scrub.disengage();
         } else if self.scrub.hold {
-            plx_base::eventlog::log(&format!(
-                "scrub: keyup commit (held) {}s",
-                self.scrub.ns / 1_000_000_000
-            ));
-            self.commit_scrub(fx);
-            self.scrub.disengage();
+            // the preview holds still meanwhile (`step_scrub_hold`), and `step_tap_commit` commits
+            self.scrub.resumed_at = 0;
+            self.scrub.commit_at = now.wrapping_add(input::HOLD_RELEASE_GRACE_MS).max(1);
         } else {
             // a tap → commit on a short debounce so quick taps accumulate first
             self.scrub.commit_at = now.wrapping_add(input::TAP_COMMIT_MS).max(1);
@@ -1081,7 +1098,8 @@ impl PlayerScreen {
         }
         if self.scrub.ns >= 0 {
             plx_base::eventlog::log(&format!(
-                "scrub: tap commit {}s",
+                "scrub: {} commit {}s",
+                if self.scrub.hold { "keyup (held)" } else { "tap" },
                 self.scrub.ns / 1_000_000_000
             ));
             self.commit_scrub(fx);
@@ -1105,6 +1123,20 @@ impl PlayerScreen {
     /// `SCRUB_LOST_MS` without one is the release that never arrived.
     fn step_scrub_hold<H: AppLike>(&mut self, now: u32, fx: &mut Effects<'_, H>) {
         if self.scrub.dir == 0 || !self.scrub.hold || self.scrub.ns < 0 || self.scrub.drag {
+            return;
+        }
+        // A release is pending (`HOLD_RELEASE_GRACE_MS`): the preview waits where the key came up.
+        if self.scrub.commit_at != 0 {
+            return;
+        }
+        // A press took the release back and the repeats have not resumed yet: wait for them, but
+        // not forever, which would be a lost key-up.
+        if self.scrub.resumed_at != 0 {
+            if now.wrapping_sub(self.scrub.resumed_at) > input::HOLD_RESUME_WAIT_MS {
+                plx_base::eventlog::log(&format!("scrub: lost keyup commit {}s", self.scrub.ns / 1_000_000_000));
+                self.commit_scrub(fx);
+                self.scrub.disengage();
+            }
             return;
         }
         let held = now.wrapping_sub(self.scrub.hold_since) as f32 / 1000.0;
@@ -2319,10 +2351,15 @@ mod scrub_ownership_tests {
         let travelled = page.scrub.ns;
         assert!(travelled > DEFAULT_HOP, "the ramp advanced past the press's own hop");
         let (_, reqs) = key(&mut page, SDLK_RIGHT, Edge::Up, 1_420);
+        assert!(seeks(reqs).is_empty(), "the release waits out the grace first");
+        let (_, reqs) = tick(&mut page, 1_420 + input::HOLD_RELEASE_GRACE_MS / 2);
+        assert!(seeks(reqs).is_empty(), "inside the grace nothing commits");
+        assert_eq!(page.scrub.ns, travelled, "…and the preview waits where the key came up");
+        let (_, reqs) = tick(&mut page, 1_420 + input::HOLD_RELEASE_GRACE_MS + 1);
         assert_eq!(
             seeks(reqs),
             vec![PlayerReq::CommitSeek(travelled)],
-            "a travelled hold commits AT ONCE on release — no debounce, it is not a tap",
+            "a travelled hold commits once the grace has passed, where it was released",
         );
 
         // …and the release that never does.
@@ -2334,6 +2371,81 @@ mod scrub_ownership_tests {
         let (_, reqs) = tick(&mut page, 1_050 + input::SCRUB_LOST_MS + 1);
         assert_eq!(seeks(reqs).len(), 1, "the repeats stopped without a keyup: commit and let go");
         assert_eq!(page.scrub.dir, 0, "…and the gesture is over, not slewing forever");
+    }
+
+    /// **The remote's phantom release does not end a hold.** Measured on the television
+    /// 2026-10-20: mid-hold a keyup, a fresh keydown 17 ms later, then repeats again ~500 ms on.
+    /// The keyup committed a seek the viewer never asked for and playback started under a thumb
+    /// still holding the key. Now the press inside the grace takes the release back, the preview
+    /// waits for the repeats, and the hold carries on from where it paused.
+    #[test]
+    fn a_release_and_press_inside_the_grace_carries_the_hold_on() {
+        let _g = plx_base::testlock::serial();
+        let _f = Fixture::new(false);
+        let mut page = page_on_the_bar();
+        key(&mut page, SDLK_RIGHT, Edge::Down, 1_000);
+        key(&mut page, SDLK_RIGHT, Edge::Repeat, 1_050);
+        tick(&mut page, 1_400);
+        key(&mut page, SDLK_RIGHT, Edge::Repeat, 1_400);
+        let paused_at = page.scrub.ns;
+
+        let (_, reqs) = key(&mut page, SDLK_RIGHT, Edge::Up, 1_420);
+        assert!(seeks(reqs).is_empty());
+        let (_, reqs) = key(&mut page, SDLK_RIGHT, Edge::Down, 1_437);
+        assert!(seeks(reqs).is_empty(), "the press took the release back");
+        assert!(page.scrub.hold, "…and the hold is still the gesture");
+        assert_eq!(page.scrub.ns, paused_at, "a resumed hold does not hop like a tap");
+
+        // the remote's first repeat is ~500 ms away: no commit, no travel, while it is
+        let (_, reqs) = tick(&mut page, 1_437 + input::SCRUB_LOST_MS + 100);
+        assert!(seeks(reqs).is_empty(), "waiting for the repeats is not a lost key-up");
+        assert_eq!(page.scrub.ns, paused_at);
+
+        key(&mut page, SDLK_RIGHT, Edge::Repeat, 1_940);
+        tick(&mut page, 1_990);
+        assert!(page.scrub.ns > paused_at, "the repeats are back and the hold travels again");
+
+        // and the real release still commits after the grace
+        let at = page.scrub.ns;
+        key(&mut page, SDLK_RIGHT, Edge::Up, 2_000);
+        let (_, reqs) = tick(&mut page, 2_000 + input::HOLD_RELEASE_GRACE_MS + 1);
+        assert_eq!(seeks(reqs), vec![PlayerReq::CommitSeek(at)]);
+        assert_eq!(page.scrub.dir, 0);
+    }
+
+    /// A press that took a release back but whose repeats never return is a lost key-up.
+    #[test]
+    fn a_resumed_hold_whose_repeats_never_return_commits() {
+        let _g = plx_base::testlock::serial();
+        let _f = Fixture::new(false);
+        let mut page = page_on_the_bar();
+        key(&mut page, SDLK_RIGHT, Edge::Down, 1_000);
+        key(&mut page, SDLK_RIGHT, Edge::Repeat, 1_050);
+        tick(&mut page, 1_300);
+        key(&mut page, SDLK_RIGHT, Edge::Repeat, 1_300);
+        key(&mut page, SDLK_RIGHT, Edge::Up, 1_320);
+        key(&mut page, SDLK_RIGHT, Edge::Down, 1_340);
+        let (_, reqs) = tick(&mut page, 1_340 + input::HOLD_RESUME_WAIT_MS + 1);
+        assert_eq!(seeks(reqs).len(), 1);
+        assert_eq!(page.scrub.dir, 0);
+    }
+
+    /// Released, then a press the OTHER way inside the grace: the hold is over and the press is
+    /// an ordinary tap back from the release point.
+    #[test]
+    fn a_press_the_other_way_after_a_hold_hops_back_from_the_release_point() {
+        let _g = plx_base::testlock::serial();
+        let _f = Fixture::new(false);
+        let mut page = page_on_the_bar();
+        key(&mut page, SDLK_RIGHT, Edge::Down, 1_000);
+        key(&mut page, SDLK_RIGHT, Edge::Repeat, 1_050);
+        tick(&mut page, 1_400);
+        key(&mut page, SDLK_RIGHT, Edge::Repeat, 1_400);
+        let released = page.scrub.ns;
+        key(&mut page, SDLK_RIGHT, Edge::Up, 1_420);
+        key(&mut page, plx_ui::consts::SDLK_LEFT, Edge::Down, 1_500);
+        assert!(!page.scrub.hold);
+        assert_eq!(page.scrub.ns, released - DEFAULT_HOP);
     }
 
     /// A key gesture SUPERSEDES a pointer one and throws its preview away rather than hopping from

@@ -656,7 +656,9 @@ Seeking is a **preview-then-commit** gesture, not one immediate jump per press.
   not move yet; the scrubber shows the target, and the state mark shows the direction.
 - **Holding engages a continuous scrub that accelerates** — from 20× playback speed, doubling every
   0.7 s, up to a top speed that crosses the whole item in about 5 s (never below 140×, never above
-  1500×) — and the key release commits it. A lost key-up is caught by a 400 ms watchdog, so a dropped release
+  1500×) — and the key release commits it, 200 ms later. The remote sometimes reports a release in
+  the middle of a hold and a fresh press about 20 ms after; a press the same way inside those 200 ms
+  takes the release back, and the hold carries on once the remote's repeats resume. A lost key-up is caught by a 400 ms watchdog, so a dropped release
   cannot leave the scrub running.
 - **Quick repeated taps accumulate into one seek.** The commit waits ~450 ms after the last tap, so
   "back thirty seconds" is three presses at the default 10 s step and a single seek rather than three. That matters beyond
