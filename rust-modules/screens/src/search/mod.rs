@@ -394,7 +394,10 @@ impl<H: SearchLike> Machine<H> for SearchScreen {
                     }
                     if *key == Key::Up && cx.focus.current == Some(self.key(FIELD)) {
                         self.keyboard(false, true, fx);
-                        self.reseat(FocusTarget::Elem(self.key(plx_ui::dispatch::STRIP_BASE + 3)), fx);
+                        // The Shield layout draws no top bar above the field to land on.
+                        if !plx_ui::layout::shield() {
+                            self.reseat(FocusTarget::Elem(self.key(plx_ui::dispatch::STRIP_BASE + 3)), fx);
+                        }
                         return Handled::Yes;
                     }
                     if *key == Key::Back {

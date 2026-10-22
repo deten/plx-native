@@ -2167,6 +2167,10 @@ fn loop_requests(app: &mut App) {
             plx_screens::registry::LoopReq::AccountSendDiagnostics => {
                 crate::lab::request_upload("menu", &app.player.session);
             }
+            // The Shield layout's side panel chose a row; it dismissed itself in the same drain.
+            plx_screens::registry::LoopReq::Sidebar(go) => {
+                super::bridge::sidebar_go(&mut app.pages, &mut app.bridge, go);
+            }
         }
     }
 }
@@ -2790,6 +2794,7 @@ pub(crate) unsafe fn report(app: &mut App, fr: &mut Frame) {
                 | AppArg::FirstRunConsent(_)
                 | AppArg::LibraryMenu(_)
                 | AppArg::AccountMenu
+                | AppArg::Sidebar(_)
                 | AppArg::ItemMenu(_)
                 | AppArg::PlayerOverlay(_)
                 | AppArg::AltSources(_)

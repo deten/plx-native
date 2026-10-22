@@ -2618,8 +2618,6 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
     let r = CHIP_FRAME;
     let expand = chip_expand;
     let d = r.w;
-    let thumb_s = data.thumb;
-    let initial_c = data.initial;
     let name_c = data.name;
     let name_w = data.name_w;
     // ---- the capsule UNDER the avatar, ALWAYS: the tab track's material, inset and radius — a
@@ -2663,6 +2661,20 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
     }
     // resting shadow + perimeter stroke always; lift the shadow with the focus (same as shelf tiles)
     p.focus_shadow(r, d * 0.5, e);
+    profile_avatar(p, data, r, theme::size::HEADLINE, 14.0, e);
+}
+
+/// **The profile's FACE** in the circle `r`: its picture, or the idle disc with its initial (or a
+/// person glyph inset `glyph_inset` when there is nobody to name) while there is none. `stroke` is
+/// the picture's focus-driven perimeter stroke (`Painter::tex_stroked`).
+///
+/// One face, drawn by [`profile_chip_with`] and by the Shield layout's rail and side panel
+/// (`side_nav`), so a person's picture, its crop and its fallback cannot differ between the two
+/// layouts. `initial_size` is the type rung the initial is set at, which scales with the circle.
+pub fn profile_avatar(p: Painter, data: ProfileChipRead<'_>, r: Rect, initial_size: c_int, glyph_inset: f32, stroke: f32) {
+    let d = r.w;
+    let thumb_s = data.thumb;
+    let initial_c = data.initial;
     let mut drew = false;
     if !thumb_s.is_empty() {
         let (t, tw, th) = resolve_tex_wh_on(data.src, thumb_s, 128, 128, 0);
@@ -2670,7 +2682,7 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
             // the same crop the profile picker's `Art::Thumb` avatars take, so one person's
             // picture is framed alike on the chip and on the picker
             let uv = r.cover_uv(tw, th, crate::Crop::Centre);
-            p.tex_stroked(t, uv, r, d * 0.5, theme::TINT_WHITE, e);
+            p.tex_stroked(t, uv, r, d * 0.5, theme::TINT_WHITE, stroke);
             drew = true;
         }
     }
@@ -2694,16 +2706,16 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
             crate::icons::draw(
                 p,
                 crate::icons::Icon::User,
-                r.inset(14.0),
+                r.inset(glyph_inset),
                 theme::TEXT_SECONDARY,
             );
         } else {
-            let ty = plx_gfx::text::text_vcenter_y(theme::size::HEADLINE, 1, r.y + d * 0.5);
+            let ty = plx_gfx::text::text_vcenter_y(initial_size, 1, r.y + d * 0.5);
             p.text(
                 initial_c.as_ptr(),
                 r.x + d * 0.5,
                 ty,
-                theme::size::HEADLINE,
+                initial_size,
                 theme::TEXT_PRIMARY,
                 1,
                 1,
@@ -2734,6 +2746,9 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
 ///
 /// [`Opener`]: crate::popover::Opener
 pub fn redraw_profile_chip(read: crate::screen::ScrimLiftRead<'_>) {
+    // The Shield layout draws no chip (the menu opens from its side panel's profile row), so
+    // there is nothing to lift back out of the dim.
+    if crate::layout::shield() { return; }
     let Some(chrome) = read.chrome else { return };
     crate::guard(|| profile_chip_with(
         Painter::root().alpha(crate::nav::chrome_alpha()),

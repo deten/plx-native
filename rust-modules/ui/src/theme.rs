@@ -1186,6 +1186,35 @@ pub const BADGE_FILL: [f32; 4] = with_a(COOL_150, 0.20);
 /// No-op texture tint (structural: draw an RGBA texture unmodified).
 pub const TINT_WHITE: [f32; 4] = WHITE;
 
+// ── Shield navigation (`side_nav`: the icon rail, the side panel, the clock pill) ─────────────
+// The Shield layout's chrome, measured off the Plex app on Android TV (SHIELD-LAYOUT-SPEC §1.4).
+// Its panel is truly black and its states are flat fills, which is why these are roles of their
+// own rather than the glass and plate weights the top bar wears.
+/// The side panel's ground: opaque black, the content behind it already dimmed by the scrim.
+pub const NAV_PANEL_FILL: [f32; 4] = BLACK;
+/// The side panel's 1px border and its section rule (`#1a1a1a` measured; the nearest stop).
+pub const NAV_PANEL_EDGE: [f32; 4] = NEUTRAL_750;
+/// An idle entry's label and glyph: white 80% over the black panel (`#cccccc`).
+pub const NAV_ITEM_INK: [f32; 4] = with_a(WHITE, 0.80);
+/// The focused entry's full-pill plate.
+pub const NAV_FOCUS_FILL: [f32; 4] = WHITE;
+/// The focused entry's label and glyph, on [`NAV_FOCUS_FILL`].
+pub const NAV_FOCUS_INK: [f32; 4] = BLACK;
+/// The current page's entry while it is not focused: a barely-lifted plate (`#101010` over black)…
+pub const NAV_CURRENT_FILL: [f32; 4] = with_a(WHITE, 0.063);
+/// …with a 2px outline (`#4d4d4d` over black), and a full-white label ([`TEXT_PRIMARY`]).
+pub const NAV_CURRENT_RING: [f32; 4] = with_a(WHITE, 0.30);
+/// A section header ("Libraries"): the tertiary grey (`#999999` measured; the nearest stop).
+pub const NAV_HEADER_INK: [f32; 4] = COOL_400;
+/// The collapsed rail's capsule: white ~3.5%, a barely-there plate the glyphs stand on.
+pub const NAV_RAIL_CAPSULE: [f32; 4] = with_a(WHITE, 0.035);
+/// The collapsed rail's glyphs.
+pub const NAV_RAIL_INK: [f32; 4] = WHITE;
+/// The clock pill's ground: a dark translucent black, barely visible on a dark page.
+pub const CLOCK_PILL_FILL: [f32; 4] = scrim_black(0.45);
+/// The clock's figures: white ~80% (`#d2d1d6` measured; the reading-copy stop).
+pub const CLOCK_INK: [f32; 4] = COOL_200;
+
 // ── Review-score marks (detail hero ratings row) ─────────────────────────────
 // These used to be the ONE place the palette borrowed someone else's colour, justified by the
 // badge being a BRAND MARK. That justification is gone with the marks: Rotten Tomatoes' fruit,

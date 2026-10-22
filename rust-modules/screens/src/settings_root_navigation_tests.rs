@@ -706,6 +706,7 @@ fn inputs_for(signed_in: bool) -> RootInputs {
     RootInputs {
         signed_in, multi_user: true, library_count: 3,
         library_opens: plx_plex::plex::session::LibraryOpens::Default,
+        layout: plx_plex::plex::session::LayoutMode::Standard,
         auto_sign_in: false, trailer_autoplay: true,
         language: plx_platform::i18n::Preference::System, plaintext: Vec::new(),
     }

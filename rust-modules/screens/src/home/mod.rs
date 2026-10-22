@@ -2471,7 +2471,10 @@ impl<H: HomeLike> Machine<H> for HomeScreen {
                 if let Some((row, _)) = self.focused_grid(cx.focus.current) {
                     if let Some(shelf) = self.grid.shelves.get_mut(row) { shelf.reset_page_requests(); }
                 }
+                // In the Shield layout LEFT off the hero's first control is the side panel's door
+                // (`Rig::edge_surface`), so it does not page the hero back; RIGHT still pages on.
                 if matches!(self.focused_loc(cx.focus.current), Some(Located::Hero(_)))
+                    && !(direction < 0 && plx_ui::layout::shield())
                     && self.flip(H::hubs(cx), direction)
                 {
                     fx.invalidate(Provenance::Input);

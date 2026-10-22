@@ -40,4 +40,5 @@ pub mod player;
 pub mod profiles;
 pub mod registry;
 pub mod settings;
+pub mod sidebar;
 pub mod preferences;

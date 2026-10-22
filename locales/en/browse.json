@@ -23,6 +23,28 @@
     "value": "Home",
     "description": "browse chrome home"
   },
+  "browse.sidebar.search": {
+    "value": "Search",
+    "description": "The Search entry of the Shield layout's side panel (a navigation destination, not a button verb)"
+  },
+  "browse.sidebar.libraries": {
+    "value": "Libraries",
+    "description": "Section header in the Shield layout's side panel, above the list of the profile's libraries"
+  },
+  "browse.clock.am": {
+    "value": "{time} AM",
+    "args": {
+      "time": "str"
+    },
+    "description": "The Shield layout's clock pill before noon: {time} is the 12-hour time, e.g. 9:18"
+  },
+  "browse.clock.pm": {
+    "value": "{time} PM",
+    "args": {
+      "time": "str"
+    },
+    "description": "The Shield layout's clock pill from noon: {time} is the 12-hour time, e.g. 9:18"
+  },
   "browse.kind.movies": {
     "value": "Movies",
     "description": "browse kind movies"

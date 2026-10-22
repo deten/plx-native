@@ -62,6 +62,7 @@ pub mod input; // RESTRUCTURE (spec §2.2): the Input machine — owner of the p
 #[cfg(feature = "threadcheck")]
 pub mod runtime_warning;
 pub mod label;
+pub mod layout; // which layout the app wears (Standard / Shield): the live latch the chrome and the dispatcher read
 pub mod linked_heading; // linked shelf-entry control: shared entry/heading geometry, focus and hits
 pub mod master_detail; // RESTRUCTURE (spec §10): reusable two-region focus/return/follow policy
 // Library is owned by screens::library; its legacy state/focus model is retired.
@@ -78,6 +79,7 @@ pub mod popover; // shared modal open/appear choreography (track menu / info / c
 pub mod press; // tvOS-style click: OK-down dips the focused card, OK-up springs it back + activates
 pub use plx_gfx::gfx::profile; // the draw-phase profiler lives in `gfx` now (module-layers step L5)
 pub mod route_screen;
+pub mod side_nav; // the Shield layout chrome: the collapsed icon rail, the clock pill, the side panel geometry and paint
 pub mod rec; // RESTRUCTURE (spec §5.3): the recorder — format, bounded writer, loader, TableMeasure
 pub mod replay; // RESTRUCTURE (spec §5.5): `--targets` replay of a recording over the dispatcher
 pub mod screen; // RESTRUCTURE spike (spec §6.1, §7.1): Screen, Focusable, Composed/Part, DrawFrame

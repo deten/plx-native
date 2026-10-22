@@ -930,6 +930,20 @@ impl LibraryScreen {
                 self.reseat(FocusTarget::Elem(self.key(elem)), fx);
             }
             LibraryCmd::ItemMenu => return cx.focus.current.map_or(Handled::No, |key| self.activate(key.elem, true, cx, fx)),
+            // The library pill's own transaction (`activate`), addressed by identity rather than
+            // by a pill: the library may be of the other type, or past the pills' window.
+            LibraryCmd::Select { sid, key } => {
+                let directory = H::directory(cx);
+                let Some(index) = directory.sections().iter().position(|s| s.sid == Some(sid) && s.key == key) else {
+                    return Handled::No;
+                };
+                if Some(index) == self.pending.section().map(|section| section.index).or(directory.current()) { return Handled::Yes; }
+                if Some(index) == directory.current() && self.pending.section().is_some() {
+                    self.cancel_library_switch();
+                    return Handled::Yes;
+                }
+                self.request_library(index, cx, fx);
+            }
             // The TYPE menu's own edit, delivered the way its row delivers it.
             LibraryCmd::SetType(kind) => {
                 let Some(target) = GridTarget::from_view(H::listing(cx)) else { return Handled::No };

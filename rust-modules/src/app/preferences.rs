@@ -4,6 +4,24 @@
 use plx_plex::plex::account::{PreferenceError, PreferenceRequest};
 use plx_screens::registry::{AccountPreferenceReply, PreferenceCmd};
 
+/// **Settings > Layout's persistence seam**, run on the storage worker: the live layout
+/// (`plx_ui::layout`) changes only once the write is durable, so a failed save claims nothing.
+///
+/// It applies at once. What the layout changes today is the chrome of the bar-wearing pages (the
+/// top bar or the rail, the strip a focus can reach, LEFT off a page's edge), which is read per
+/// frame and per key, and no page's geometry depends on it; the picker is on the Settings surface,
+/// so the page under it is redrawn in the new layout when the surface closes.
+pub(super) fn set_layout_mode(mode: plx_plex::plex::session::LayoutMode) -> bool {
+    let saved = plx_plex::plex::session::update_with_outcome(|s| Some(s.with_layout_mode(mode)))
+        .is_some_and(|write| matches!(write.classify(),
+            plx_plex::plex::session::async_persistence::CompletionOutcome::Durable(_)));
+    if saved {
+        plx_ui::layout::publish(mode.is_shield());
+        plx_machine::idle::invalidate();
+    }
+    saved
+}
+
 pub(super) fn execute(command: PreferenceCmd) {
     match command {
         PreferenceCmd::Load { reply } => {
@@ -62,6 +80,12 @@ pub(super) fn execute(command: PreferenceCmd) {
         PreferenceCmd::LibraryOpens { mode, reply } => {
             let _ = plx_base::storage_worker::submit_retained(move || {
                 let _ = reply.send(plx_data::browse::set_library_opens(mode));
+                plx_machine::idle::invalidate();
+            });
+        }
+        PreferenceCmd::LayoutMode { mode, reply } => {
+            let _ = plx_base::storage_worker::submit_retained(move || {
+                let _ = reply.send(set_layout_mode(mode));
                 plx_machine::idle::invalidate();
             });
         }

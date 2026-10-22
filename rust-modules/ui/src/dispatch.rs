@@ -255,6 +255,13 @@ pub trait Rig<H: Host> {
     /// BACK at the root of the root stack (§3.4): the application decides — the platform's Home
     /// on the television (`root_back_tests`); nothing, by default, in a fixture.
     fn back_at_root(&mut self) {}
+    /// **A fresh directional press that ran off the top page's content** with nothing to move to
+    /// and nothing in the page that wanted it: the surface the application presents for it, and
+    /// that surface's style, or `None` to leave the press inert (the default, and the Standard
+    /// layout's answer). The Shield layout's side panel opens this way on LEFT (`side_nav`). Asked
+    /// only for the top PAGE's own input and on the DOWN edge, so a held key that runs a row to
+    /// its start stops there rather than opening anything.
+    fn edge_surface(&mut self, _arg: &H::Arg, _dir: Dir) -> Option<(H::Arg, super::containers::modal::Style)> { None }
 }
 
 pub fn scrim_lift_read<'a, H: Host>(
@@ -2076,7 +2083,10 @@ where
                 };
                 if let Some(dir) = dir {
                     if *at_edge {
-                        return; // re-delivered under EdgeRule::Screen and still unhandled: dropped
+                        // re-delivered under EdgeRule::Screen and still unhandled: dropped, unless
+                        // the application presents a surface for a press off the page's edge
+                        if *edge == Edge::Down { self.edge_surface(rig, entry, dir); }
+                        return;
                     }
                     let mut links = Vec::new();
                     let outcome = self.focus_resolution(rig, parts, entry, 1, tap, |engine, view, cx| {
@@ -2168,7 +2178,9 @@ where
                                 fx: Fx::Nav(NavOp::Dismiss(entry)),
                             });
                         }
-                        Outcome::Edge(_) | Outcome::Nothing => {}
+                        Outcome::Edge(_) | Outcome::Nothing => {
+                            if *edge == Edge::Down { self.edge_surface(rig, entry, dir); }
+                        }
                     }
                 } else if *key == Key::Ok && *edge == Edge::Down {
                     let kind = {
@@ -2198,6 +2210,17 @@ where
                 }
             }
             _ => {}
+        }
+    }
+
+    /// [`Rig::edge_surface`]'s door: a fresh press ran off `entry`'s content. Only the top PAGE
+    /// asks (a surface's own edges are its own business), and the answer is presented exactly as
+    /// an application's `NavOp::Present` is, with its style set for that commit.
+    fn edge_surface(&mut self, rig: &mut dyn Rig<H>, entry: EntryId, dir: Dir) {
+        let Some(arg) = self.nav.top_page().filter(|page| page.id == entry).map(|page| page.arg.clone()) else { return };
+        if let Some((surface, style)) = rig.edge_surface(&arg, dir) {
+            self.nav.next_style = style;
+            self.request(MachineId::Nav, NavOp::Present(surface));
         }
     }
 

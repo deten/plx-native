@@ -957,6 +957,7 @@ enum RootId {
     Playback,
     AudioSubtitles,
     Language,
+    Layout,
     AutoSignIn,
     TrailerAutoplay,
     /// One server's switch. Its key is [`PLAINTEXT_KEY_BASE`] plus its position in the section
@@ -984,6 +985,7 @@ impl FormId for RootId {
             RootId::About => 9,
             RootId::LibraryOrder => 10,
             RootId::LibraryOpens => 11,
+            RootId::Layout => 12,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1082,6 +1084,8 @@ struct RootInputs {
     library_count: i64,
     /// Which view a library opens on: the Library opens on row's read-out.
     library_opens: plx_plex::plex::session::LibraryOpens,
+    /// Which layout the app wears: the Layout row's read-out.
+    layout: plx_plex::plex::session::LayoutMode,
     auto_sign_in: bool,
     trailer_autoplay: bool,
     language: plx_platform::i18n::Preference,
@@ -1127,6 +1131,18 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Row::new(plx_platform::i18n::msg::settings_library_opens_title())
                 .detail(plx_platform::i18n::msg::settings_library_opens_detail())
                 .value(super::preferences::library_opens_label(inputs.library_opens))
+                .chevron(true),
+        )
+        // How the pages that browse the libraries are arranged. Signed in only, like the rest of
+        // this section: the layout is what Home, the Library, Search and the Watchlist wear, and
+        // there are none of those to wear it while signed out.
+        .item(
+            RootId::Layout,
+            RowKind::Nav(SettingsPage::Picker(super::family::PickerKind::Layout)),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::settings_layout_title())
+                .detail(plx_platform::i18n::msg::settings_layout_detail())
+                .value(super::preferences::layout_label(inputs.layout))
                 .chevron(true),
         );
     let playback = FormSection::new(plx_platform::i18n::msg::settings_playback_section())
@@ -1268,6 +1284,7 @@ impl RootPage {
         let form = root_form(&RootInputs {
             signed_in, multi_user, library_count: directory.pinned_count() as i64,
             library_opens: plx_data::browse::library_opens(),
+            layout: super::preferences::layout_mode(),
             auto_sign_in, trailer_autoplay, language: self.state.language, plaintext,
         });
         let keep = self.form.selected_id().cloned();

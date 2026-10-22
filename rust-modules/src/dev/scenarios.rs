@@ -558,6 +558,21 @@ pub(crate) fn framering_ms() -> Option<f64> {
 pub(crate) fn firstrun_armed() -> bool {
     plx_base::devtrig::flag("firstrun")
 }
+/// `/tmp/plxnative-layout=<standard|shield>` — wear this layout for the run without writing the
+/// session (a capture or a simulator walk of the Shield layout on a root whose saved choice is
+/// Standard). Read once at boot, after the saved choice is published, so it wins over it.
+pub(crate) fn layout_override() -> Option<bool> {
+    let v = plx_base::devtrig::read("layout")?;
+    match v.trim() {
+        "shield" => Some(true),
+        "standard" => Some(false),
+        _other => {
+            #[cfg(feature = "devtriggers")]
+            plx_base::eventlog::log(&format!("BADTRIGGER layout {_other:?}: expected standard or shield"));
+            None
+        }
+    }
+}
 /// `/tmp/plxnative-acct[=<ms>]` — auto-open the profile menu (headless capture of the popover).
 /// `None` when unarmed; `Some(None)` opens it as soon as Home is up; `Some(Some(ms))` waits until
 /// the screen has been at rest for `ms` first (simulator only — see `acct_arm`).
@@ -1029,6 +1044,7 @@ fn settings_boot_arm(app: &mut App, fr: &mut Frame) {
                 "picker-skip-intro" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::SkipIntro),
                 "picker-skip-credits" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::SkipCredits),
                 "picker-library-opens" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::LibraryOpens),
+                "picker-layout" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::Layout),
                 "audio" => plx_screens::family::SettingsPage::AudioSubtitles,
                 _other => {
                     #[cfg(feature = "devtriggers")]

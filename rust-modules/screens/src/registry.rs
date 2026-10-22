@@ -96,6 +96,8 @@ pub enum PreferenceCmd {
     SkipCredits { mode: plx_plex::plex::session::MarkerSkip, reply: std::sync::mpsc::Sender<bool> },
     DeckPress { mode: plx_plex::plex::session::DeckPress, reply: std::sync::mpsc::Sender<bool> },
     LibraryOpens { mode: plx_plex::plex::session::LibraryOpens, reply: std::sync::mpsc::Sender<bool> },
+    /// Which layout the app wears (Settings > Layout): persisted, then published live.
+    LayoutMode { mode: plx_plex::plex::session::LayoutMode, reply: std::sync::mpsc::Sender<bool> },
     SubtitleSize { size: plx_plex::plex::session::SubtitleSize, reply: std::sync::mpsc::Sender<bool> },
     SubtitlePosition { position: plx_plex::plex::session::SubtitlePosition, reply: std::sync::mpsc::Sender<bool> },
     Language { language: plx_platform::i18n::Preference, reply: std::sync::mpsc::Sender<bool> },
@@ -446,6 +448,9 @@ pub enum LibraryCmd {
     Sweep,
     SwitchStep(u32),
     ItemMenu,
+    /// Show this library, exactly as its library pill does: the Shield layout's side panel chose
+    /// it while the Library was already on screen.
+    Select { sid: plx_plex::plex::ServerId, key: i64 },
 }
 
 /// Stable section identity. PMS section keys are server-local, never globally unique.
@@ -1172,6 +1177,11 @@ pub enum LoopReq {
     /// Lab builds only, and it changes no route: the tester stays where they were and the toast
     /// says what happened.
     AccountSendDiagnostics,
+    /// **The Shield layout's side panel** (`screens::sidebar`): a row was chosen. Each destination
+    /// is one the Standard layout's top bar already reaches (a pill, a library pill, the chip,
+    /// the chip menu's Settings), so the loop performs it the way that control does. The panel
+    /// dismisses itself in the same drain.
+    Sidebar(crate::sidebar::Go),
 }
 
 /// Any host that carries this bundle. The screens under `screens/` are written against it, so the
@@ -1197,6 +1207,8 @@ impl<H: Host<Elem = u32, Fx = AppFx, Msg = AppMsg>> AppLike for H {}
 /// field), so a changed spelling silently disarms a scene rather than failing anything visible.
 pub mod word {
     pub const HOME: &str = "home";
+    /// The Shield layout's side panel (`screens::sidebar`), an `overlay=` word.
+    pub const SIDEBAR: &str = "sidebar";
     /// The profile menu (`screens::account_menu`). An `overlay=` word since phase 10 — it was a
     /// `route=` word (`Route::Account`) while the menu was a legacy popover with a route of its
     /// own, and `tests/manifest.json`'s `home-acct-glass` scene was re-keyed with it.
@@ -1489,6 +1501,10 @@ pub enum AppArg {
     /// was presented over, which the container already knows and does not replace, so there is
     /// neither a host to name nor a destination to "close back to".
     AccountMenu,
+    /// The Shield layout's side panel (`screens::sidebar`), presented on the shared `ModalStack`
+    /// over whichever bar-wearing page LEFT ran off. It carries the page it was opened over (the
+    /// row it opens focused on) and the profile the shared chrome captured.
+    Sidebar(crate::sidebar::SidebarArg),
     /// The item context menu (`screens::item_menu`), presented on the shared `ModalStack` over
     /// whichever card surface the hold happened on. **Everything the popover is about travels on
     /// the argument** — the row, its server, the anchor it hangs beside, and the two bits an
@@ -1563,7 +1579,8 @@ pub const ARG_SHAPE: &str = "AppArg{Login,Profiles,Onboard,Home,Library,Search,W
      AltSources{host:u32,sid:u32,rk:str,anchor:[u32;4]},\
      TracksPanel{page:i32},AboutPanel,PersonBio,CollectionAbout,AccountMenu,\
      ItemMenu{sid:u32,rk:str,kind:{Card{from_deck:bool,type:u32},Episode{mark:u32},Season{mark:u32},WatchlistCard{type:u32,guid:str}},\
-     host:u32,focus:Option<{entry:u32,elem:u32}>,anchor:[u32;4],loaded_episode:bool,from_home:bool}}";
+     host:u32,focus:Option<{entry:u32,elem:u32}>,anchor:[u32;4],loaded_episode:bool,from_home:bool},\
+     Sidebar{current:{Home,Watchlist,Search,Library{sid:u32,key:u64}},profile:{name:str,initial:str,thumb:str,src:u32}}}";
 
 impl LogicalState for AppArg {
     fn write(&self, c: &mut Canon) {
@@ -1583,6 +1600,8 @@ impl LogicalState for AppArg {
             // surfaces merged from two lanes may not share one. 4/5 are the library and player
             // menus; 6/7 are the two Detail panels above.
             Self::AccountMenu => { c.u32(8); }
+            // 13, allocated forward past every surface tag above.
+            Self::Sidebar(arg) => { c.u32(13); arg.write(c); }
             Self::ItemMenu(arg) => { c.u32(9); arg.write(c); }
             // The seven PAGE variants keep the canon bytes `Legacy(Route)` wrote — a `0` tag and
             // then the route's own — so a recording taken before the fold and one taken after are
@@ -1623,6 +1642,7 @@ impl plx_ui::screen::ScreenArg for AppArg {
             | AppArg::FirstRunConsent(_)
             | AppArg::LibraryMenu(_)
             | AppArg::AccountMenu
+            | AppArg::Sidebar(_)
             | AppArg::ItemMenu(_)
             | AppArg::PlayerOverlay(_)
             | AppArg::AltSources(_)
@@ -1651,6 +1671,8 @@ impl plx_ui::screen::ScreenArg for AppArg {
             // are allocated forward here so a retired identity is never handed to the screen
             // that replaced it, and so two lanes' surfaces cannot collide on one.
             AppArg::AccountMenu => 19,
+            // Allocated forward: 26 is the first id no screen has held.
+            AppArg::Sidebar(_) => 26,
             // One id for all three entry points (a card, an episode still, a season tab): they are
             // three row sets of ONE screen, and `same_instance` must never let the container think
             // it is holding two of them.
@@ -1771,6 +1793,8 @@ where
         match arg {
             AppArg::LibraryMenu(arg) => Box::new(crate::library::menu::LibraryMenu::new(entry, arg.clone())),
             AppArg::AccountMenu => Box::new(crate::account_menu::AccountMenuScreen::new(entry)),
+            AppArg::Sidebar(arg) => Box::new(crate::sidebar::SidebarScreen::new(
+                entry, arg.clone(), <H as DirectoryLike>::directory(cx), cx.measure)),
             AppArg::ItemMenu(arg) => Box::new(crate::item_menu::ItemMenuScreen::new(entry, arg.clone())),
             AppArg::PlayerOverlay(arg) => Box::new(
                 crate::player::overlay::PlayerOverlayScreen::new_with(
@@ -1924,6 +1948,10 @@ pub fn every_surface_arg() -> Vec<AppArg> {
             anchor: [0; 4],
         }),
         AppArg::AccountMenu,
+        AppArg::Sidebar(crate::sidebar::SidebarArg {
+            current: crate::sidebar::Current::Home,
+            profile: Default::default(),
+        }),
         AppArg::ItemMenu(ItemMenuArg {
             sid: plx_plex::plex::ServerId::UNSET,
             rk: "1".into(),
@@ -1958,6 +1986,7 @@ pub fn every_surface_arg() -> Vec<AppArg> {
         match a {
             AppArg::LibraryMenu(_)
             | AppArg::AccountMenu
+            | AppArg::Sidebar(_)
             | AppArg::ItemMenu(_)
             | AppArg::AltSources(_)
             | AppArg::TracksPanel(_)
@@ -2034,6 +2063,7 @@ pub const SCREEN_SHAPES: &[&str] = &[
     crate::preferences::SHAPE,
     crate::preferences::PICKER_SHAPE,
     crate::watchlist::SHAPE,
+    crate::sidebar::SHAPE,
 ];
 
 /// The pin over [`SCREEN_SHAPES`] — bump it in the same edit that adds an entry, and say why.
@@ -2150,7 +2180,9 @@ pub const SCREEN_SHAPES: &[&str] = &[
 // was 0xb6a5_fe9f_9825_0637.
 // The Watchlist: `ARG_SHAPE` gains the `Watchlist` page and the item menu's `WatchlistCard` kind,
 // and `screens::watchlist::SHAPE` joins the inventory; the previous pin was 0x43f8_1f0c_e8ef_7d6c.
-const SCREEN_SHAPES_PIN: u64 = 0x5600_14ed_619e_9928;
+// The Shield layout's side panel: `ARG_SHAPE` gains the `Sidebar` surface and
+// `screens::sidebar::SHAPE` joins the inventory; the previous pin was 0x5600_14ed_619e_9928.
+const SCREEN_SHAPES_PIN: u64 = 0x7c63_39e8_aaa5_1ec6;
 
 #[cfg(test)]
 mod arg_tests {

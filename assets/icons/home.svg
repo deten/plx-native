@@ -1,0 +1,2 @@
+<!-- A house: a pitched roof over walls with a door. One closed path, stroked, so the roof and walls carry no join seam (ui/icons.rs authoring contract). Our own drawing. -->
+<svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.4 12 4l8 6.4v8.1a1.5 1.5 0 0 1-1.5 1.5H15v-5.5H9V20H5.5A1.5 1.5 0 0 1 4 18.5Z"/></svg>

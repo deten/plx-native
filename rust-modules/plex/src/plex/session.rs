@@ -692,6 +692,12 @@ pub struct Session {
     /// field showed; skipped at the default so an older session serializes exactly as before.
     #[serde(default, deserialize_with = "de_soft_library_opens", skip_serializing_if = "is_default_library_opens")]
     pub library_opens: LibraryOpens,
+    /// **Which layout the app wears**: see [`LayoutMode`]. Install-wide like
+    /// [`Session::library_opens`]. Absence is Standard, PlxNative's own layout and what every build
+    /// before the field showed; skipped at the default so an older session serializes exactly as
+    /// before.
+    #[serde(default, deserialize_with = "de_soft_layout_mode", skip_serializing_if = "is_default_layout_mode")]
+    pub layout_mode: LayoutMode,
     /// **Device-wide ambient memory**: the last hero `UltraBlurColors` envelope Home actually
     /// rendered on this television, so a route in the Settings/first-run family that opens
     /// BEFORE Home has fetched anything this boot — first-run consent moved ahead of the
@@ -831,6 +837,8 @@ struct CanonicalSessionPreferences {
     deck_press: DeckPress,
     #[serde(default, deserialize_with = "de_soft_library_opens", skip_serializing_if = "is_default_library_opens")]
     library_opens: LibraryOpens,
+    #[serde(default, deserialize_with = "de_soft_layout_mode", skip_serializing_if = "is_default_layout_mode")]
+    layout_mode: LayoutMode,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
     plaintext_consent: Vec<PlaintextConsent>,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
@@ -879,6 +887,7 @@ impl Default for CanonicalSessionPreferences {
             skip_credits: MarkerSkip::Manual,
             deck_press: DeckPress::Details,
             library_opens: LibraryOpens::Default,
+            layout_mode: LayoutMode::Standard,
             plaintext_consent: Vec::new(),
             server_key_pins: Vec::new(),
             audio_enhancements: crate::plex::AudioEnhancements::NONE,
@@ -940,6 +949,7 @@ fn split_public(session: &Session) -> Result<plx_platform::storage::state::Publi
         skip_credits: session.skip_credits,
         deck_press: session.deck_press,
         library_opens: session.library_opens,
+        layout_mode: session.layout_mode,
         plaintext_consent: session.plaintext_consent.clone(),
         server_key_pins: session.server_key_pins.clone(),
         audio_enhancements: session.audio_enhancements,
@@ -1023,6 +1033,7 @@ pub fn join_canonical(
         skip_credits: preferences.skip_credits,
         deck_press: preferences.deck_press,
         library_opens: preferences.library_opens,
+        layout_mode: preferences.layout_mode,
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
         audio_enhancements: preferences.audio_enhancements,
@@ -1065,6 +1076,7 @@ fn public_session(public: &plx_platform::storage::state::PublicPayload) -> Sessi
         skip_credits: preferences.skip_credits,
         deck_press: preferences.deck_press,
         library_opens: preferences.library_opens,
+        layout_mode: preferences.layout_mode,
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
         audio_enhancements: preferences.audio_enhancements,
@@ -1744,6 +1756,41 @@ impl LibraryOpens {
             LibraryOpens::All => true,
             LibraryOpens::Last => remembered_all,
         }
+    }
+}
+
+/// Which layout the app wears: PlxNative's own (Standard), or the one that follows the Plex app on
+/// Android TV (Shield: a collapsed icon rail and a side panel in place of the top bar).
+/// Install-wide, like [`LibraryOpens`]. Absence is `Standard`, what every build before this
+/// preference showed. The live value is `plx_ui::layout`'s, which the application publishes from
+/// this one at boot, at every auth landing and when the Settings picker writes it.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutMode {
+    /// PlxNative's own layout: the shared top bar
+    #[default]
+    #[serde(rename = "standard")]
+    Standard,
+    /// the Plex app on Android TV's layout: the icon rail and the side panel
+    #[serde(rename = "shield")]
+    Shield,
+}
+
+impl LayoutMode {
+    /// Every option, the order the picker lists them in.
+    pub const LADDER: [LayoutMode; 2] = [LayoutMode::Standard, LayoutMode::Shield];
+
+    /// An in-memory index back to an option; out of range is the default, as for [`DeckPress`].
+    pub fn from_index(i: u8) -> LayoutMode {
+        Self::LADDER.get(i as usize).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> u8 {
+        Self::LADDER.iter().position(|&m| m == self).unwrap_or(0) as u8
+    }
+
+    /// Whether this is the Shield layout, the one fact `plx_ui::layout` holds.
+    pub fn is_shield(self) -> bool {
+        self == LayoutMode::Shield
     }
 }
 
@@ -2926,6 +2973,23 @@ fn is_default_library_opens(mode: &LibraryOpens) -> bool {
     *mode == LibraryOpens::default()
 }
 
+/// The layout choice is a preference too: a spelling this build does not know degrades to
+/// Standard.
+fn de_soft_layout_mode<'de, D>(d: D) -> Result<LayoutMode, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(LayoutMode::default());
+    };
+    Ok(serde_json::from_value::<LayoutMode>(v).unwrap_or_default())
+}
+
+/// `skip_serializing_if` needs a function, not just `PartialEq` with `Default::default()`.
+fn is_default_layout_mode(mode: &LayoutMode) -> bool {
+    *mode == LayoutMode::default()
+}
+
 /// The audio-enhancement toggle is a preference too: an unknown shape degrades to both flags
 /// off rather than failing the enclosing [`Session`].
 fn de_soft_audio_enhancements<'de, D>(d: D) -> Result<crate::plex::AudioEnhancements, D::Error>
@@ -3223,6 +3287,16 @@ impl Session {
     pub fn with_library_opens(&self, mode: LibraryOpens) -> Self {
         let mut next = self.clone();
         next.library_opens = mode;
+        next
+    }
+
+    pub fn layout_mode(&self) -> LayoutMode {
+        self.layout_mode
+    }
+
+    pub fn with_layout_mode(&self, mode: LayoutMode) -> Self {
+        let mut next = self.clone();
+        next.layout_mode = mode;
         next
     }
 
@@ -6335,6 +6409,65 @@ mod next_episode_mode_tests {
             assert_eq!(join_canonical(&public, &protected).unwrap().next_episode_mode(), mode);
             assert_eq!(public_session(&public).next_episode_mode(), mode);
         }
+    }
+}
+
+/// `Session::layout_mode`: soft-parse to Standard, omit at the default (so committed replay
+/// fixtures and every older session serialize exactly as before), round-trip through both formats.
+#[cfg(test)]
+mod layout_mode_tests {
+    use super::*;
+
+    #[test]
+    fn absent_or_malformed_is_standard() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"layout_mode": null}),
+            serde_json::json!({"layout_mode": "future"}),
+            serde_json::json!({"layout_mode": 1}),
+        ] {
+            let session: Session = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{value}: a bad preference must not fail the session: {e}"));
+            assert_eq!(session.layout_mode(), LayoutMode::Standard, "{value}");
+        }
+    }
+
+    #[test]
+    fn the_stored_spelling_is_layout_mode_and_shield() {
+        let json = serde_json::to_string(&Session::default().with_layout_mode(LayoutMode::Shield)).unwrap();
+        assert!(json.contains(r#""layout_mode":"shield""#), "{json}");
+        let session: Session = serde_json::from_value(serde_json::json!({"layout_mode": "shield"})).unwrap();
+        assert_eq!(session.layout_mode(), LayoutMode::Shield);
+    }
+
+    #[test]
+    fn the_default_is_not_serialized() {
+        let session = Session::default();
+        assert!(!serde_json::to_string(&session).unwrap().contains("layout_mode"));
+        let prefs = serde_json::to_string(&split_public(&session).unwrap().preferences).unwrap();
+        assert!(!prefs.contains("layout_mode"), "{prefs}");
+    }
+
+    #[test]
+    fn each_pick_round_trips_through_both_formats() {
+        for mode in LayoutMode::LADDER {
+            let session = Session::default().with_layout_mode(mode);
+            let round: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+            assert_eq!(round.layout_mode(), mode);
+            let (public, protected) = split_canonical(&session).unwrap();
+            assert_eq!(join_canonical(&public, &protected).unwrap().layout_mode(), mode);
+            assert_eq!(public_session(&public).layout_mode(), mode);
+        }
+    }
+
+    #[test]
+    fn the_ladder_indexes_back_to_itself() {
+        for mode in LayoutMode::LADDER {
+            assert_eq!(LayoutMode::from_index(mode.index()), mode);
+        }
+        assert_eq!(LayoutMode::from_index(200), LayoutMode::Standard);
+        assert!(LayoutMode::Shield.is_shield());
+        assert!(!LayoutMode::Standard.is_shield());
     }
 }
 

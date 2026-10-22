@@ -120,6 +120,8 @@ pub enum PickerKind {
     SkipBack,
     ResumeRewind,
     PassoutProtection,
+    /// Which layout the app wears, listed on the Settings root under Library opens on.
+    Layout,
 }
 
 impl SettingsPage {
@@ -143,7 +145,7 @@ impl PickerKind {
             | PickerKind::SkipIntro | PickerKind::SkipCredits | PickerKind::SkipBack | PickerKind::ResumeRewind
             | PickerKind::PassoutProtection => SettingsPage::Playback,
             PickerKind::AudioLanguage | PickerKind::SubtitleMode | PickerKind::SubtitleLanguage | PickerKind::ForcedSubtitles => SettingsPage::AudioSubtitles,
-            PickerKind::LibraryOpens => SettingsPage::Root,
+            PickerKind::LibraryOpens | PickerKind::Layout => SettingsPage::Root,
         }
     }
 }

@@ -235,6 +235,21 @@ pub enum Icon {
     ServerBadgeXmark,
     /// A crossed-out wifi arc — no internet to even reach plex.tv (`IncidentKind::PinCreate`).
     WifiSlash,
+    // ---- the Shield layout's navigation (`side_nav`: the collapsed rail and the side panel) ----
+    //
+    // Our own drawings, stroked at 2 units like [`Icon::Show`], so the rail's four marks and the
+    // panel's leading glyphs read as one family beside the existing [`Icon::Search`] and
+    // [`Icon::Bookmark`]. No mark or artwork of the app this layout follows is reproduced.
+    /// A house — the Home destination.
+    Home,
+    /// Three bars — the rail's menu mark, the one that says the panel is behind it.
+    Menu,
+    /// A film strip — a movie library's entry.
+    Film,
+    /// A television — a TV library's entry.
+    Tv,
+    /// A gear — the Settings entry.
+    Gear,
 }
 
 /// **Where a mark's INK sits inside its 24-unit viewBox**, as `(left, right)` fractions — and
@@ -324,6 +339,11 @@ fn src(id: Icon) -> &'static str {
         Icon::ServerBadgePlus => include_str!("../../../assets/icons/server-badge-plus.svg"),
         Icon::ServerBadgeXmark => include_str!("../../../assets/icons/server-badge-xmark.svg"),
         Icon::WifiSlash => include_str!("../../../assets/icons/wifi-slash.svg"),
+        Icon::Home => include_str!("../../../assets/icons/home.svg"),
+        Icon::Menu => include_str!("../../../assets/icons/menu.svg"),
+        Icon::Film => include_str!("../../../assets/icons/film.svg"),
+        Icon::Tv => include_str!("../../../assets/icons/tv.svg"),
+        Icon::Gear => include_str!("../../../assets/icons/gear.svg"),
     }
 }
 
@@ -546,6 +566,26 @@ mod ink_tests {
             for y in 0..px {
                 assert_eq!(alpha(0, y), 0, "{id:?} has ink on the left border");
                 assert_eq!(alpha(px - 1, y), 0, "{id:?} has ink on the right border");
+            }
+        }
+    }
+
+    /// The Shield navigation marks at the sizes `side_nav` draws them (the rail's 24 and the
+    /// panel's 32): full opacity inside, nothing on the border.
+    #[test]
+    fn the_shield_navigation_marks_rasterize_clean_at_their_draw_sizes() {
+        for id in [Icon::Home, Icon::Menu, Icon::Film, Icon::Tv, Icon::Gear] {
+            for px in [24, 32] {
+                let rgba = plx_gfx::svg::rasterize(src(id), px, px)
+                    .unwrap_or_else(|| panic!("{id:?} failed to rasterize at {px}px"));
+                let alpha = |x: i32, y: i32| rgba[((y * px + x) * 4 + 3) as usize];
+                let max_alpha = (0..px).flat_map(|y| (0..px).map(move |x| alpha(x, y))).max().unwrap();
+                assert_eq!(max_alpha, 255, "{id:?} never reaches full opacity at {px}px");
+                for i in 0..px {
+                    for (x, y) in [(i, 0), (i, px - 1), (0, i), (px - 1, i)] {
+                        assert_eq!(alpha(x, y), 0, "{id:?} has ink on the border at {px}px ({x},{y})");
+                    }
+                }
             }
         }
     }

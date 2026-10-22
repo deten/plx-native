@@ -71,6 +71,9 @@ pub(crate) struct ChromeSnapshot {
     initial: std::ffi::CString,
     name: std::ffi::CString,
     name_w: f32,
+    /// The chip's words before its elision, for the Shield layout's side panel, which elides the
+    /// same name to its own column (`plx_ui::side_nav::NAME_MAX_W`).
+    label: String,
 }
 
 impl ChromeSnapshot {
@@ -115,6 +118,7 @@ impl ChromeSnapshot {
                 .map(|c| c.to_uppercase().to_string()).unwrap_or_default();
             (self.initial, self.name, self.name_w) =
                 widgets::profile_chip_text(&label, &initial, measure);
+            self.label = label;
             self.profile_generation = Some(generation);
         }
     }
@@ -141,6 +145,17 @@ impl ChromeSnapshot {
         // published: the library does not ask which server is current.
         ProfileChipRead { src: plx_plex::plex::current_server().raw(), thumb: &self.thumb,
             initial: &self.initial, name: &self.name, name_w: self.name_w }
+    }
+
+    /// The captured profile as the Shield layout's side panel shows it — the same publication the
+    /// chip and the rail draw.
+    pub(crate) fn sidebar_profile(&self) -> plx_screens::sidebar::Profile {
+        plx_screens::sidebar::Profile {
+            name: self.label.clone(),
+            initial: self.initial.to_string_lossy().into_owned(),
+            thumb: self.thumb.clone(),
+            src: plx_plex::plex::current_server().raw(),
+        }
     }
 
     pub(crate) fn read(&self, chip_expand: f32) -> ChromeRead<'_> {
@@ -174,6 +189,42 @@ impl ChromeSnapshot {
         self.thumb.clear();
         (self.initial, self.name, self.name_w) =
             widgets::profile_chip_text(name, initial, measure);
+    }
+}
+
+/// **The Shield layout's clock read-out**: the local time as the clock pill shows it ("9:18 AM"),
+/// re-formatted and re-measured only when the minute turns. Owned beside the chrome publication it
+/// is drawn with; the reading itself is `plx_platform::tv::clock`'s.
+#[derive(Default)]
+pub(crate) struct ClockReadout {
+    minute: Option<plx_platform::tv::clock::LocalTime>,
+    text: std::ffi::CString,
+    width: f32,
+}
+
+impl ClockReadout {
+    /// Read the clock; `true` when the figures changed (the caller asks for a frame).
+    pub(crate) fn refresh(&mut self, measure: &dyn Measure) -> bool {
+        self.show(plx_platform::tv::clock::now(), measure)
+    }
+
+    fn show(&mut self, now: Option<plx_platform::tv::clock::LocalTime>, measure: &dyn Measure) -> bool {
+        if now == self.minute {
+            return false;
+        }
+        self.minute = now;
+        self.text = now.map(|now| {
+            let (hour, pm) = now.twelve_hour();
+            let time = format!("{hour}:{:02}", now.minute);
+            if pm { plx_platform::i18n::msg::browse_clock_pm(&time) } else { plx_platform::i18n::msg::browse_clock_am(&time) }
+        }).and_then(|s| std::ffi::CString::new(s).ok()).unwrap_or_default();
+        self.width = measure.width(&self.text, plx_ui::side_nav::CLOCK_SIZE, false);
+        true
+    }
+
+    /// The figures and their measured width, or `None` when there is no clock to show.
+    pub(crate) fn reading(&self) -> Option<(&std::ffi::CStr, f32)> {
+        self.minute.map(|_| (self.text.as_c_str(), self.width))
     }
 }
 
@@ -284,6 +335,25 @@ mod tests {
             "a type the captured strip no longer contains borrows no other position");
         assert_eq!(pill_in(1, 3, |_| None), Pill::Home,
             "an unfilled section slot falls back to the one fixed destination");
+    }
+
+    /// The clock pill reads 12-hour figures and re-formats only when the minute turns.
+    #[test]
+    fn the_clock_reads_twelve_hour_figures_and_changes_with_the_minute() {
+        use plx_platform::tv::clock::LocalTime;
+        let mut clock = ClockReadout::default();
+        assert!(clock.reading().is_none());
+        let at = |hour, minute| Some(LocalTime { hour, minute });
+        assert!(clock.show(at(9, 18), &plx_ui::fixture::FixtureMeasure));
+        assert_eq!(clock.reading().unwrap().0.to_str().unwrap(), "9:18 AM");
+        assert!(!clock.show(at(9, 18), &plx_ui::fixture::FixtureMeasure), "the same minute asks for nothing");
+        assert!(clock.show(at(0, 5), &plx_ui::fixture::FixtureMeasure));
+        assert_eq!(clock.reading().unwrap().0.to_str().unwrap(), "12:05 AM");
+        assert!(clock.show(at(13, 40), &plx_ui::fixture::FixtureMeasure));
+        assert_eq!(clock.reading().unwrap().0.to_str().unwrap(), "1:40 PM");
+        assert!(clock.reading().unwrap().1 > 0.0);
+        assert!(clock.show(None, &plx_ui::fixture::FixtureMeasure));
+        assert!(clock.reading().is_none(), "no clock, no pill");
     }
 
     #[test]

@@ -1,4 +1,5 @@
 //! The television, as everything outside the port sees it (step L15, docs/module-layers.md).
+pub mod clock;
 pub mod device;
 pub mod home;
 pub mod sandbox;

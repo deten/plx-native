@@ -1009,6 +1009,12 @@ pub(crate) unsafe fn construct(
     plx_media::route::restore_skip_credits(session.skip_credits());
     plx_media::route::restore_deck_press(session.deck_press());
     plx_data::browse::restore_library_opens(session.library_opens());
+    plx_ui::layout::publish(session.layout_mode().is_shield());
+    if let Some(shield) = crate::dev::scenarios::layout_override() {
+        plx_ui::layout::publish(shield);
+    }
+    // The clock pill's zone, loaded once here rather than on the frame that first draws it.
+    plx_platform::tv::clock::prime();
     // The subtitle tone rides the same file and the same moment: a preference, restored once.
     plx_media::player::restore_subtitle_tone(session.subtitle_tone());
     plx_media::player::restore_audio_enhancements(session.audio_enhancements());

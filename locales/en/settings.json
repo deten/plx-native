@@ -59,6 +59,26 @@
     "value": "Default opens every library on Recommended. All opens every library on its full list. Last reopens each library on the view you last chose for it.",
     "description": "Explanation under the title of the Library opens on picker. It names the three options by their picker labels (Default, All, Last); keep those words identical to settings.library_opens.default, .all and .last, and the view names identical to browse.library.view.recommended."
   },
+  "settings.layout.title": {
+    "value": "Layout",
+    "description": "Settings row title and picker title: which layout the app wears, its own (settings.layout.standard) or the one that follows the Plex app on Android TV (settings.layout.shield)"
+  },
+  "settings.layout.detail": {
+    "value": "How the app arranges its navigation.",
+    "description": "Settings row detail line under settings.layout.title"
+  },
+  "settings.layout.standard": {
+    "value": "Standard",
+    "description": "Layout picker option (the default): PlxNative's own layout, with the top bar"
+  },
+  "settings.layout.shield": {
+    "value": "Shield",
+    "description": "Layout picker option: the layout that follows the Plex app on Android TV (the NVIDIA Shield), an icon rail and a side panel. A product name; keep it untranslated"
+  },
+  "settings.layout.copy": {
+    "value": "Standard is PlxNative's own layout; Shield follows the Plex app on Android TV.",
+    "description": "Explanation under the title of the Layout picker. It names the two options by their picker labels; keep those words identical to settings.layout.standard and settings.layout.shield"
+  },
   "settings.privacy.section": {
     "value": "Privacy",
     "description": "Settings, account, onboarding or privacy UI: settings.privacy.section"

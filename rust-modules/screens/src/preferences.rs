@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, Receiver};
 use plx_plex::plex::account::{AudioPreferences, PreferenceError, PreferenceRequest, PreferenceSnapshot, PreferenceUpdate};
 use plx_media::route::{DeckPress, DirectPlayMode, MarkerSkip, NextEpisodeMode, PassoutProtection, Quality, ResumeRewind, SkipInterval,
     SubtitlePosition, SubtitleSize};
-use plx_plex::plex::session::LibraryOpens;
+use plx_plex::plex::session::{LayoutMode, LibraryOpens};
 use plx_ui::form::{Form, FormId, FormSection, FormTable, RowKey, RowKind};
 use plx_ui::frame::Budget;
 use plx_machine::machine::{Canon, Cx, Delivery, Edge, Effects, EntryId, FocusKey, Fx, GroupId,
@@ -58,6 +58,7 @@ impl PickerKind {
         Self::AudioLanguage => plx_platform::i18n::msg::settings_audio_language(), Self::SubtitleMode => plx_platform::i18n::msg::settings_audio_subtitles(),
         Self::SubtitleLanguage => plx_platform::i18n::msg::settings_audio_subtitle_language(), Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_forced_subtitles(),
         Self::LibraryOpens => plx_platform::i18n::msg::settings_library_opens_title(),
+        Self::Layout => plx_platform::i18n::msg::settings_layout_title(),
     }}
     /// What this field's picker says about it under its title. The four account fields share the
     /// account note (it is about where those values are saved); each local one has its own.
@@ -76,15 +77,16 @@ impl PickerKind {
         Self::SkipCredits => plx_platform::i18n::msg::settings_playback_skip_credits_copy(),
         Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_account_note(),
         Self::LibraryOpens => plx_platform::i18n::msg::settings_library_opens_copy(),
+        Self::Layout => plx_platform::i18n::msg::settings_layout_copy(),
     }}
     /// The field-list page this field belongs to; `None` for a field the Settings root lists
-    /// itself (Library opens on).
+    /// itself (Library opens on, Layout).
     fn kind(self) -> Option<Kind> {
         match self {
             Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::NextEpisode | Self::DeckPress | Self::SkipInterval
             | Self::SkipIntro | Self::SkipCredits | Self::SkipBack | Self::ResumeRewind | Self::PassoutProtection => Some(Kind::Playback),
             Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => Some(Kind::AudioSubtitles),
-            Self::LibraryOpens => None,
+            Self::LibraryOpens | Self::Layout => None,
         }
     }
     /// The crumb over this field's picker: the page BACK returns to.
@@ -104,7 +106,7 @@ impl Kind {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Value { Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), SkipBack(SkipInterval),
-    ResumeRewind(ResumeRewind), PassoutProtection(PassoutProtection), SkipIntro(MarkerSkip), SkipCredits(MarkerSkip), LibraryOpens(LibraryOpens), Language(String), Mode(i64), Forced(i64) }
+    ResumeRewind(ResumeRewind), PassoutProtection(PassoutProtection), SkipIntro(MarkerSkip), SkipCredits(MarkerSkip), LibraryOpens(LibraryOpens), Layout(LayoutMode), Language(String), Mode(i64), Forced(i64) }
 
 /// The hashed half of a transaction: what the page shows while a load or save is in flight.
 struct Io { busy: bool, status: String }
@@ -240,6 +242,7 @@ impl Txn {
             Value::SkipIntro(mode) => PreferenceCmd::SkipIntro { mode, reply },
             Value::SkipCredits(mode) => PreferenceCmd::SkipCredits { mode, reply },
             Value::LibraryOpens(mode) => PreferenceCmd::LibraryOpens { mode, reply },
+            Value::Layout(mode) => PreferenceCmd::LayoutMode { mode, reply },
             _ => return,
         };
         self.pending = Some(Pending::Local(rx)); io.busy = true; self.saving = true;
@@ -320,6 +323,8 @@ impl FormId for RowId {
             Self::Field(PickerKind::SkipBack) => 11,
             Self::Field(PickerKind::ResumeRewind) => 12,
             Self::Field(PickerKind::PassoutProtection) => 13,
+            // listed on the Settings root too
+            Self::Field(PickerKind::Layout) => 14,
             Self::Retry => 6,
         })
     }
@@ -467,6 +472,7 @@ fn resolve_value(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
         PickerKind::SkipIntro => Value::SkipIntro(plx_media::route::skip_intro()),
         PickerKind::SkipCredits => Value::SkipCredits(plx_media::route::skip_credits()),
         PickerKind::LibraryOpens => Value::LibraryOpens(plx_data::browse::library_opens()),
+        PickerKind::Layout => Value::Layout(layout_mode()),
         // A deprecated code (`pb`) resolves to its replacement so the picker checks that entry.
         PickerKind::AudioLanguage => Value::Language(prefs.and_then(|p| p.stated_language.as_deref()).map(plx_plex::plex::languages::canonical).unwrap_or_default().to_string()),
         PickerKind::SubtitleLanguage => Value::Language(prefs.and_then(|p| p.subtitle_language.as_deref()).map(plx_plex::plex::languages::canonical).unwrap_or_default().to_string()),
@@ -503,6 +509,8 @@ fn field_options(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
             .map(|m| (marker_skip_label(m).into(), Value::SkipCredits(m))).collect(),
         PickerKind::LibraryOpens => LibraryOpens::LADDER.into_iter()
             .map(|m| (library_opens_label(m).into(), Value::LibraryOpens(m))).collect(),
+        PickerKind::Layout => LayoutMode::LADDER.into_iter()
+            .map(|m| (layout_label(m).into(), Value::Layout(m))).collect(),
         PickerKind::SubtitleMode => [(plx_platform::i18n::msg::settings_audio_manual(), 0), (plx_platform::i18n::msg::settings_audio_foreign(), 1), (plx_platform::i18n::msg::settings_audio_always(), 2)]
             .into_iter().map(|(label, mode)| (label.into(), Value::Mode(mode))).collect(),
         PickerKind::ForcedSubtitles => [plx_platform::i18n::msg::settings_audio_prefer_regular(), plx_platform::i18n::msg::settings_audio_prefer_forced(), plx_platform::i18n::msg::settings_audio_only_forced(), plx_platform::i18n::msg::settings_audio_only_regular()]
@@ -617,6 +625,18 @@ pub(crate) fn library_opens_label(mode: LibraryOpens) -> &'static str {
         LibraryOpens::Default => plx_platform::i18n::msg::settings_library_opens_default(),
         LibraryOpens::All => plx_platform::i18n::msg::settings_library_opens_all(),
         LibraryOpens::Last => plx_platform::i18n::msg::settings_library_opens_last(),
+    }
+}
+/// The live layout (`plx_ui::layout`), as the preference that set it. Live and saved are one
+/// value: the application publishes it only once a write is durable.
+pub(crate) fn layout_mode() -> LayoutMode {
+    if plx_ui::layout::shield() { LayoutMode::Shield } else { LayoutMode::Standard }
+}
+/// A Layout choice's label: the picker's option and the Settings root row's read-out.
+pub(crate) fn layout_label(mode: LayoutMode) -> &'static str {
+    match mode {
+        LayoutMode::Standard => plx_platform::i18n::msg::settings_layout_standard(),
+        LayoutMode::Shield => plx_platform::i18n::msg::settings_layout_shield(),
     }
 }
 /// The Direct Play row's trailing read-out. `mode_label`'s Forced string is long enough to squeeze

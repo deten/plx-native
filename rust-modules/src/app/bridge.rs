@@ -348,6 +348,8 @@ pub(crate) struct Bridge {
     /// bar's one reachable owner: the only `Rig::draw_chrome` implementation, and the only place
     /// `update_home_chrome` is called from.
     strip: plx_ui::widgets::StripRender,
+    /// The Shield layout's clock pill read-out, refreshed while a bar-wearing page is up.
+    clock: super::chrome::ClockReadout,
     home_commands: std::collections::VecDeque<HomeCmd>,
     library_commands: std::collections::VecDeque<plx_screens::registry::LibraryCmd>,
     consent: ConsentMachine,
@@ -559,6 +561,7 @@ impl Bridge {
             chrome: super::chrome::ChromeSnapshot::default(),
             chrome_selection: 0,
             strip: plx_ui::widgets::StripRender::new(),
+            clock: super::chrome::ClockReadout::default(),
             home_commands: std::collections::VecDeque::new(),
             library_commands: std::collections::VecDeque::new(),
             consent: ConsentMachine::from_initial(consent),
@@ -897,6 +900,18 @@ impl Bridge {
             } else {
                 refresh_chrome(&mut self.chrome, &self.measure, self.directory.view(), None);
             }
+            if plx_ui::layout::shield() {
+                // **The Shield layout publishes no strip**: the rail it draws instead is never a
+                // focus stop, so there is no group above the page for UP to reach and no pill
+                // for a pointer to hit. The profile capture above still feeds the rail and the
+                // side panel; the clock is that layout's one live read-out.
+                d.nav.tabs.strip.clear();
+                d.nav.tabs.strip_fallback = None;
+                if self.clock.refresh(&self.measure) {
+                    plx_machine::idle::invalidate();
+                }
+                return;
+            }
             self.chrome_selection = if *route == AppArg::Library {
                 self.directory.view().current().map(|i| self.chrome.library_selection(self.directory.view().sections()[i].kind)).unwrap_or(0)
             } else if search { self.chrome.search_selection() }
@@ -937,8 +952,51 @@ impl Bridge {
         (browse_changed, hubs_changed, search_changed)
     }
 
+    /// The side panel's argument over page `arg`: which row is the current page's (the library
+    /// the store is on, inside the Library) and the captured profile.
+    pub(crate) fn sidebar_arg(&self, arg: &AppArg) -> plx_screens::sidebar::SidebarArg {
+        use plx_screens::sidebar::Current;
+        let directory = self.directory.view();
+        let current = match arg {
+            AppArg::Watchlist => Current::Watchlist,
+            AppArg::Search => Current::Search,
+            AppArg::Library => directory.current()
+                .and_then(|i| directory.sections().get(i))
+                .and_then(|section| section.sid.map(|sid| Current::Library { sid, key: section.key }))
+                .unwrap_or(Current::Home),
+            _ => Current::Home,
+        };
+        plx_screens::sidebar::SidebarArg { current, profile: self.chrome.sidebar_profile() }
+    }
+
+    /// **Show library `(sid, key)`** for the side panel: on a Library already on screen, the
+    /// library pill's own switch (`LibraryCmd::Select`); otherwise the store is aimed at that
+    /// library now, a dip ahead of the page (`aim_library`'s reason), and the page enters it.
+    pub(crate) fn show_library(&mut self, d: &mut Dispatcher<AppHost>, sid: plx_plex::plex::ServerId, key: i64,
+        kind: plx_data::browse::SecKind) {
+        if d.top_arg() == Some(&AppArg::Library) {
+            self.library_commands.push_back(plx_screens::registry::LibraryCmd::Select { sid, key });
+            return;
+        }
+        let directory = self.directory.view();
+        let current = directory.current().and_then(|i| directory.sections().get(i))
+            .is_some_and(|section| section.sid == Some(sid) && section.key == key);
+        let target = directory.epoch().map(|epoch| plx_data::stores::browse::SectionAddress { epoch, sid, section: key });
+        self.enter_library(kind);
+        if let Some(target) = target.filter(|_| !current) {
+            self.browse_run(plx_data::stores::browse::BrowseCmd::Addressed { target,
+                work: plx_data::stores::browse::LibraryWork::Commit { select: true, choice: true, query: None } });
+        }
+        nav_peer(d, AppArg::Library, None);
+    }
+
     pub(crate) fn update_home_chrome(&mut self, d: &mut Dispatcher<AppHost>,
         glass: &mut plx_ui::frame::glass::GlassPlan, dt: f32) {
+        if plx_ui::layout::shield() {
+            // no top bar to animate, and no strip to publish (see `capture_chrome`)
+            d.nav.tabs.strip.clear();
+            return;
+        }
         let selected = self.navigation_presentation().view_tab.unwrap_or(self.chrome_selection) as i32;
         let focus = Self::home_focus(d);
         let labels = self.chrome.labels();
@@ -1401,6 +1459,14 @@ impl Rig<AppHost> for Bridge {
         if !Self::draws_chrome_for(arg) { return; }
         let Some(glass) = glass else { return };
         let p = plx_ui::Painter::root().alpha(nav.chrome_alpha);
+        if plx_ui::layout::shield() {
+            // The Shield layout's chrome: the collapsed rail and the clock, in place of the bar.
+            plx_ui::side_nav::draw_rail(p, self.chrome.profile());
+            if let Some((text, width)) = self.clock.reading() {
+                plx_ui::side_nav::draw_clock(p, text, width);
+            }
+            return;
+        }
         let chrome = self.chrome.read(self.strip.chip_expand_pos());
         self.strip.draw(chrome.labels, p, glass.tab_band_mut());
         plx_ui::widgets::profile_chip_with(
@@ -1415,6 +1481,15 @@ impl Rig<AppHost> for Bridge {
     /// adds this frame's material from `GlassPlan`; neither value crosses through a static.
     fn scrim_chrome_read(&self) -> Option<plx_ui::widgets::ChromeRead<'_>> {
         Some(self.chrome.read(self.strip.chip_expand_pos()))
+    }
+    /// **The Shield layout's side panel**: LEFT off the left-most content of a bar-wearing page
+    /// presents it, opened on that page's row. Nothing else, and nothing at all in the Standard
+    /// layout, where the press stays inert as it always was.
+    fn edge_surface(&mut self, arg: &AppArg, dir: plx_ui::screen::Dir) -> Option<(AppArg, Style)> {
+        if dir != plx_ui::screen::Dir::Left || !plx_ui::layout::shield() || !Self::draws_chrome_for(arg) {
+            return None;
+        }
+        Some((AppArg::Sidebar(self.sidebar_arg(arg)), Style::Sheet))
     }
     fn page_alpha(&self) -> f32 { plx_ui::nav::page_alpha() }
     fn navigation_presentation(&self) -> plx_ui::screen::NavPresentation {
@@ -2742,6 +2817,7 @@ pub(crate) fn follow_auth_landing(pages: &mut Dispatcher<AppHost>, bridge: &mut 
         plx_media::route::restore_skip_credits(saved.skip_credits());
         plx_media::route::restore_deck_press(saved.deck_press());
         plx_data::browse::restore_library_opens(saved.library_opens());
+        plx_ui::layout::publish(saved.layout_mode().is_shield());
         plx_media::player::restore_subtitle_tone(saved.subtitle_tone());
         plx_media::player::restore_audio_enhancements(saved.audio_enhancements());
         plx_media::player::restore_subtitle_auto_sync(saved.subtitle_auto_sync());
@@ -2915,8 +2991,11 @@ pub(crate) fn nav_tab(
         HomeTab::Home => {
             // Keep the pill the user was standing on under focus. An IDENTITY, not an index: a
             // pill can appear or disappear while the dip runs, and `HomeCmd::FocusStrip` is
-            // delivered when Home MOUNTS, not now.
-            if let Some(pill) = focus_pill.filter(|pill| crate::app::chrome::pill_of(rig.directory.view(), *pill).is_some()) {
+            // delivered when Home MOUNTS, not now. The Shield layout has no strip to land on, so
+            // BACK seats the hero there, as the side panel's Home row does.
+            if plx_ui::layout::shield() {
+                if focus_pill.is_some() { rig.home_command(HomeCmd::Hero); }
+            } else if let Some(pill) = focus_pill.filter(|pill| crate::app::chrome::pill_of(rig.directory.view(), *pill).is_some()) {
                 let want = match pill {
                     Pill::Home => HomeTab::Home,
                     Pill::Search => HomeTab::Search,
@@ -2938,6 +3017,26 @@ pub(crate) fn nav_tab(
         HomeTab::Watchlist => AppArg::Watchlist,
     };
     nav_peer(d, arg, ret);
+}
+
+/// **A row of the Shield layout's side panel** (`LoopReq::Sidebar`): the navigation the Standard
+/// layout's control for the same destination performs — the Home, Watchlist and Search pills, a
+/// library pill, the profile chip and its menu's Settings row. The panel has already asked to be
+/// dismissed in the same drain, so a surface presented here replaces it as the account menu's
+/// Settings row's does.
+pub(crate) fn sidebar_go(d: &mut Dispatcher<AppHost>, rig: &mut Bridge, go: plx_screens::sidebar::Go) {
+    use plx_screens::sidebar::Go;
+    match go {
+        Go::Account => open_account_menu(d),
+        Go::Settings => open_settings(d),
+        Go::Home => {
+            nav_cancel(d);
+            nav_home_pill(d, rig, None);
+        }
+        Go::Watchlist => nav_tab(d, rig, HomeTab::Watchlist, None, None),
+        Go::Search => nav_tab(d, rig, HomeTab::Search, None, None),
+        Go::Library { sid, key, kind } => rig.show_library(d, sid, key, kind),
+    }
 }
 
 /// **A press on the Home PILL** — from the Library or Search, or on Home itself.
@@ -3552,6 +3651,10 @@ mod session_stored_home_tests;
 #[cfg(test)]
 #[path = "bridge_test_support.rs"]
 mod test_support;
+
+#[cfg(test)]
+#[path = "sidebar_navigation_tests.rs"]
+mod sidebar_navigation_tests;
 
 #[cfg(test)]
 #[path = "session_plaintext_repair_tests.rs"]
