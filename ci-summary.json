@@ -1,11 +1,11 @@
 {
- "generated": "2026-10-20T14:57:35Z",
+ "generated": "2026-10-22T17:36:08Z",
  "metrics": [
   {
-   "change30_pct": -54.2,
+   "change30_pct": -54.7,
    "change7_pct": -13.4,
-   "d30": 679,
-   "delta30": -368,
+   "d30": 686,
+   "delta30": -375,
    "delta7": -48,
    "group": "ci",
    "id": "pr_wait",
@@ -23,10 +23,10 @@
    "unit": "s"
   },
   {
-   "change30_pct": -54.6,
+   "change30_pct": -55.4,
    "change7_pct": -12.6,
-   "d30": 671.5,
-   "delta30": -366.5,
+   "d30": 684,
+   "delta30": -379,
    "delta7": -44,
    "group": "ci",
    "id": "push_wait",
@@ -182,10 +182,10 @@
    "unit": "s"
   },
   {
-   "change30_pct": 50.9,
+   "change30_pct": 47.7,
    "change7_pct": -22.3,
-   "d30": 1114.5,
-   "delta30": 567.5,
+   "d30": 1139,
+   "delta30": 543,
    "delta7": -484,
    "group": "ci",
    "id": "minutes",
@@ -203,31 +203,10 @@
    "unit": "s"
   },
   {
-   "change30_pct": 49.6,
-   "change7_pct": 20.3,
-   "d30": 611.0,
-   "delta30": 303.0,
-   "delta7": 154,
-   "group": "ci",
-   "id": "nightly|ARM build + gates / build + verify",
-   "kind": "job",
-   "label": "Nightly: ARM build + gates / build + verify",
-   "n_now": 7,
-   "n_prev": 67,
-   "now": 914,
-   "prev7": 760,
-   "shown": true,
-   "state": "flat",
-   "state30": "worse",
-   "threshold_abs": 120.0,
-   "threshold_pct": 25.0,
-   "unit": "s"
-  },
-  {
-   "change30_pct": 31.2,
+   "change30_pct": 30.3,
    "change7_pct": 3.0,
-   "d30": 232.5,
-   "delta30": 72.5,
+   "d30": 234,
+   "delta30": 71,
    "delta7": 9.0,
    "group": "ci",
    "id": "ci|cross-build (armv7) + artifact assertions",
@@ -287,10 +266,10 @@
    "unit": "s"
   },
   {
-   "change30_pct": 55.2,
+   "change30_pct": 46.1,
    "change7_pct": -20.1,
-   "d30": 120.5,
-   "delta30": 66.5,
+   "d30": 128,
+   "delta30": 59,
    "delta7": -47,
    "group": "ci",
    "id": "sim|Linux simulator build + launch",
@@ -308,10 +287,10 @@
    "unit": "s"
   },
   {
-   "change30_pct": 159.6,
+   "change30_pct": 157.7,
    "change7_pct": -49.2,
-   "d30": 70.5,
-   "delta30": 112.5,
+   "d30": 71,
+   "delta30": 112,
    "delta7": -177,
    "group": "ci",
    "id": "sim|macOS simulator build + launch",
@@ -457,31 +436,10 @@
    "unit": "s"
   },
   {
-   "change30_pct": 42.9,
-   "change7_pct": 11.1,
-   "d30": 14,
-   "delta30": 6,
-   "delta7": 2,
-   "group": "ci",
-   "id": "nightly|publish nightly prerelease",
-   "kind": "job",
-   "label": "Nightly: publish nightly prerelease",
-   "n_now": 7,
-   "n_prev": 67,
-   "now": 20,
-   "prev7": 18,
-   "shown": false,
-   "state": "flat",
-   "state30": "flat",
-   "threshold_abs": 120.0,
-   "threshold_pct": 25.0,
-   "unit": "s"
-  },
-  {
-   "change30_pct": 3.0,
+   "change30_pct": 6.2,
    "change7_pct": 0.0,
-   "d30": 16.5,
-   "delta30": 0.5,
+   "d30": 16,
+   "delta30": 1,
    "delta7": 0,
    "group": "ci",
    "id": "sim|Windows launcher syntax",
@@ -499,31 +457,10 @@
    "unit": "s"
   },
   {
-   "change30_pct": 27.3,
-   "change7_pct": 0.0,
-   "d30": 11.0,
-   "delta30": 3.0,
-   "delta7": 0,
-   "group": "ci",
-   "id": "nightly|plan today's nightly",
-   "kind": "job",
-   "label": "Nightly: plan today's nightly",
-   "n_now": 7,
-   "n_prev": 67,
-   "now": 14,
-   "prev7": 14,
-   "shown": false,
-   "state": "flat",
-   "state30": "flat",
-   "threshold_abs": 120.0,
-   "threshold_pct": 25.0,
-   "unit": "s"
-  },
-  {
    "change30_pct": -99.4,
    "change7_pct": 33.3,
-   "d30": 676.0,
-   "delta30": -672.0,
+   "d30": 686,
+   "delta30": -682,
    "delta7": 1.0,
    "group": "ci",
    "id": "ci|host checks (NOT a device gate)",
@@ -567,12 +504,6 @@
  "slowest_ci": [
   {
    "group": "ci",
-   "id": "nightly|ARM build + gates / build + verify",
-   "label": "Nightly: ARM build + gates / build + verify",
-   "now": 914
-  },
-  {
-   "group": "ci",
    "id": "ci|cross-build (armv7) + artifact assertions",
    "label": "CI: cross-build (armv7) + artifact assertions",
    "now": 305
@@ -594,6 +525,12 @@
    "id": "sim|Linux simulator build + launch",
    "label": "Simulator CI: Linux simulator build + launch",
    "now": 187
+  },
+  {
+   "group": "ci",
+   "id": "sim|macOS simulator build + launch",
+   "label": "Simulator CI: macOS simulator build + launch",
+   "now": 183
   }
  ],
  "slowest_local": [
