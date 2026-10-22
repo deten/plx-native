@@ -6409,8 +6409,9 @@ pub fn set_next_episode_mode(mode: NextEpisodeMode) -> bool {
     saved
 }
 
-/// How far one Left/Right press jumps in the player and the trailer transport — install-wide,
-/// like [`NEXT_EPISODE_MODE`]. Read per press by `appkit::player_hud::scrub_step_ns`.
+/// How far one RIGHT press jumps in the player and the trailer transport (Settings' *Skip
+/// forward*; the stored key predates the split, see `Session::skip_interval`) — install-wide, like
+/// [`NEXT_EPISODE_MODE`]. Read per press by `appkit::player_hud::scrub_step_ns`.
 static SKIP_INTERVAL: AtomicU8 = AtomicU8::new(1); // SkipInterval::Seconds10's index
 
 pub fn skip_interval() -> SkipInterval {
@@ -6434,6 +6435,105 @@ pub fn set_skip_interval(interval: SkipInterval) -> bool {
         plx_machine::idle::invalidate();
         plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
             feature: plx_telemetry::diag::schema::Feature::SkipInterval(interval),
+        });
+    }
+    saved
+}
+
+/// How far one LEFT press jumps (Settings' *Skip back*), the twin of [`SKIP_INTERVAL`] on the
+/// same ladder. Read per press by `appkit::player_hud::scrub_step_ns`.
+static SKIP_BACK: AtomicU8 = AtomicU8::new(1); // SkipInterval::Seconds10's index
+
+pub fn skip_back() -> SkipInterval {
+    SkipInterval::from_index(SKIP_BACK.load(Ordering::Relaxed))
+}
+
+pub fn restore_skip_back(interval: SkipInterval) {
+    #[cfg(any(test, feature = "test-support"))]
+    plx_base::testlock::assert_held("skip back preference");
+    SKIP_BACK.store(interval.index(), Ordering::Relaxed);
+}
+
+/// The back twin of [`set_skip_interval`]: durable first, then the live value and one
+/// `feature.used`.
+pub fn set_skip_back(interval: SkipInterval) -> bool {
+    let saved = plx_plex::plex::session::update_with_outcome(|s| Some(s.with_skip_back(interval)))
+        .is_some_and(|write| matches!(write.classify(),
+            plx_plex::plex::session::async_persistence::CompletionOutcome::Durable(_)));
+    if saved {
+        restore_skip_back(interval);
+        plx_machine::idle::invalidate();
+        plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
+            feature: plx_telemetry::diag::schema::Feature::SkipBack(interval),
+        });
+    }
+    saved
+}
+
+/// How far before the saved spot a resume the viewer chose starts — install-wide, like
+/// [`SKIP_INTERVAL`]. Read once per launch by `app::playback::start_playback_with`, through
+/// [`rewound_resume_ns`].
+static RESUME_REWIND: AtomicU8 = AtomicU8::new(0); // ResumeRewind::None's index
+
+pub fn resume_rewind() -> ResumeRewind {
+    ResumeRewind::from_index(RESUME_REWIND.load(Ordering::Relaxed))
+}
+
+pub fn restore_resume_rewind(rewind: ResumeRewind) {
+    #[cfg(any(test, feature = "test-support"))]
+    plx_base::testlock::assert_held("resume rewind preference");
+    RESUME_REWIND.store(rewind.index(), Ordering::Relaxed);
+}
+
+/// Blocking persistence seam; Settings dispatches it on the storage worker. The live value changes
+/// only once the write is durable, so a failed save claims nothing.
+pub fn set_resume_rewind(rewind: ResumeRewind) -> bool {
+    let saved = plx_plex::plex::session::update_with_outcome(|s| Some(s.with_resume_rewind(rewind)))
+        .is_some_and(|write| matches!(write.classify(),
+            plx_plex::plex::session::async_persistence::CompletionOutcome::Durable(_)));
+    if saved {
+        restore_resume_rewind(rewind);
+        plx_machine::idle::invalidate();
+        plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
+            feature: plx_telemetry::diag::schema::Feature::ResumeRewind(rewind),
+        });
+    }
+    saved
+}
+
+/// Where a resume to `resume_ns` the VIEWER chose starts under the live Rewind on resume choice
+/// ([`ResumeRewind::apply`]). Only a viewer's launch asks this: a reopen, retry, reload, seek or an
+/// Up Next advance carries its position through untouched.
+pub fn rewound_resume_ns(resume_ns: i64) -> i64 {
+    resume_rewind().apply(resume_ns)
+}
+
+/// How long without a button press stops Up Next's automatic advance — install-wide, like
+/// [`NEXT_EPISODE_MODE`]. Read by `app::playback::passout_stops` at the moment an advance would
+/// start on its own.
+static PASSOUT_PROTECTION: AtomicU8 = AtomicU8::new(0); // PassoutProtection::Off's index
+
+pub fn passout_protection() -> PassoutProtection {
+    PassoutProtection::from_index(PASSOUT_PROTECTION.load(Ordering::Relaxed))
+}
+
+pub fn restore_passout_protection(protection: PassoutProtection) {
+    #[cfg(any(test, feature = "test-support"))]
+    plx_base::testlock::assert_held("passout protection preference");
+    PASSOUT_PROTECTION.store(protection.index(), Ordering::Relaxed);
+}
+
+/// Blocking persistence seam; Settings dispatches it on the storage worker. The live value changes
+/// only once the write is durable, so a failed save claims nothing.
+pub fn set_passout_protection(protection: PassoutProtection) -> bool {
+    let saved = plx_plex::plex::session::update_with_outcome(|s| Some(s.with_passout_protection(protection)))
+        .is_some_and(|write| matches!(write.classify(),
+            plx_plex::plex::session::async_persistence::CompletionOutcome::Durable(_)));
+    if saved {
+        restore_passout_protection(protection);
+        plx_machine::idle::invalidate();
+        plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
+            feature: plx_telemetry::diag::schema::Feature::PassoutProtection(protection),
         });
     }
     saved
@@ -10541,6 +10641,10 @@ mod shuffle_tests;
 #[cfg(test)]
 #[path = "decision_skip_interval_tests.rs"]
 mod skip_interval_tests;
+
+#[cfg(test)]
+#[path = "decision_resume_passout_tests.rs"]
+mod resume_passout_tests;
 
 #[cfg(test)]
 #[path = "decision_deck_press_tests.rs"]

@@ -416,7 +416,7 @@ The action row:
 
 | control | what OK does |
 |---|---|
-| **Play** / **Resume** | start, or resume from the stored position |
+| **Play** / **Resume** | start, or resume from the stored position (moved earlier by Settings > Playback > *Rewind on resume*, Off by default) |
 | **↺** | play from the start (shown when there is a resume point) |
 | the watched disc | toggle watched — it **wears the face of the write it would perform**, so it is a **✓** on an unwatched item and a **−** on a watched one |
 | the Watchlist disc | on a movie or show: a stroked bookmark unfurling to **Add to Watchlist**, or, once the title is on the Watchlist, a filled one unfurling to **Remove from Watchlist**. The face changes at once; if plex.tv refuses the change it changes back. Absent while the Watchlist cannot answer for the title (still loading, or a profile without one) |
@@ -652,8 +652,11 @@ Seeking is a **preview-then-commit** gesture, not one immediate jump per press.
   viewer glancing at the clock loses their place. **A hold is not affected** — holding LEFT raises
   the HUD and then runs the ordinary continuous scrub as the auto-repeats arrive, by which point the
   band being dragged is on screen.
-- **With the HUD up and the scrubber focused, one press moves the preview by the Skip interval — 10 s unless Settings > Playback says otherwise.** The picture does
-  not move yet; the scrubber shows the target, and the state mark shows the direction.
+- **With the HUD up and the scrubber focused, one press moves the preview by that direction's skip:
+  LEFT by *Skip back*, RIGHT by *Skip forward*, each 10 s unless Settings > Playback says otherwise.**
+  The two are separate settings, so a viewer can step back in small hops and jump ahead in big ones.
+  The picture does not move yet; the scrubber shows the target, and the state mark shows the direction.
+  The trailer transport on a detail page hops by the same two settings.
 - **Holding engages a continuous scrub that accelerates** — from 20× playback speed, doubling every
   0.7 s, up to a top speed that crosses the whole item in about 5 s (never below 140×, never above
   1500×) — and the key release commits it, 200 ms later. The remote sometimes reports a release in
@@ -661,11 +664,11 @@ Seeking is a **preview-then-commit** gesture, not one immediate jump per press.
   takes the release back, and the hold carries on once the remote's repeats resume. A lost key-up is caught by a 400 ms watchdog, so a dropped release
   cannot leave the scrub running.
 - **Quick repeated taps accumulate into one seek.** The commit waits ~450 ms after the last tap, so
-  "back thirty seconds" is three presses at the default 10 s step and a single seek rather than three. That matters beyond
+  "back thirty seconds" is three presses at the default 10 s Skip back and a single seek rather than three. That matters beyond
   feel: back-to-back in-flight seeks are what stress the demux pipeline.
-- **A longer burst hops further.** The first three taps of a burst move one Skip interval each, the
-  next three move three, and every tap after that moves six. A tap the other way starts a new burst,
-  so stepping back to fine-tune is always one interval.
+- **A longer burst hops further.** The first three taps of a burst move one skip of their direction
+  each, the next three move three, and every tap after that moves six. A tap the other way starts a
+  new burst, so stepping back to fine-tune is always one Skip back.
 - The seek target is clamped to the item, stopping 3 s short of the end.
 
 The pointer can drag the scrubber directly, under the same commit rule.
@@ -728,6 +731,18 @@ Credits is unreachable**, and only *Skip Intro* and *Up Next* can be exercised.
 At the end of an item with nothing queued — or with *Next episode* set to *Off* — the player simply
 exits to the page it came from. **There
 is no full-screen post-play interstitial** — one was built and is deliberately not shipped.
+
+**Passout protection** (Settings > Playback, Off by default, or 1, 2 or 3 hours) stops the automatic
+advance when nobody has pressed anything for that long: when the countdown runs out, the stream
+ends under *After credits*, or *Skip credits: Automatically* would start the next episode, the
+player instead exits to the page it came from, as under *Off*, and the event log records
+`endreason: passout`. Any key press, click or pointer movement restarts the count; playing on into
+further episodes does not. Pressing *Next Episode* always advances.
+
+**Rewind on resume** (Settings > Playback, Off by default, or 5, 10, 15 or 30 s) starts a resume the
+viewer chose (Resume, a Continue Watching card, the card menu) that far before the saved spot, never
+before the start. Up Next, starting from the beginning, and the player's own reopens, retries and
+seeks keep their position exactly.
 
 ### 6.8 Info and Chapters
 

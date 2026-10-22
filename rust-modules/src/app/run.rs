@@ -1602,6 +1602,7 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
                 &mut app.refresh_hubs_at,
                 &mut app.pages,
                 &mut app.bridge,
+                super::playback::Advance::automatic(fr.now, app.last_input),
             );
             // dev: REPLAY AFTER COMPLETION (#46) — `crate::dev::scenarios::maybe_replay_after_eos`.
             // `finish_playback`'s return, not `app.route()`: `exit_player`'s `PopTo` only PARKS
@@ -1623,19 +1624,33 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
             plx_media::player::stop_bufferfeed(&mut app.player.session, &mut app.adapters.player);
         }
         // Up Next countdown elapsed → start the queued episode on its own. Beside the EOS
-        // handoff so the whole auto-advance chain reads in one place.
+        // handoff so the whole auto-advance chain reads in one place. Unless nobody has pressed
+        // anything for the Passout protection limit: then the countdown ends the session, as
+        // Next episode Off would have, rather than starting another episode for an empty room.
         if playback_may_run(app)
             && super::bridge::player(&app.pages).is_some_and(|p| p.up_next.expired(fr.now))
         {
-            super::playback::log_end_reason(&app.player.session, app.bridge.metadata_view(), "upnext-countdown");
-            if !play_up_next(&mut app.player.session,
-                &mut app.adapters.player,
-                HUD_LINGER_MS,
-                &mut app.pages,
-                &mut app.bridge,
-            ) {
+            let advance = super::playback::Advance::automatic(fr.now, app.last_input);
+            if super::playback::passout_stops(advance, &app.player.session, app.bridge.metadata_view()) {
                 if let Some(player) = super::bridge::player_mut(&mut app.pages) {
-                    player.up_next.cancel(); // nothing queued after all — don't re-fire
+                    player.up_next.cancel(); // the exit only parks the pop: don't re-fire meanwhile
+                }
+                super::playback::exit_player(&mut app.player.session,
+                    &mut app.adapters.player,
+                    &mut app.refresh_hubs_at,
+                    &mut app.pages,
+                );
+            } else {
+                super::playback::log_end_reason(&app.player.session, app.bridge.metadata_view(), "upnext-countdown");
+                if !play_up_next(&mut app.player.session,
+                    &mut app.adapters.player,
+                    HUD_LINGER_MS,
+                    &mut app.pages,
+                    &mut app.bridge,
+                ) {
+                    if let Some(player) = super::bridge::player_mut(&mut app.pages) {
+                        player.up_next.cancel(); // nothing queued after all — don't re-fire
+                    }
                 }
             }
         }
@@ -1769,6 +1784,7 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
                 fr.ctrl.primary_btn(),
                 &mut app.pages,
                 &mut app.bridge,
+                super::playback::Advance::automatic(fr.now, app.last_input),
             );
         }
         // While the countdown runs, hold the HUD up — a timer nobody can see is a cut to the
@@ -3194,6 +3210,7 @@ mod lifecycle_regression_tests {
             menu_play_await: Default::default(),
             prev: Default::default(),
             refresh_hubs_at: Default::default(),
+            refresh_after_play: Default::default(),
             plaintext_upgrade: Default::default(),
             ev: [0; 128],
             remote: Default::default(),
@@ -4777,6 +4794,107 @@ mod lifecycle_regression_tests {
         plx_media::player::SHARED.ended.store(true, std::sync::atomic::Ordering::Relaxed);
         settle(&mut rig.app, &mut t);
         assert!(!plx_media::route::play_pending(), "Off must not request the successor");
+        assert!(
+            rig.app.route().same_instance(&detail_arg(rig.sid)),
+            "end of stream landed on {:?}, not the detail page",
+            rig.app.route().id(),
+        );
+        assert_eq!(rig.app.pages.nav.top_page().map(|e| e.id), Some(origin));
+    }
+
+    /// Puts Passout protection back whatever the test did.
+    struct PassoutGuard(plx_media::route::PassoutProtection);
+    impl PassoutGuard {
+        fn set(protection: plx_media::route::PassoutProtection) -> Self {
+            let prior = plx_media::route::passout_protection();
+            plx_media::route::restore_passout_protection(protection);
+            Self(prior)
+        }
+    }
+    impl Drop for PassoutGuard {
+        fn drop(&mut self) {
+            plx_media::route::restore_passout_protection(self.0);
+        }
+    }
+
+    const HOUR_MS: u32 = 3_600_000;
+
+    /// **Passout protection at the countdown.** The Countdown rig of
+    /// `countdown_requests_the_successor_from_inside_the_credits`, with the last button press an
+    /// hour before the countdown runs out under a one-hour limit: nothing is requested, the player
+    /// is left, and the eventlog says why with an `endreason: passout` line.
+    #[test]
+    fn passout_protection_stops_the_countdown_and_leaves_the_player() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED passout_protection_stops_the_countdown_and_leaves_the_player: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::Countdown);
+        let _passout = PassoutGuard::set(plx_media::route::PassoutProtection::Hours1);
+        let lines = plx_base::eventlog::with_private_log(|| {
+            let mut t = playing_inside_final_credits(&mut rig);
+            assert!(matches!(
+                Frame::begin(&rig.app.player.session, rig.app.bridge.metadata_view()).ctrl,
+                plx_appkit::player_hud::ControlSlot::UpNext(_)
+            ), "premise: the Up Next tile is counting down");
+            t += plx_appkit::up_next::COUNTDOWN_MS;
+            rig.app.last_input = t.wrapping_sub(HOUR_MS + 16);
+            step(&mut rig.app, &mut t, vec![]);
+            assert!(!plx_media::route::play_pending(), "an hour without a press must not start the successor");
+            settle(&mut rig.app, &mut t);
+            assert!(super::super::bridge::player(&rig.app.pages).is_none(), "the player was left");
+            std::fs::read_to_string(plx_base::eventlog::events_log()).unwrap_or_default()
+        });
+        assert!(
+            lines.lines().any(|l| l.contains("endreason: passout idle=3600s limit=1h")),
+            "the passout end reason is logged:\n{lines}",
+        );
+    }
+
+    /// The same rig and limit with a press inside the hour: the countdown starts the successor as
+    /// it always has.
+    #[test]
+    fn a_press_inside_the_limit_lets_the_countdown_advance() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED a_press_inside_the_limit_lets_the_countdown_advance: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::Countdown);
+        let _passout = PassoutGuard::set(plx_media::route::PassoutProtection::Hours1);
+        let mut t = playing_inside_final_credits(&mut rig);
+        t += plx_appkit::up_next::COUNTDOWN_MS;
+        rig.app.last_input = t.wrapping_sub(HOUR_MS - 60_000);
+        step(&mut rig.app, &mut t, vec![]);
+        assert!(plx_media::route::play_pending(), "inside the limit the countdown requests the successor");
+    }
+
+    /// **Passout protection at the end of the stream** (Next episode: After credits, so the end is
+    /// the autoplay): two hours without a press under a one-hour limit leaves the player for the
+    /// page the session was launched from, exactly as Off does, with nothing requested.
+    #[test]
+    fn passout_protection_at_the_end_of_an_episode_returns_to_the_detail_page() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::serving(true) else {
+            eprintln!("SKIPPED passout_protection_at_the_end_of_an_episode_returns_to_the_detail_page: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::AfterCredits);
+        let _passout = PassoutGuard::set(plx_media::route::PassoutProtection::Hours1);
+        let mut t = product_transition(&mut rig.app);
+        settle(&mut rig.app, &mut t);
+        super::super::bridge::open_detail(&mut rig.app.pages, &mut rig.app.bridge, rig.sid, "1", None, None);
+        settle(&mut rig.app, &mut t);
+        let origin = play_with_a_landing_inside_the_dip(&mut rig, &mut t);
+        assert!(plx_media::route::up_next(&rig.app.player.session).is_some(), "premise: a successor is queued");
+        rig.app.last_input = t.wrapping_sub(2 * HOUR_MS);
+        plx_media::player::SHARED.ended.store(true, std::sync::atomic::Ordering::Relaxed);
+        settle(&mut rig.app, &mut t);
+        assert!(!plx_media::route::play_pending(), "passout must not request the successor");
         assert!(
             rig.app.route().same_instance(&detail_arg(rig.sid)),
             "end of stream landed on {:?}, not the detail page",

@@ -114,6 +114,12 @@ pub enum PickerKind {
     ForcedSubtitles,
     /// Which view a library opens on, listed on the Settings root beside Library order.
     LibraryOpens,
+    // Appended rather than placed beside their rows: the picker's canonical state hashes the
+    // field as its `u8` discriminant, so a variant inserted above would renumber every one after it.
+    /// How far LEFT jumps. `SkipInterval` is its RIGHT twin, *Skip forward*.
+    SkipBack,
+    ResumeRewind,
+    PassoutProtection,
 }
 
 impl SettingsPage {
@@ -134,7 +140,8 @@ impl PickerKind {
     pub fn parent(self) -> SettingsPage {
         match self {
             PickerKind::Quality | PickerKind::DirectPlay | PickerKind::SubtitleSize | PickerKind::SubtitlePosition | PickerKind::NextEpisode | PickerKind::DeckPress | PickerKind::SkipInterval
-            | PickerKind::SkipIntro | PickerKind::SkipCredits => SettingsPage::Playback,
+            | PickerKind::SkipIntro | PickerKind::SkipCredits | PickerKind::SkipBack | PickerKind::ResumeRewind
+            | PickerKind::PassoutProtection => SettingsPage::Playback,
             PickerKind::AudioLanguage | PickerKind::SubtitleMode | PickerKind::SubtitleLanguage | PickerKind::ForcedSubtitles => SettingsPage::AudioSubtitles,
             PickerKind::LibraryOpens => SettingsPage::Root,
         }

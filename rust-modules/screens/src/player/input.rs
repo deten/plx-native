@@ -312,7 +312,7 @@ impl HudState {
         }
     }
 }
-// scrub tuning: a press jumps scrub_step_ns() (the Skip interval), further within a quick burst
+// scrub tuning: a press jumps scrub_step_ns(fwd) (Skip back or Skip forward), further within a quick burst
 // (tap_step_multiplier); holding engages a continuous scrub ramping by scrub_speed
 // (playback-seconds per real-second). Defined in `appkit::player_hud` and
 // re-exported here — the trailer transport's own hold-to-scrub (`screens::detail::trailer`) wants

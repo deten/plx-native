@@ -647,12 +647,31 @@ pub struct Session {
     /// it did before.
     #[serde(default, deserialize_with = "de_soft_next_episode_mode", skip_serializing_if = "is_default_next_episode_mode")]
     pub next_episode_mode: NextEpisodeMode,
-    /// **How far one Left/Right press jumps in the player** — see [`SkipInterval`]. Install-wide
-    /// like [`Session::playback_quality`], one value for both directions. Absence is 10 s, the
-    /// hop every build before the field made. Skipped at the default so a session predating this
-    /// field — committed replay fixtures included — serializes exactly as it did before.
+    /// **How far one Right press jumps in the player** (Settings' *Skip forward*) — see
+    /// [`SkipInterval`]. Install-wide like [`Session::playback_quality`]. The key keeps its old name
+    /// because it once served both directions: a pick made then is still the forward hop, and the
+    /// back hop is [`Session::skip_back`]. Absence is 10 s, the hop every build before the field
+    /// made. Skipped at the default so a session predating this field — committed replay fixtures
+    /// included — serializes exactly as it did before.
     #[serde(default, deserialize_with = "de_soft_skip_interval", skip_serializing_if = "is_default_skip_interval")]
     pub skip_interval: SkipInterval,
+    /// **How far one Left press jumps in the player** (Settings' *Skip back*) — the same ladder as
+    /// [`Session::skip_interval`], chosen separately because a viewer who skips ahead in big hops
+    /// usually wants to step back in small ones. Absence is 10 s, the hop Left made while one value
+    /// served both directions. Skipped at the default, like `skip_interval`.
+    #[serde(default, deserialize_with = "de_soft_skip_interval", skip_serializing_if = "is_default_skip_interval")]
+    pub skip_back: SkipInterval,
+    /// **How far before the saved spot a resumed playback starts** — see [`ResumeRewind`].
+    /// Install-wide like [`Session::skip_interval`]. Absence is no rewind, the exact resume every
+    /// build before the field made. Skipped at the default so an older session serializes as before.
+    #[serde(default, deserialize_with = "de_soft_resume_rewind", skip_serializing_if = "is_default_resume_rewind")]
+    pub resume_rewind: ResumeRewind,
+    /// **How long without a button press stops Up Next starting the next item on its own** — see
+    /// [`PassoutProtection`]. Install-wide like [`Session::next_episode_mode`]. Absence is Off,
+    /// what every build before the field did. Skipped at the default so an older session
+    /// serializes exactly as before.
+    #[serde(default, deserialize_with = "de_soft_passout_protection", skip_serializing_if = "is_default_passout_protection")]
+    pub passout_protection: PassoutProtection,
     /// **What the player does when an intro marker begins.** See [`MarkerSkip`]. Install-wide
     /// like [`Session::skip_interval`]. Absence is Manual, the Skip Intro button every build before
     /// the field showed. Skipped at the default so an older session serializes exactly as before.
@@ -798,6 +817,12 @@ struct CanonicalSessionPreferences {
     next_episode_mode: NextEpisodeMode,
     #[serde(default, deserialize_with = "de_soft_skip_interval", skip_serializing_if = "is_default_skip_interval")]
     skip_interval: SkipInterval,
+    #[serde(default, deserialize_with = "de_soft_skip_interval", skip_serializing_if = "is_default_skip_interval")]
+    skip_back: SkipInterval,
+    #[serde(default, deserialize_with = "de_soft_resume_rewind", skip_serializing_if = "is_default_resume_rewind")]
+    resume_rewind: ResumeRewind,
+    #[serde(default, deserialize_with = "de_soft_passout_protection", skip_serializing_if = "is_default_passout_protection")]
+    passout_protection: PassoutProtection,
     #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "is_default_marker_skip")]
     skip_intro: MarkerSkip,
     #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "is_default_marker_skip")]
@@ -847,6 +872,9 @@ impl Default for CanonicalSessionPreferences {
             subtitle_position: SubtitlePosition::Low,
             next_episode_mode: NextEpisodeMode::Countdown,
             skip_interval: SkipInterval::Seconds10,
+            skip_back: SkipInterval::Seconds10,
+            resume_rewind: ResumeRewind::None,
+            passout_protection: PassoutProtection::Off,
             skip_intro: MarkerSkip::Manual,
             skip_credits: MarkerSkip::Manual,
             deck_press: DeckPress::Details,
@@ -905,6 +933,9 @@ fn split_public(session: &Session) -> Result<plx_platform::storage::state::Publi
         subtitle_position: session.subtitle_position,
         next_episode_mode: session.next_episode_mode,
         skip_interval: session.skip_interval,
+        skip_back: session.skip_back,
+        resume_rewind: session.resume_rewind,
+        passout_protection: session.passout_protection,
         skip_intro: session.skip_intro,
         skip_credits: session.skip_credits,
         deck_press: session.deck_press,
@@ -985,6 +1016,9 @@ pub fn join_canonical(
         subtitle_position: preferences.subtitle_position,
         next_episode_mode: preferences.next_episode_mode,
         skip_interval: preferences.skip_interval,
+        skip_back: preferences.skip_back,
+        resume_rewind: preferences.resume_rewind,
+        passout_protection: preferences.passout_protection,
         skip_intro: preferences.skip_intro,
         skip_credits: preferences.skip_credits,
         deck_press: preferences.deck_press,
@@ -1024,6 +1058,9 @@ fn public_session(public: &plx_platform::storage::state::PublicPayload) -> Sessi
         subtitle_position: preferences.subtitle_position,
         next_episode_mode: preferences.next_episode_mode,
         skip_interval: preferences.skip_interval,
+        skip_back: preferences.skip_back,
+        resume_rewind: preferences.resume_rewind,
+        passout_protection: preferences.passout_protection,
         skip_intro: preferences.skip_intro,
         skip_credits: preferences.skip_credits,
         deck_press: preferences.deck_press,
@@ -1429,11 +1466,12 @@ impl NextEpisodeMode {
     }
 }
 
-/// How far one Left/Right press jumps in the player (and the trailer transport) — install-wide
-/// like [`SubtitleTone`], the same for both directions. Absence is `Seconds10`, the fixed hop
-/// every build before this preference made. A closed set rather than a free number so the
-/// telemetry code for a pick is a fixed string and a hand-edited file cannot ask for a
-/// zero-length or hour-long hop. Holding a key still ramps by its own curve; this is only the tap.
+/// How far one Left or Right press jumps in the player (and the trailer transport) — install-wide
+/// like [`SubtitleTone`], one value per direction ([`Session::skip_back`] for Left,
+/// [`Session::skip_interval`] for Right). Absence is `Seconds10`, the fixed hop every build before
+/// this preference made. A closed set rather than a free number so the telemetry code for a pick
+/// is a fixed string and a hand-edited file cannot ask for a zero-length or hour-long hop. Holding
+/// a key still ramps by its own curve; this is only the tap.
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkipInterval {
     #[serde(rename = "5s")]
@@ -1482,6 +1520,121 @@ impl SkipInterval {
     /// The hop in nanoseconds, the unit every scrub position is in.
     pub fn ns(self) -> i64 {
         self.seconds() * 1_000_000_000
+    }
+}
+
+/// How far before the saved spot a RESUMED playback starts, so a viewer coming back to a film
+/// gets a few seconds of context instead of landing mid-sentence. Install-wide like
+/// [`SkipInterval`]. Absence is `None`, the exact resume every build before this preference made.
+/// A closed set for the same reasons as [`SkipInterval`]. Only a resume the viewer chose is
+/// rewound; `app::playback::start_playback_with` is where that is decided.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResumeRewind {
+    /// resume exactly where playback stopped
+    #[default]
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "5s")]
+    Seconds5,
+    #[serde(rename = "10s")]
+    Seconds10,
+    #[serde(rename = "15s")]
+    Seconds15,
+    #[serde(rename = "30s")]
+    Seconds30,
+}
+
+impl ResumeRewind {
+    /// Every option, Off first and then shortest first — the order the picker lists them in.
+    pub const LADDER: [ResumeRewind; 5] = [
+        ResumeRewind::None,
+        ResumeRewind::Seconds5,
+        ResumeRewind::Seconds10,
+        ResumeRewind::Seconds15,
+        ResumeRewind::Seconds30,
+    ];
+
+    /// An in-memory index back to an option; out of range is the default, as for [`SkipInterval`].
+    pub fn from_index(i: u8) -> ResumeRewind {
+        Self::LADDER.get(i as usize).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> u8 {
+        Self::LADDER.iter().position(|&o| o == self).unwrap_or(0) as u8
+    }
+
+    pub fn seconds(self) -> i64 {
+        match self {
+            ResumeRewind::None => 0,
+            ResumeRewind::Seconds5 => 5,
+            ResumeRewind::Seconds10 => 10,
+            ResumeRewind::Seconds15 => 15,
+            ResumeRewind::Seconds30 => 30,
+        }
+    }
+
+    /// Where a resume to `resume_ns` starts under this choice: that many seconds earlier, never
+    /// before the start. A start from the beginning (`resume_ns <= 0`) is not a resume and is
+    /// returned unchanged.
+    pub fn apply(self, resume_ns: i64) -> i64 {
+        if resume_ns <= 0 {
+            return resume_ns;
+        }
+        (resume_ns - self.seconds() * 1_000_000_000).max(0)
+    }
+}
+
+/// How long the viewer may go without pressing anything before Up Next stops starting the next
+/// item on its own (the countdown running out, or the end of an item under *After credits*):
+/// the player leaves instead, as if *Next episode* were Off, so a viewer who fell asleep does not
+/// wake to a season gone by. Install-wide like [`NextEpisodeMode`]. Absence is `Off`, which never
+/// stops an advance — what every build before this preference did. A press of *Next Episode* is
+/// never stopped: it is itself the press this measures.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassoutProtection {
+    #[default]
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "1h")]
+    Hours1,
+    #[serde(rename = "2h")]
+    Hours2,
+    #[serde(rename = "3h")]
+    Hours3,
+}
+
+impl PassoutProtection {
+    /// Every option, Off first and then shortest first — the order the picker lists them in.
+    pub const LADDER: [PassoutProtection; 4] = [
+        PassoutProtection::Off,
+        PassoutProtection::Hours1,
+        PassoutProtection::Hours2,
+        PassoutProtection::Hours3,
+    ];
+
+    /// An in-memory index back to an option; out of range is the default, as for [`SkipInterval`].
+    pub fn from_index(i: u8) -> PassoutProtection {
+        Self::LADDER.get(i as usize).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> u8 {
+        Self::LADDER.iter().position(|&o| o == self).unwrap_or(0) as u8
+    }
+
+    /// The limit in hours; 0 for Off.
+    pub fn hours(self) -> u32 {
+        match self {
+            PassoutProtection::Off => 0,
+            PassoutProtection::Hours1 => 1,
+            PassoutProtection::Hours2 => 2,
+            PassoutProtection::Hours3 => 3,
+        }
+    }
+
+    /// **The decision**: whether an automatic advance must be stopped after `idle_ms` without a
+    /// button press. Off never stops one; otherwise the limit itself already counts.
+    pub fn trips(self, idle_ms: u32) -> bool {
+        self != PassoutProtection::Off && u64::from(idle_ms) >= u64::from(self.hours()) * 3_600_000
     }
 }
 
@@ -2691,6 +2844,39 @@ fn is_default_skip_interval(interval: &SkipInterval) -> bool {
     *interval == SkipInterval::default()
 }
 
+/// A resume rewind this build does not know degrades to none, the exact resume.
+fn de_soft_resume_rewind<'de, D>(d: D) -> Result<ResumeRewind, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(ResumeRewind::default());
+    };
+    Ok(serde_json::from_value::<ResumeRewind>(v).unwrap_or_default())
+}
+
+/// `skip_serializing_if` needs a function, not just `PartialEq` with `Default::default()`.
+fn is_default_resume_rewind(rewind: &ResumeRewind) -> bool {
+    *rewind == ResumeRewind::default()
+}
+
+/// A passout limit this build does not know degrades to Off: an unreadable value must not start
+/// stopping a viewer's autoplay.
+fn de_soft_passout_protection<'de, D>(d: D) -> Result<PassoutProtection, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(PassoutProtection::default());
+    };
+    Ok(serde_json::from_value::<PassoutProtection>(v).unwrap_or_default())
+}
+
+/// `skip_serializing_if` needs a function, not just `PartialEq` with `Default::default()`.
+fn is_default_passout_protection(protection: &PassoutProtection) -> bool {
+    *protection == PassoutProtection::default()
+}
+
 /// A marker-skip choice this build does not know degrades to Manual, the button.
 fn de_soft_marker_skip<'de, D>(d: D) -> Result<MarkerSkip, D::Error>
 where
@@ -2967,6 +3153,36 @@ impl Session {
     pub fn with_skip_interval(&self, interval: SkipInterval) -> Self {
         let mut next = self.clone();
         next.skip_interval = interval;
+        next
+    }
+
+    pub fn skip_back(&self) -> SkipInterval {
+        self.skip_back
+    }
+
+    pub fn with_skip_back(&self, interval: SkipInterval) -> Self {
+        let mut next = self.clone();
+        next.skip_back = interval;
+        next
+    }
+
+    pub fn resume_rewind(&self) -> ResumeRewind {
+        self.resume_rewind
+    }
+
+    pub fn with_resume_rewind(&self, rewind: ResumeRewind) -> Self {
+        let mut next = self.clone();
+        next.resume_rewind = rewind;
+        next
+    }
+
+    pub fn passout_protection(&self) -> PassoutProtection {
+        self.passout_protection
+    }
+
+    pub fn with_passout_protection(&self, protection: PassoutProtection) -> Self {
+        let mut next = self.clone();
+        next.passout_protection = protection;
         next
     }
 
@@ -6437,6 +6653,196 @@ mod skip_interval_tests {
         }
         assert_eq!(SkipInterval::from_index(200), SkipInterval::Seconds10);
         assert_eq!(SkipInterval::Seconds10.ns(), 10_000_000_000);
+    }
+}
+
+/// `Session::skip_back`: the Left half of the skip pair. Soft-parse, omit-at-default, round-trip,
+/// and, the point of the split, a back pick that leaves the forward one (`skip_interval`, the
+/// key an older build wrote for both directions) alone.
+#[cfg(test)]
+mod skip_back_tests {
+    use super::*;
+
+    #[test]
+    fn absent_or_malformed_is_ten_seconds() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"skip_back": null}),
+            serde_json::json!({"skip_back": "future"}),
+            serde_json::json!({"skip_back": 30}),
+        ] {
+            let session: Session = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{value}: a bad preference must not fail the session: {e}"));
+            assert_eq!(session.skip_back(), SkipInterval::Seconds10, "{value}");
+        }
+    }
+
+    #[test]
+    fn the_default_is_not_serialized() {
+        let session = Session::default();
+        assert!(!serde_json::to_string(&session).unwrap().contains("skip_back"));
+        let prefs = serde_json::to_string(&split_public(&session).unwrap().preferences).unwrap();
+        assert!(!prefs.contains("skip_back"), "{prefs}");
+    }
+
+    /// A session an older build wrote, with one `skip_interval` for both directions, keeps that
+    /// pick as the forward hop and reads the default back hop.
+    #[test]
+    fn an_older_single_interval_becomes_the_forward_hop() {
+        let session: Session = serde_json::from_value(serde_json::json!({"skip_interval": "30s"})).unwrap();
+        assert_eq!((session.skip_back(), session.skip_interval()), (SkipInterval::Seconds10, SkipInterval::Seconds30));
+    }
+
+    #[test]
+    fn each_pair_round_trips_through_both_formats_and_the_two_stay_apart() {
+        for back in SkipInterval::LADDER {
+            for forward in SkipInterval::LADDER {
+                let session = Session::default().with_skip_back(back).with_skip_interval(forward);
+                let round: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+                assert_eq!((round.skip_back(), round.skip_interval()), (back, forward));
+                let (public, protected) = split_canonical(&session).unwrap();
+                let joined = join_canonical(&public, &protected).unwrap();
+                assert_eq!((joined.skip_back(), joined.skip_interval()), (back, forward));
+                let shown = public_session(&public);
+                assert_eq!((shown.skip_back(), shown.skip_interval()), (back, forward));
+            }
+        }
+    }
+}
+
+/// `Session::resume_rewind`: soft-parse to none, omit at the default, round-trip, and the clamp.
+#[cfg(test)]
+mod resume_rewind_tests {
+    use super::*;
+
+    #[test]
+    fn absent_or_malformed_is_no_rewind() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"resume_rewind": null}),
+            serde_json::json!({"resume_rewind": "45s"}),
+            serde_json::json!({"resume_rewind": 10}),
+        ] {
+            let session: Session = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{value}: a bad preference must not fail the session: {e}"));
+            assert_eq!(session.resume_rewind(), ResumeRewind::None, "{value}");
+        }
+    }
+
+    #[test]
+    fn the_default_is_not_serialized() {
+        let session = Session::default();
+        assert!(!serde_json::to_string(&session).unwrap().contains("resume_rewind"));
+        let prefs = serde_json::to_string(&split_public(&session).unwrap().preferences).unwrap();
+        assert!(!prefs.contains("resume_rewind"), "{prefs}");
+    }
+
+    #[test]
+    fn a_pick_round_trips_through_both_formats() {
+        for rewind in ResumeRewind::LADDER.into_iter().filter(|&r| r != ResumeRewind::default()) {
+            let session = Session::default().with_resume_rewind(rewind);
+            let json = serde_json::to_string(&session).unwrap();
+            assert!(json.contains("resume_rewind"), "{json}");
+            let round: Session = serde_json::from_str(&json).unwrap();
+            assert_eq!(round.resume_rewind(), rewind);
+            let (public, protected) = split_canonical(&session).unwrap();
+            assert_eq!(join_canonical(&public, &protected).unwrap().resume_rewind(), rewind);
+            assert_eq!(public_session(&public).resume_rewind(), rewind);
+        }
+    }
+
+    #[test]
+    fn the_ladder_is_ascending_and_indexes_back_to_itself() {
+        let seconds: Vec<i64> = ResumeRewind::LADDER.iter().map(|r| r.seconds()).collect();
+        assert_eq!(seconds, [0, 5, 10, 15, 30]);
+        for rewind in ResumeRewind::LADDER {
+            assert_eq!(ResumeRewind::from_index(rewind.index()), rewind);
+        }
+        assert_eq!(ResumeRewind::from_index(200), ResumeRewind::None);
+    }
+
+    /// The rewind moves a resume earlier, never before the start, and leaves a start from the
+    /// beginning alone.
+    #[test]
+    fn a_rewind_moves_a_resume_earlier_and_clamps_at_the_start() {
+        const S: i64 = 1_000_000_000;
+        assert_eq!(ResumeRewind::None.apply(600 * S), 600 * S);
+        assert_eq!(ResumeRewind::Seconds5.apply(600 * S), 595 * S);
+        assert_eq!(ResumeRewind::Seconds10.apply(600 * S), 590 * S);
+        assert_eq!(ResumeRewind::Seconds15.apply(600 * S), 585 * S);
+        assert_eq!(ResumeRewind::Seconds30.apply(600 * S), 570 * S);
+        assert_eq!(ResumeRewind::Seconds30.apply(12 * S), 0, "clamped at the start");
+        assert_eq!(ResumeRewind::Seconds10.apply(10 * S), 0);
+        for rewind in ResumeRewind::LADDER {
+            assert_eq!(rewind.apply(0), 0, "{rewind:?}: a start from the beginning is not a resume");
+        }
+    }
+}
+
+/// `Session::passout_protection`: soft-parse to Off, omit at the default, round-trip, and the
+/// decision itself.
+#[cfg(test)]
+mod passout_protection_tests {
+    use super::*;
+
+    #[test]
+    fn absent_or_malformed_is_off() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"passout_protection": null}),
+            serde_json::json!({"passout_protection": "4h"}),
+            serde_json::json!({"passout_protection": 2}),
+        ] {
+            let session: Session = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{value}: a bad preference must not fail the session: {e}"));
+            assert_eq!(session.passout_protection(), PassoutProtection::Off, "{value}");
+        }
+    }
+
+    #[test]
+    fn the_default_is_not_serialized() {
+        let session = Session::default();
+        assert!(!serde_json::to_string(&session).unwrap().contains("passout_protection"));
+        let prefs = serde_json::to_string(&split_public(&session).unwrap().preferences).unwrap();
+        assert!(!prefs.contains("passout_protection"), "{prefs}");
+    }
+
+    #[test]
+    fn a_pick_round_trips_through_both_formats() {
+        for protection in PassoutProtection::LADDER.into_iter().filter(|&p| p != PassoutProtection::default()) {
+            let session = Session::default().with_passout_protection(protection);
+            let json = serde_json::to_string(&session).unwrap();
+            assert!(json.contains("passout_protection"), "{json}");
+            let round: Session = serde_json::from_str(&json).unwrap();
+            assert_eq!(round.passout_protection(), protection);
+            let (public, protected) = split_canonical(&session).unwrap();
+            assert_eq!(join_canonical(&public, &protected).unwrap().passout_protection(), protection);
+            assert_eq!(public_session(&public).passout_protection(), protection);
+        }
+    }
+
+    #[test]
+    fn the_ladder_indexes_back_to_itself() {
+        let hours: Vec<u32> = PassoutProtection::LADDER.iter().map(|p| p.hours()).collect();
+        assert_eq!(hours, [0, 1, 2, 3]);
+        for protection in PassoutProtection::LADDER {
+            assert_eq!(PassoutProtection::from_index(protection.index()), protection);
+        }
+        assert_eq!(PassoutProtection::from_index(200), PassoutProtection::Off);
+    }
+
+    /// Off never stops an advance, however long the silence; a limit stops one from the moment it
+    /// is reached, and not a millisecond before.
+    #[test]
+    fn the_limit_trips_at_its_length_and_off_never_does() {
+        const H: u32 = 3_600_000;
+        assert!(!PassoutProtection::Off.trips(u32::MAX));
+        for (protection, hours) in [(PassoutProtection::Hours1, 1), (PassoutProtection::Hours2, 2), (PassoutProtection::Hours3, 3)] {
+            assert!(!protection.trips(0), "{protection:?}");
+            assert!(!protection.trips(hours * H - 1), "{protection:?}: just short of the limit");
+            assert!(protection.trips(hours * H), "{protection:?}: at the limit");
+            assert!(protection.trips(hours * H + 1), "{protection:?}: past it");
+        }
     }
 }
 

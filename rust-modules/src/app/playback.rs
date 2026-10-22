@@ -380,6 +380,16 @@ impl PlaybackResources for LivePlaybackResources {
 
 /// Shared start policy after resource preparation: gate the page push, forward the caller's
 /// origin and return state, and reset/seed the HUD. Used by both ordinary and menu starts.
+///
+/// **Rewind on resume is applied here and nowhere else**, because this is the one door every
+/// launch the VIEWER chose passes through with its resume point still a choice: Resume on a detail
+/// page (`ContentReq::Play`, held or not), a Continue Watching / On Deck card, the item menu's
+/// play, the hero and a shuffle's first row all arrive with [`Origin::Here`]. What must keep its
+/// position exactly never comes through here as `Here`: Up Next and the episode chain call in with
+/// [`Origin::Unchanged`] (`play_up_next`), and a reopen, retry, reload, seek, audio-track switch,
+/// transcode restart or the foreground restore move an already-playing session through `route` and
+/// `player::begin_resume` directly. A start from the beginning has no resume to rewind
+/// (`ResumeRewind::apply` leaves 0 alone).
 pub(super) fn start_playback_with<R: PlaybackResources>(
     ps: &mut plx_media::route::PlaybackSession,
     pa: &mut plx_media::player::adapter::PlayerAdapter,
@@ -391,6 +401,7 @@ pub(super) fn start_playback_with<R: PlaybackResources>(
     bridge: &mut super::bridge::Bridge,
     resources: &mut R,
 ) -> bool {
+    let resume_ns = launch_resume_ns(resume_ns, from);
     let entering = resources.prepare_start(ps, pa, resume_ns);
     if entering {
         enter_player(pages, bridge, from, ret);
@@ -424,6 +435,27 @@ pub(super) fn start_playback_with<R: PlaybackResources>(
     }
     set_paused(false);
     entering
+}
+
+/// The position a launch starts at: a viewer's own launch ([`Origin::Here`]) resumes the Rewind on
+/// resume preference earlier (`route::rewound_resume_ns`), anything else exactly where it was
+/// asked to. See [`start_playback_with`] for why `Origin` is the question to ask.
+fn launch_resume_ns(resume_ns: i64, from: Origin) -> i64 {
+    match from {
+        Origin::Here => {
+            let rewound = plx_media::route::rewound_resume_ns(resume_ns);
+            if rewound != resume_ns {
+                log(&format!(
+                    "resume: rewind {:?} {}->{}ms",
+                    plx_media::route::resume_rewind(),
+                    resume_ns / 1_000_000,
+                    rewound / 1_000_000
+                ));
+            }
+            rewound
+        }
+        Origin::Unchanged => resume_ns,
+    }
 }
 
 /// Legacy card launches resolve media data without creating an invisible Detail screen.
@@ -799,10 +831,64 @@ pub(crate) fn exit_player(
     *refresh_hubs_at = clock::now().wrapping_add(800).max(1);
 }
 
+/// **How an advance to the next item was asked for**, the one fact Passout protection turns on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Advance {
+    /// The viewer pressed for it: *Next Episode*, or *Skip Credits* on a `final` marker. Never
+    /// stopped, because the press is itself the input the protection is waiting for.
+    Pressed,
+    /// The player is about to advance on its own (the end of the stream, the Up Next countdown
+    /// running out, an automatic credits skip), `idle_ms` after the viewer's last input.
+    Automatic { idle_ms: u32 },
+}
+
+impl Advance {
+    /// An automatic advance at `now`, the viewer's last input having arrived at `last_input`.
+    ///
+    /// That instant is `App::last_input`, which every fresh key press, click, wheel and pointer
+    /// motion stamps, on the player and on every other page, and which nothing else writes. A
+    /// manual play therefore starts the count afresh (it began with a press), while Up Next's own
+    /// advances leave it running, which is the point: the limit is time since a person last
+    /// touched the remote, however many episodes have played since. A `last_input` ahead of `now`
+    /// (a replay's stamp) reads as no idle time, the codebase's half-range wrapping idiom.
+    pub(crate) fn automatic(now: u32, last_input: u32) -> Self {
+        let idle = now.wrapping_sub(last_input);
+        Advance::Automatic { idle_ms: if idle < 0x8000_0000 { idle } else { 0 } }
+    }
+}
+
+/// **Passout protection's decision**, pure: whether this advance is stopped. Only an automatic
+/// advance, only to a successor that exists, and only once the chosen limit has passed.
+pub(crate) fn passout_trips(advance: Advance, protection: plx_media::route::PassoutProtection, has_successor: bool) -> bool {
+    match advance {
+        Advance::Pressed => false,
+        Advance::Automatic { idle_ms } => has_successor && protection.trips(idle_ms),
+    }
+}
+
+/// **Passout protection's gate**, asked at every place Up Next would start the successor on its
+/// own: the end of the stream ([`finish_playback`]), the countdown running out and an automatic
+/// credits skip (`run::playback_tick`, through [`activate_ctrl_row`]). True means the advance is
+/// stopped: the `endreason: passout` line is logged here, and the caller leaves the player as it
+/// would under *Next episode: Off*, back to the page the session was launched from.
+pub(crate) fn passout_stops(advance: Advance, ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::MetadataView<'_>) -> bool {
+    let protection = plx_media::route::passout_protection();
+    if !passout_trips(advance, protection, plx_media::route::up_next(ps).is_some()) {
+        return false;
+    }
+    let idle_s = match advance {
+        Advance::Automatic { idle_ms } => idle_ms / 1000,
+        Advance::Pressed => 0,
+    };
+    log_end_reason(ps, meta, &format!("passout idle={idle_s}s limit={}h", protection.hours()));
+    true
+}
+
 /// The episode is OVER — drained to EOS, or the user skipped a `final` credits marker.
 /// Starts the queued episode when the show has one, else leaves the player exactly as
 /// `exit_player` would. There is no interstitial: "always the next episode" — except under the
-/// Next episode preference `Off`, which leaves the player here like a film.
+/// Next episode preference `Off`, which leaves the player here like a film, and when Passout
+/// protection stops an `advance` nobody has pressed for in too long ([`passout_stops`]).
 ///
 /// Returns whether playback was handed off to Up Next (`true`) or the player was left (`false`).
 /// `exit_player`'s `PopTo` only PARKS the navigation (`Dispatcher::request`, applied at the next
@@ -815,8 +901,10 @@ pub(crate) fn finish_playback(
     refresh_hubs_at: &mut u32,
     pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
     bridge: &mut super::bridge::Bridge,
+    advance: Advance,
 ) -> bool {
     if plx_media::route::next_episode_mode() != plx_media::route::NextEpisodeMode::Off
+        && !passout_stops(advance, ps, bridge.metadata_view())
         && play_up_next(ps, pa, HUD_LINGER_MS, pages, bridge)
     {
         return true;
@@ -831,6 +919,9 @@ pub(crate) fn finish_playback(
 /// pointer — they used to hold byte-identical copies of this `match`, and had already
 /// drifted (the key path cleared the held key, the pointer path did not). Returns true when
 /// the route flipped, which is the only thing the two callers still handle differently.
+///
+/// `advance` says whether a person pressed this ([`Advance::Pressed`]) or the player is acting on
+/// an automatic skip; only the latter can be stopped by Passout protection.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn activate_ctrl_row(
     ps: &mut plx_media::route::PlaybackSession,
@@ -840,6 +931,7 @@ pub(crate) fn activate_ctrl_row(
     btn: c_int,
     pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
     bridge: &mut super::bridge::Bridge,
+    advance: Advance,
 ) -> bool {
     use plx_appkit::player_hud::ControlSlot;
     use plx_appkit::skip_pill::SkipAction;
@@ -852,6 +944,10 @@ pub(crate) fn activate_ctrl_row(
         // being caught out.
         ControlSlot::UpNext(_) => {
             if btn == plx_appkit::up_next::BTN_NEXT {
+                if passout_stops(advance, ps, bridge.metadata_view()) {
+                    exit_player(ps, pa, refresh_hubs_at, pages);
+                    return true;
+                }
                 log_end_reason(ps, bridge.metadata_view(), "next-episode-button");
                 play_up_next(ps, pa, HUD_LINGER_MS, pages, bridge)
             } else {
@@ -892,7 +988,7 @@ pub(crate) fn activate_ctrl_row(
                 // a `final` credits segment: skipping it IS finishing the item
                 SkipAction::Finish => {
                     log_end_reason(ps, bridge.metadata_view(), "skip-final-credits");
-                    let _ = finish_playback(ps, pa, refresh_hubs_at, pages, bridge);
+                    let _ = finish_playback(ps, pa, refresh_hubs_at, pages, bridge, advance);
                     true
                 }
             }
@@ -1140,6 +1236,7 @@ pub(crate) unsafe fn activate_player_row(
             btn,
             pages,
             bridge,
+            Advance::Pressed,
         );
     } else if btn == plx_appkit::player_hud::BTN_MORE {
         // …so the discs are what row 1 holds — the complement of the arm above, and the row's only
@@ -1766,6 +1863,10 @@ mod player_return_tests {
         plx_plex::plex::reset_servers_for_test();
     }
 }
+
+#[cfg(test)]
+#[path = "resume_passout_tests.rs"]
+mod resume_passout_tests;
 
 /// The `markers=` field of the `endreason:` and `playstart:` lines.
 #[cfg(test)]

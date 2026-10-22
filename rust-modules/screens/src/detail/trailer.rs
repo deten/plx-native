@@ -177,7 +177,7 @@ pub(super) struct Transport {
     // ---- LEFT/RIGHT's hold-to-scrub gesture ----------------------------------------------------
     //
     // The same idiom `screens::player::input::Scrub` drives the real HUD's scrubber with — a
-    // fresh press hops `scrub_step_ns()`, a HELD key (auto-repeat) engages a continuous ramp
+    // fresh press hops `scrub_step_ns(fwd)`, a HELD key (auto-repeat) engages a continuous ramp
     // (`player_hud::scrub_speed`), and the release commits at once for a hold or arms a short
     // debounce for a tap — but not the same STATE TYPE: `ci/check-deps.sh`'s `sibling` gate
     // forbids this module from naming `crate::player` at all. The tuning constants and
@@ -242,7 +242,7 @@ impl Transport {
         self.scrub_commit_at = 0;
     }
 
-    /// A fresh LEFT/RIGHT: the Skip interval hop, same as the player HUD's `key_scrub_fresh`'s `Jump` arm.
+    /// A fresh LEFT/RIGHT: Skip back or Skip forward, same as the player HUD's `key_scrub_fresh`'s `Jump` arm.
     /// There is no `Reveal`-only first press here (unlike the HUD, which a LEFT/RIGHT can arrive
     /// at hidden): full-trailer mode's transport is already up the instant it is entered
     /// ([`reveal`](Self::reveal) fires on promotion), so every press is a real gesture. `dur_ns`
@@ -261,11 +261,8 @@ impl Transport {
         self.scrub_commit_at = 0; // more input → cancel a pending tap commit
         self.scrub_alive = now;
         if !self.scrub_hold {
-            let step = if fwd {
-                plx_appkit::player_hud::scrub_step_ns()
-            } else {
-                -plx_appkit::player_hud::scrub_step_ns()
-            };
+            let hop = plx_appkit::player_hud::scrub_step_ns(fwd);
+            let step = if fwd { hop } else { -hop };
             self.scrub_ns =
                 plx_appkit::player_hud::scrub_clamp_target(self.scrub_ns.max(0) + step, dur_ns);
         }
@@ -619,21 +616,24 @@ mod tests {
         assert!(!t.scrubbing(), "committing ends the gesture");
     }
 
-    /// **The trailer shares the Skip interval**: a fresh press hops the chosen length, both ways.
+    /// **The trailer shares Skip back and Skip forward**: a fresh RIGHT hops the forward pick and a
+    /// fresh LEFT the back pick, each its own length.
     #[test]
     fn a_fresh_press_hops_the_chosen_skip_interval() {
         use plx_plex::plex::session::SkipInterval;
         let _g = plx_base::testlock::serial();
         const S: i64 = 1_000_000_000;
         let (dur, live) = (200 * S, 100 * S);
-        for interval in SkipInterval::LADDER {
-            let _i = plx_appkit::player_hud::SkipIntervalGuard::set(interval);
-            let mut t = Transport::IDLE;
-            t.scrub_fresh(true, 0, dur, live);
-            assert_eq!(t.scrub_ns, live + interval.ns(), "{interval:?} forward");
-            let mut t = Transport::IDLE;
-            t.scrub_fresh(false, 0, dur, live);
-            assert_eq!(t.scrub_ns, live - interval.ns(), "{interval:?} back");
+        for back in SkipInterval::LADDER {
+            for forward in SkipInterval::LADDER {
+                let _i = plx_appkit::player_hud::SkipIntervalGuard::pair(back, forward);
+                let mut t = Transport::IDLE;
+                t.scrub_fresh(true, 0, dur, live);
+                assert_eq!(t.scrub_ns, live + forward.ns(), "{forward:?} forward");
+                let mut t = Transport::IDLE;
+                t.scrub_fresh(false, 0, dur, live);
+                assert_eq!(t.scrub_ns, live - back.ns(), "{back:?} back");
+            }
         }
     }
 

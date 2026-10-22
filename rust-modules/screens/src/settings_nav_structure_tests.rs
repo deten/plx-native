@@ -123,8 +123,11 @@ fn every_playback_field_pushes_its_picker() {
     assert_eq!(items.iter().map(|(_, d)| *d).collect::<Vec<_>>(),
         [SettingsPage::Picker(PickerKind::Quality), SettingsPage::Picker(PickerKind::DirectPlay),
          SettingsPage::Picker(PickerKind::SubtitleSize), SettingsPage::Picker(PickerKind::SubtitlePosition),
-         SettingsPage::Picker(PickerKind::NextEpisode), SettingsPage::Picker(PickerKind::DeckPress),
-         SettingsPage::Picker(PickerKind::SkipInterval), SettingsPage::Picker(PickerKind::SkipIntro),
+         SettingsPage::Picker(PickerKind::NextEpisode), SettingsPage::Picker(PickerKind::PassoutProtection),
+         SettingsPage::Picker(PickerKind::DeckPress),
+         // Skip back directly above Skip forward (`SkipInterval`), Rewind on resume after the pair
+         SettingsPage::Picker(PickerKind::SkipBack), SettingsPage::Picker(PickerKind::SkipInterval),
+         SettingsPage::Picker(PickerKind::ResumeRewind), SettingsPage::Picker(PickerKind::SkipIntro),
          SettingsPage::Picker(PickerKind::SkipCredits)]);
     assert_every_nav_item_pushes_exactly_its_dest("playback", &items, &|| consent_opened(SettingsPage::Playback));
 }

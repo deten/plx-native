@@ -748,15 +748,15 @@
     "description": "Continue Watching picker option: OK on a card starts or resumes the video at once."
   },
   "settings.playback.skip_interval": {
-    "value": "Skip interval",
-    "description": "Settings, consent or sign-in UI: how far one Left or Right press jumps while watching."
+    "value": "Skip forward",
+    "description": "Settings row title and picker title: how far one Right press jumps ahead while watching. Listed directly below Skip back (settings.playback.skip_back). The key keeps its old name from when one setting served both directions."
   },
   "settings.playback.skip_interval.seconds": {
     "value": {
       "one": "{count} second",
       "other": "{count} seconds"
     },
-    "description": "Skip interval picker option and row read-out: the length of one jump, in seconds (5, 10, 15, 30 or 60).",
+    "description": "Skip back, Skip forward and Rewind on resume picker option and row read-out: a length in seconds (5, 10, 15, 30 or 60).",
     "args": {
       "count": "i64"
     }
@@ -818,8 +818,50 @@
     "description": "Explanation under the title of the Continue Watching picker. It names the two options by their picker labels (Open details, Play); keep those words identical to settings.playback.deck_press.details and .play."
   },
   "settings.playback.skip_interval.copy": {
-    "value": "How far one press of Left or Right jumps in the player.",
-    "description": "Explanation under the title of the Skip interval picker. One value for both directions; it also sets the hop in the trailer transport."
+    "value": "How far one press of Right jumps ahead in the player.",
+    "description": "Explanation under the title of the Skip forward picker. Right only; Left has its own setting, Skip back. It also sets the forward hop in the trailer transport."
+  },
+  "settings.playback.skip_back": {
+    "value": "Skip back",
+    "description": "Settings row title and picker title: how far one Left press jumps back while watching. Listed directly above Skip forward (settings.playback.skip_interval); its options reuse settings.playback.skip_interval.seconds."
+  },
+  "settings.playback.skip_back.copy": {
+    "value": "How far one press of Left jumps back in the player.",
+    "description": "Explanation under the title of the Skip back picker. Left only; Right has its own setting, Skip forward. It also sets the back hop in the trailer transport."
+  },
+  "settings.playback.resume_rewind": {
+    "value": "Rewind on resume",
+    "description": "Settings row title and picker title: how far before the saved spot a video starts when the viewer resumes it. Its options are Off (settings.playback.resume_rewind.off) and lengths in seconds (settings.playback.skip_interval.seconds)."
+  },
+  "settings.playback.resume_rewind.off": {
+    "value": "Off",
+    "description": "Rewind on resume picker option (the default): a resumed video starts exactly where it stopped."
+  },
+  "settings.playback.resume_rewind.copy": {
+    "value": "When you resume a video, it starts this far before where you stopped.",
+    "description": "Explanation under the title of the Rewind on resume picker. Applies only when the viewer resumes (Resume, or a Continue Watching card); starting from the beginning and the next episode starting by itself are not affected."
+  },
+  "settings.playback.passout_protection": {
+    "value": "Passout protection",
+    "description": "Settings row title and picker title: stops the next episode starting by itself when nobody has pressed a button for a long time (the viewer has probably fallen asleep)."
+  },
+  "settings.playback.passout_protection.off": {
+    "value": "Off",
+    "description": "Passout protection picker option (the default): the next episode always starts by itself as the Next episode setting says."
+  },
+  "settings.playback.passout_protection.hours": {
+    "value": {
+      "one": "After {count} hour",
+      "other": "After {count} hours"
+    },
+    "description": "Passout protection picker option and row read-out: how long without a button press before autoplay stops (1, 2 or 3 hours).",
+    "args": {
+      "count": "i64"
+    }
+  },
+  "settings.playback.passout_protection.copy": {
+    "value": "Stop autoplay after this long without a button press.",
+    "description": "Explanation under the title of the Passout protection picker. When the time has passed, the player goes back to the page instead of starting the next episode; pressing Next Episode always works."
   },
   "settings.playback.skip_intro": {
     "value": "Skip intro",

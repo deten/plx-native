@@ -175,10 +175,20 @@ pub enum Feature {
     /// three modes. The mode is the whole payload: a closed set of three codes, fired once per
     /// change, never per playback and never with anything about what was playing.
     NextEpisode(plx_plex::plex::session::NextEpisodeMode),
-    /// **A viewer set the Skip interval preference** (Settings → Video & playback) to one of its
-    /// five lengths. The length is the whole payload: a closed set of five codes, fired once per
-    /// durable change, never per press and never with anything about what was playing.
+    /// **A viewer set the Skip forward preference** (Settings → Video & playback; the stored key
+    /// and this code keep the name *skip interval* from when one value served both directions) to
+    /// one of its five lengths. The length is the whole payload: a closed set of five codes, fired
+    /// once per durable change, never per press and never with anything about what was playing.
     SkipInterval(plx_plex::plex::session::SkipInterval),
+    /// **A viewer set the Skip back preference** to one of the same five lengths. Its own codes
+    /// (`skip_back_*`), so a back pick is never counted as a forward one.
+    SkipBack(plx_plex::plex::session::SkipInterval),
+    /// **A viewer set the Rewind on resume preference** to one of its five choices. The choice is
+    /// the whole payload, fired once per durable change, never per playback.
+    ResumeRewind(plx_plex::plex::session::ResumeRewind),
+    /// **A viewer set the Passout protection preference** to one of its four limits. The limit is
+    /// the whole payload, fired once per durable change; a stopped autoplay is not reported here.
+    PassoutProtection(plx_plex::plex::session::PassoutProtection),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,6 +232,26 @@ impl Feature {
                 plx_plex::plex::session::SkipInterval::Seconds15 => "skip_interval_15s",
                 plx_plex::plex::session::SkipInterval::Seconds30 => "skip_interval_30s",
                 plx_plex::plex::session::SkipInterval::Seconds60 => "skip_interval_60s",
+            },
+            Self::SkipBack(interval) => match interval {
+                plx_plex::plex::session::SkipInterval::Seconds5 => "skip_back_5s",
+                plx_plex::plex::session::SkipInterval::Seconds10 => "skip_back_10s",
+                plx_plex::plex::session::SkipInterval::Seconds15 => "skip_back_15s",
+                plx_plex::plex::session::SkipInterval::Seconds30 => "skip_back_30s",
+                plx_plex::plex::session::SkipInterval::Seconds60 => "skip_back_60s",
+            },
+            Self::ResumeRewind(rewind) => match rewind {
+                plx_plex::plex::session::ResumeRewind::None => "resume_rewind_off",
+                plx_plex::plex::session::ResumeRewind::Seconds5 => "resume_rewind_5s",
+                plx_plex::plex::session::ResumeRewind::Seconds10 => "resume_rewind_10s",
+                plx_plex::plex::session::ResumeRewind::Seconds15 => "resume_rewind_15s",
+                plx_plex::plex::session::ResumeRewind::Seconds30 => "resume_rewind_30s",
+            },
+            Self::PassoutProtection(protection) => match protection {
+                plx_plex::plex::session::PassoutProtection::Off => "passout_protection_off",
+                plx_plex::plex::session::PassoutProtection::Hours1 => "passout_protection_1h",
+                plx_plex::plex::session::PassoutProtection::Hours2 => "passout_protection_2h",
+                plx_plex::plex::session::PassoutProtection::Hours3 => "passout_protection_3h",
             },
         }
     }
@@ -929,6 +959,69 @@ mod tests {
                 want("skip_interval_15s"),
                 want("skip_interval_30s"),
                 want("skip_interval_60s"),
+            ]
+        );
+    }
+
+    /// The Skip back preference reports on the same ladder with its own five codes, so a back pick
+    /// and a forward pick of the same length never read as one another.
+    #[test]
+    fn the_skip_back_setting_reports_only_its_length_under_its_own_codes() {
+        use plx_plex::plex::session::SkipInterval;
+        let sent: Vec<_> = SkipInterval::LADDER
+            .iter()
+            .map(|&interval| serialize(DiagEvent::FeatureUsed { feature: Feature::SkipBack(interval) }))
+            .collect();
+        let want = |code| ("feature.used", vec![("feature", Value::Str(code))]);
+        assert_eq!(
+            sent,
+            [
+                want("skip_back_5s"),
+                want("skip_back_10s"),
+                want("skip_back_15s"),
+                want("skip_back_30s"),
+                want("skip_back_60s"),
+            ]
+        );
+    }
+
+    /// The Rewind on resume preference: one of five fixed codes and nothing else.
+    #[test]
+    fn the_resume_rewind_setting_reports_only_its_length() {
+        use plx_plex::plex::session::ResumeRewind;
+        let sent: Vec<_> = ResumeRewind::LADDER
+            .iter()
+            .map(|&rewind| serialize(DiagEvent::FeatureUsed { feature: Feature::ResumeRewind(rewind) }))
+            .collect();
+        let want = |code| ("feature.used", vec![("feature", Value::Str(code))]);
+        assert_eq!(
+            sent,
+            [
+                want("resume_rewind_off"),
+                want("resume_rewind_5s"),
+                want("resume_rewind_10s"),
+                want("resume_rewind_15s"),
+                want("resume_rewind_30s"),
+            ]
+        );
+    }
+
+    /// The Passout protection preference: one of four fixed codes and nothing else.
+    #[test]
+    fn the_passout_protection_setting_reports_only_its_limit() {
+        use plx_plex::plex::session::PassoutProtection;
+        let sent: Vec<_> = PassoutProtection::LADDER
+            .iter()
+            .map(|&protection| serialize(DiagEvent::FeatureUsed { feature: Feature::PassoutProtection(protection) }))
+            .collect();
+        let want = |code| ("feature.used", vec![("feature", Value::Str(code))]);
+        assert_eq!(
+            sent,
+            [
+                want("passout_protection_off"),
+                want("passout_protection_1h"),
+                want("passout_protection_2h"),
+                want("passout_protection_3h"),
             ]
         );
     }

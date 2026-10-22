@@ -974,7 +974,8 @@ impl PlayerScreen {
                     (self.hud.nav.tab + if fwd { 1 } else { -1 }).clamp(0, max_tab);
             }
             input::ScrubPress::Jump => {
-                // scrubber focus, FRESH press: the Skip interval hop, and NOTHING committed. A held
+                // scrubber focus, FRESH press: its direction's hop (Skip back for LEFT, Skip forward
+                // for RIGHT, `scrub_step_ns`), and NOTHING committed. A held
                 // key's repeats engage the continuous ramp below and the release commits; a tap's
                 // release arms the debounce so that a rapid burst coalesces into one seek. The
                 // commit belonging to the press was this package's first regression.
@@ -1004,7 +1005,7 @@ impl PlayerScreen {
                     self.scrub.ns = plx_media::player::intended_pos_ns(ps);
                 }
                 if !self.scrub.hold {
-                    let hop = input::scrub_step_ns() * input::tap_step_multiplier(self.scrub.taps);
+                    let hop = input::scrub_step_ns(fwd) * input::tap_step_multiplier(self.scrub.taps);
                     let step = if fwd { hop } else { -hop };
                     self.scrub.ns = Scrub::clamp_target(self.scrub.ns.max(0) + step, dur);
                 }
@@ -2110,8 +2111,8 @@ mod scrub_ownership_tests {
     const INST: InstanceId = InstanceId(3);
     /// 100 s, so the 3 s tail cap (`duration - 3s`) is far from every position these cases name.
     const DUR: i64 = 100_000_000_000;
-    /// What one press hops at the default Skip interval — a literal, so the default stays pinned
-    /// at the 10 s every build before the preference made.
+    /// What one press hops at the default Skip back and Skip forward — a literal, so both defaults
+    /// stay pinned at the 10 s every build before the preferences made.
     const DEFAULT_HOP: i64 = 10_000_000_000;
 
     fn cx() -> Cx<'static, TestHost> {
@@ -2273,6 +2274,7 @@ mod scrub_ownership_tests {
 
     /// **A press hops the chosen Skip interval, in both directions, and clamps like any scrub.**
     /// From 50 s of a 100 s film: a 60 s hop forward lands on the 3 s tail cap and one back on 0.
+    /// Skip back and Skip forward are set to the same length here; the next test sets them apart.
     #[test]
     fn a_press_hops_the_chosen_skip_interval_in_both_directions_and_clamps() {
         use plx_plex::plex::session::SkipInterval;
@@ -2303,6 +2305,43 @@ mod scrub_ownership_tests {
                 );
             }
         }
+    }
+
+    /// **LEFT hops Skip back and RIGHT hops Skip forward**, each its own pick: with back 5 s and
+    /// forward 30 s, from 50 s a LEFT lands on 45 s and a RIGHT on 80 s, and swapping the picks
+    /// swaps the hops. A burst keeps its direction's base (`tap_step_multiplier` of it).
+    #[test]
+    fn left_hops_skip_back_and_right_hops_skip_forward() {
+        use plx_plex::plex::session::SkipInterval;
+        use plx_ui::consts::SDLK_LEFT;
+        use std::sync::atomic::Ordering::Relaxed;
+        let _g = plx_base::testlock::serial();
+        let _f = Fixture::new(false);
+        const S: i64 = 1_000_000_000;
+        plx_media::player::SHARED.playpos_ns.store(50 * S, Relaxed);
+        for (back, forward, left, right) in [
+            (SkipInterval::Seconds5, SkipInterval::Seconds30, 45 * S, 80 * S),
+            (SkipInterval::Seconds30, SkipInterval::Seconds5, 20 * S, 55 * S),
+            (SkipInterval::Seconds10, SkipInterval::Seconds15, 40 * S, 65 * S),
+        ] {
+            let _i = player_hud::SkipIntervalGuard::pair(back, forward);
+            for (sym, want) in [(SDLK_LEFT, left), (SDLK_RIGHT, right)] {
+                let mut page = page_on_the_bar();
+                let (_, reqs) = key(&mut page, sym, Edge::Down, 1_000);
+                assert!(seeks(reqs).is_empty(), "back {back:?} forward {forward:?}: the press commits nothing");
+                assert_eq!(page.scrub.ns, want, "back {back:?} forward {forward:?} sym {sym}");
+            }
+        }
+        // A four-tap LEFT burst under back 5 s / forward 30 s: 5 + 5 + 5 + 3x5 back from 50 s.
+        let _i = player_hud::SkipIntervalGuard::pair(SkipInterval::Seconds5, SkipInterval::Seconds30);
+        let mut page = page_on_the_bar();
+        let mut at = 1_000;
+        for _ in 0..4 {
+            let _ = key(&mut page, SDLK_LEFT, Edge::Down, at);
+            let _ = key(&mut page, SDLK_LEFT, Edge::Up, at + 30);
+            at += 100;
+        }
+        assert_eq!(page.scrub.ns, 50 * S - 30 * S, "the burst grew from Skip back, not Skip forward");
     }
 
     /// **(b) A scrub taken while PAUSED leaves the film paused.**

@@ -19,7 +19,8 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::mpsc::{self, Receiver};
 use plx_plex::plex::account::{AudioPreferences, PreferenceError, PreferenceRequest, PreferenceSnapshot, PreferenceUpdate};
-use plx_media::route::{DeckPress, DirectPlayMode, MarkerSkip, NextEpisodeMode, Quality, SkipInterval, SubtitlePosition, SubtitleSize};
+use plx_media::route::{DeckPress, DirectPlayMode, MarkerSkip, NextEpisodeMode, PassoutProtection, Quality, ResumeRewind, SkipInterval,
+    SubtitlePosition, SubtitleSize};
 use plx_plex::plex::session::LibraryOpens;
 use plx_ui::form::{Form, FormId, FormSection, FormTable, RowKey, RowKind};
 use plx_ui::frame::Budget;
@@ -47,7 +48,11 @@ impl PickerKind {
         Self::SubtitleSize => plx_platform::i18n::msg::settings_playback_subtitle_size(), Self::SubtitlePosition => plx_platform::i18n::msg::settings_playback_subtitle_position(),
         Self::NextEpisode => plx_platform::i18n::msg::settings_playback_next_episode(),
         Self::DeckPress => plx_platform::i18n::msg::settings_playback_deck_press(),
+        // *Skip forward*: the key keeps the name of the one value that once served both directions.
         Self::SkipInterval => plx_platform::i18n::msg::settings_playback_skip_interval(),
+        Self::SkipBack => plx_platform::i18n::msg::settings_playback_skip_back(),
+        Self::ResumeRewind => plx_platform::i18n::msg::settings_playback_resume_rewind(),
+        Self::PassoutProtection => plx_platform::i18n::msg::settings_playback_passout_protection(),
         Self::SkipIntro => plx_platform::i18n::msg::settings_playback_skip_intro(),
         Self::SkipCredits => plx_platform::i18n::msg::settings_playback_skip_credits(),
         Self::AudioLanguage => plx_platform::i18n::msg::settings_audio_language(), Self::SubtitleMode => plx_platform::i18n::msg::settings_audio_subtitles(),
@@ -64,6 +69,9 @@ impl PickerKind {
         Self::NextEpisode => plx_platform::i18n::msg::settings_playback_next_episode_copy(),
         Self::DeckPress => plx_platform::i18n::msg::settings_playback_deck_press_copy(),
         Self::SkipInterval => plx_platform::i18n::msg::settings_playback_skip_interval_copy(),
+        Self::SkipBack => plx_platform::i18n::msg::settings_playback_skip_back_copy(),
+        Self::ResumeRewind => plx_platform::i18n::msg::settings_playback_resume_rewind_copy(),
+        Self::PassoutProtection => plx_platform::i18n::msg::settings_playback_passout_protection_copy(),
         Self::SkipIntro => plx_platform::i18n::msg::settings_playback_skip_intro_copy(),
         Self::SkipCredits => plx_platform::i18n::msg::settings_playback_skip_credits_copy(),
         Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_account_note(),
@@ -74,7 +82,7 @@ impl PickerKind {
     fn kind(self) -> Option<Kind> {
         match self {
             Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::NextEpisode | Self::DeckPress | Self::SkipInterval
-            | Self::SkipIntro | Self::SkipCredits => Some(Kind::Playback),
+            | Self::SkipIntro | Self::SkipCredits | Self::SkipBack | Self::ResumeRewind | Self::PassoutProtection => Some(Kind::Playback),
             Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => Some(Kind::AudioSubtitles),
             Self::LibraryOpens => None,
         }
@@ -95,7 +103,8 @@ impl Kind {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Value { Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), SkipIntro(MarkerSkip), SkipCredits(MarkerSkip), LibraryOpens(LibraryOpens), Language(String), Mode(i64), Forced(i64) }
+enum Value { Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), SkipBack(SkipInterval),
+    ResumeRewind(ResumeRewind), PassoutProtection(PassoutProtection), SkipIntro(MarkerSkip), SkipCredits(MarkerSkip), LibraryOpens(LibraryOpens), Language(String), Mode(i64), Forced(i64) }
 
 /// The hashed half of a transaction: what the page shows while a load or save is in flight.
 struct Io { busy: bool, status: String }
@@ -225,6 +234,9 @@ impl Txn {
             Value::NextEpisode(mode) => PreferenceCmd::NextEpisode { mode, reply },
             Value::DeckPress(mode) => PreferenceCmd::DeckPress { mode, reply },
             Value::SkipInterval(interval) => PreferenceCmd::SkipInterval { interval, reply },
+            Value::SkipBack(interval) => PreferenceCmd::SkipBack { interval, reply },
+            Value::ResumeRewind(rewind) => PreferenceCmd::ResumeRewind { rewind, reply },
+            Value::PassoutProtection(protection) => PreferenceCmd::PassoutProtection { protection, reply },
             Value::SkipIntro(mode) => PreferenceCmd::SkipIntro { mode, reply },
             Value::SkipCredits(mode) => PreferenceCmd::SkipCredits { mode, reply },
             Value::LibraryOpens(mode) => PreferenceCmd::LibraryOpens { mode, reply },
@@ -305,6 +317,9 @@ impl FormId for RowId {
             Self::Field(PickerKind::SkipCredits) => 9,
             // listed on the Settings root, never on a field page: a key no page reuses
             Self::Field(PickerKind::LibraryOpens) => 10,
+            Self::Field(PickerKind::SkipBack) => 11,
+            Self::Field(PickerKind::ResumeRewind) => 12,
+            Self::Field(PickerKind::PassoutProtection) => 13,
             Self::Retry => 6,
         })
     }
@@ -344,6 +359,13 @@ pub struct PreferencesPage {
     skip_interval: SkipInterval,
     /// The Skip intro and Skip credits choices the rows were last built from, like `next_episode`.
     skips: (MarkerSkip, MarkerSkip),
+    /// Skip back, Rewind on resume and Passout protection as the rows were last built from them,
+    /// like `next_episode`.
+    rest: (SkipInterval, ResumeRewind, PassoutProtection),
+}
+/// The live values behind [`PreferencesPage::rest`].
+fn rest_now() -> (SkipInterval, ResumeRewind, PassoutProtection) {
+    (plx_media::route::skip_back(), plx_media::route::resume_rewind(), plx_media::route::passout_protection())
 }
 impl PreferencesPage {
     pub fn new(entry: EntryId, kind: Kind) -> Self {
@@ -354,7 +376,7 @@ impl PreferencesPage {
             look: (plx_media::route::subtitle_size(), plx_media::route::subtitle_position()),
             next_episode: plx_media::route::next_episode_mode(), deck_press: plx_media::route::deck_press(),
             skip_interval: plx_media::route::skip_interval(),
-            skips: (plx_media::route::skip_intro(), plx_media::route::skip_credits()) };
+            skips: (plx_media::route::skip_intro(), plx_media::route::skip_credits()), rest: rest_now() };
         s.rebuild(None);
         s
     }
@@ -383,6 +405,7 @@ impl PreferencesPage {
         self.deck_press = plx_media::route::deck_press();
         self.skip_interval = plx_media::route::skip_interval();
         self.skips = (plx_media::route::skip_intro(), plx_media::route::skip_credits());
+        self.rest = rest_now();
         self.copy = copy_text(Subject::Page(self.state.kind), &self.state.io.status, self.state.direct_play).into_owned();
         let inputs = FieldListInputs {
             kind: self.state.kind, quality: self.state.quality, direct_play: self.state.direct_play,
@@ -412,11 +435,17 @@ impl PreferencesPage {
     }
 }
 
+/// The Playback page's fields, in the order it lists them. Passout protection sits under Next
+/// episode because it qualifies that setting's autoplay; Skip back comes directly above Skip forward
+/// (`SkipInterval`) and Rewind on resume follows the pair.
+const PLAYBACK_FIELDS: [PickerKind; 12] = [PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize,
+    PickerKind::SubtitlePosition, PickerKind::NextEpisode, PickerKind::PassoutProtection, PickerKind::DeckPress, PickerKind::SkipBack,
+    PickerKind::SkipInterval, PickerKind::ResumeRewind, PickerKind::SkipIntro, PickerKind::SkipCredits];
+
 /// Which fields `kind`'s list shows: Audio & Subtitles has none until a snapshot has loaded.
 fn fields_of(inputs: &FieldListInputs<'_>) -> &'static [PickerKind] {
     match inputs.kind {
-        Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval,
-            PickerKind::SkipIntro, PickerKind::SkipCredits],
+        Kind::Playback => &PLAYBACK_FIELDS,
         Kind::AudioSubtitles if inputs.prefs.is_some() => &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles],
         _ => &[],
     }
@@ -432,6 +461,9 @@ fn resolve_value(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
         PickerKind::NextEpisode => Value::NextEpisode(plx_media::route::next_episode_mode()),
         PickerKind::DeckPress => Value::DeckPress(plx_media::route::deck_press()),
         PickerKind::SkipInterval => Value::SkipInterval(plx_media::route::skip_interval()),
+        PickerKind::SkipBack => Value::SkipBack(plx_media::route::skip_back()),
+        PickerKind::ResumeRewind => Value::ResumeRewind(plx_media::route::resume_rewind()),
+        PickerKind::PassoutProtection => Value::PassoutProtection(plx_media::route::passout_protection()),
         PickerKind::SkipIntro => Value::SkipIntro(plx_media::route::skip_intro()),
         PickerKind::SkipCredits => Value::SkipCredits(plx_media::route::skip_credits()),
         PickerKind::LibraryOpens => Value::LibraryOpens(plx_data::browse::library_opens()),
@@ -459,6 +491,12 @@ fn field_options(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
             .map(|m| (deck_press_label(m).into(), Value::DeckPress(m))).collect(),
         PickerKind::SkipInterval => SkipInterval::LADDER.into_iter()
             .map(|i| (skip_interval_label(i), Value::SkipInterval(i))).collect(),
+        PickerKind::SkipBack => SkipInterval::LADDER.into_iter()
+            .map(|i| (skip_interval_label(i), Value::SkipBack(i))).collect(),
+        PickerKind::ResumeRewind => ResumeRewind::LADDER.into_iter()
+            .map(|r| (resume_rewind_label(r), Value::ResumeRewind(r))).collect(),
+        PickerKind::PassoutProtection => PassoutProtection::LADDER.into_iter()
+            .map(|p| (passout_protection_label(p), Value::PassoutProtection(p))).collect(),
         PickerKind::SkipIntro => MarkerSkip::LADDER.into_iter()
             .map(|m| (marker_skip_label(m).into(), Value::SkipIntro(m))).collect(),
         PickerKind::SkipCredits => MarkerSkip::LADDER.into_iter()
@@ -553,6 +591,19 @@ fn deck_press_label(mode: DeckPress) -> &'static str {
 fn skip_interval_label(interval: SkipInterval) -> String {
     plx_platform::i18n::msg::settings_playback_skip_interval_seconds(interval.seconds())
 }
+/// Off, or the rewind's length in the skip pickers' own words (*5 seconds*).
+fn resume_rewind_label(rewind: ResumeRewind) -> String {
+    match rewind {
+        ResumeRewind::None => plx_platform::i18n::msg::settings_playback_resume_rewind_off().into(),
+        _ => plx_platform::i18n::msg::settings_playback_skip_interval_seconds(rewind.seconds()),
+    }
+}
+fn passout_protection_label(protection: PassoutProtection) -> String {
+    match protection {
+        PassoutProtection::Off => plx_platform::i18n::msg::settings_playback_passout_protection_off().into(),
+        _ => plx_platform::i18n::msg::settings_playback_passout_protection_hours(i64::from(protection.hours())),
+    }
+}
 fn marker_skip_label(mode: MarkerSkip) -> &'static str {
     match mode {
         MarkerSkip::Manual => plx_platform::i18n::msg::settings_playback_marker_skip_manual(),
@@ -612,7 +663,8 @@ impl Machine<InnerHost> for PreferencesPage {
                     || self.next_episode != plx_media::route::next_episode_mode()
                     || self.deck_press != plx_media::route::deck_press()
                     || self.skip_interval != plx_media::route::skip_interval()
-                    || self.skips != (plx_media::route::skip_intro(), plx_media::route::skip_credits()) {
+                    || self.skips != (plx_media::route::skip_intro(), plx_media::route::skip_credits())
+                    || self.rest != rest_now() {
                     self.rebuild_keeping();
                     // An empty loading table had no engine seat. Give its first landing (or
                     // Retry row) one so OK works immediately, without moving an existing

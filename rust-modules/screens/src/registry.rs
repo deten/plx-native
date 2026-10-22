@@ -87,7 +87,11 @@ pub enum PreferenceCmd {
     Quality { quality: plx_plex::plex::session::PlaybackQuality, reply: std::sync::mpsc::Sender<bool> },
     DirectPlay { mode: plx_plex::plex::session::DirectPlayMode, reply: std::sync::mpsc::Sender<bool> },
     NextEpisode { mode: plx_plex::plex::session::NextEpisodeMode, reply: std::sync::mpsc::Sender<bool> },
+    /// Skip forward: the stored `skip_interval`, the RIGHT hop.
     SkipInterval { interval: plx_plex::plex::session::SkipInterval, reply: std::sync::mpsc::Sender<bool> },
+    SkipBack { interval: plx_plex::plex::session::SkipInterval, reply: std::sync::mpsc::Sender<bool> },
+    ResumeRewind { rewind: plx_plex::plex::session::ResumeRewind, reply: std::sync::mpsc::Sender<bool> },
+    PassoutProtection { protection: plx_plex::plex::session::PassoutProtection, reply: std::sync::mpsc::Sender<bool> },
     SkipIntro { mode: plx_plex::plex::session::MarkerSkip, reply: std::sync::mpsc::Sender<bool> },
     SkipCredits { mode: plx_plex::plex::session::MarkerSkip, reply: std::sync::mpsc::Sender<bool> },
     DeckPress { mode: plx_plex::plex::session::DeckPress, reply: std::sync::mpsc::Sender<bool> },

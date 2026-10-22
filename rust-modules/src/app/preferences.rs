@@ -71,6 +71,24 @@ pub(super) fn execute(command: PreferenceCmd) {
                 plx_machine::idle::invalidate();
             });
         }
+        PreferenceCmd::SkipBack { interval, reply } => {
+            let _ = plx_base::storage_worker::submit_retained(move || {
+                let _ = reply.send(plx_media::route::set_skip_back(interval));
+                plx_machine::idle::invalidate();
+            });
+        }
+        PreferenceCmd::ResumeRewind { rewind, reply } => {
+            let _ = plx_base::storage_worker::submit_retained(move || {
+                let _ = reply.send(plx_media::route::set_resume_rewind(rewind));
+                plx_machine::idle::invalidate();
+            });
+        }
+        PreferenceCmd::PassoutProtection { protection, reply } => {
+            let _ = plx_base::storage_worker::submit_retained(move || {
+                let _ = reply.send(plx_media::route::set_passout_protection(protection));
+                plx_machine::idle::invalidate();
+            });
+        }
         PreferenceCmd::SkipIntro { mode, reply } => {
             let _ = plx_base::storage_worker::submit_retained(move || {
                 let _ = reply.send(plx_media::route::set_skip_intro(mode));

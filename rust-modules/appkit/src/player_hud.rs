@@ -1511,7 +1511,7 @@ pub const LINGER_MS: u32 = 4500;
 
 // ---- scrub tuning, shared by the player HUD's scrubber and the trailer transport's own --------
 //
-// Both hold-to-scrub gestures want the same feel — a press jumps `scrub_step_ns()`; holding engages
+// Both hold-to-scrub gestures want the same feel — a press jumps `scrub_step_ns(fwd)`; holding engages
 // a continuous scrub ramping by [`scrub_speed`] (playback-seconds per real-second) — but the
 // STATE (`screens::player::input::Scrub`, and `screens::detail::trailer::Transport`'s own fields)
 // cannot live in one shared type: `ci/check-deps.sh`'s `sibling` gate forbids a file under
@@ -1519,10 +1519,15 @@ pub const LINGER_MS: u32 = 4500;
 // `LINGER_MS` above defined here rather than in `screens::player::input` for `trailer.rs` to
 // import from a sibling. `screens::player::input::Scrub::clamp_target` is a thin call-through to
 // [`scrub_clamp_target`] below so its own many call sites are untouched.
-/// What one fresh press hops: the Skip interval preference (10 s unless Settings changed it),
-/// read per press so a pick takes effect in a film already playing.
-pub fn scrub_step_ns() -> i64 {
-    plx_media::route::skip_interval().ns()
+/// What one fresh press hops in its direction: Settings' *Skip forward* for RIGHT (`fwd`, the
+/// `skip_interval` preference) and *Skip back* for LEFT, each 10 s unless Settings changed it. Read
+/// per press so a pick takes effect in a film already playing. Always positive; the caller signs it.
+pub fn scrub_step_ns(fwd: bool) -> i64 {
+    if fwd {
+        plx_media::route::skip_interval().ns()
+    } else {
+        plx_media::route::skip_back().ns()
+    }
 }
 pub const SCRUB_BASE: f32 = 20.0;
 /// The ramp doubles the speed every this many seconds of hold: about 55x after one second (where
@@ -1546,8 +1551,9 @@ pub fn scrub_speed(held_s: f32, duration_ns: i64) -> f32 {
     (SCRUB_BASE * (held_s.max(0.0) / SCRUB_DOUBLING_S).exp2()).min(top)
 }
 
-/// What the `taps`-th press of one tap burst hops, as a multiple of the Skip interval: 1x for the
-/// first three, 3x for the next three, 6x after that. A burst is presses that land before the
+/// What the `taps`-th press of one tap burst hops, as a multiple of its direction's skip
+/// ([`scrub_step_ns`]): 1x for the first three, 3x for the next three, 6x after that. A burst is
+/// presses that land before the
 /// previous one has committed ([`TAP_COMMIT_MS`]); a press the other way starts a new burst, so
 /// stepping back to fine-tune is always the plain interval.
 pub fn tap_step_multiplier(taps: u32) -> i64 {
@@ -1570,22 +1576,32 @@ pub const HOLD_RELEASE_GRACE_MS: u32 = 200;
 /// first-repeat delay is ~500 ms) before it is treated as a lost key-up and commits.
 pub const HOLD_RESUME_WAIT_MS: u32 = 900;
 
-/// Sets the Skip interval for one test and puts the prior value back on drop. The caller holds
-/// `testlock::serial()`: the live value is a process global, like every preference.
+/// Sets Skip back and Skip forward for one test and puts the prior values back on drop. The caller
+/// holds `testlock::serial()`: the live values are process globals, like every preference.
 #[cfg(any(test, feature = "test-support"))]
-pub struct SkipIntervalGuard(plx_media::route::SkipInterval);
+pub struct SkipIntervalGuard {
+    back: plx_media::route::SkipInterval,
+    forward: plx_media::route::SkipInterval,
+}
 #[cfg(any(test, feature = "test-support"))]
 impl SkipIntervalGuard {
+    /// One length for both directions.
     pub fn set(interval: plx_media::route::SkipInterval) -> Self {
-        let prior = plx_media::route::skip_interval();
-        plx_media::route::restore_skip_interval(interval);
-        Self(prior)
+        Self::pair(interval, interval)
+    }
+    /// Skip back (LEFT) and Skip forward (RIGHT) separately.
+    pub fn pair(back: plx_media::route::SkipInterval, forward: plx_media::route::SkipInterval) -> Self {
+        let prior = Self { back: plx_media::route::skip_back(), forward: plx_media::route::skip_interval() };
+        plx_media::route::restore_skip_back(back);
+        plx_media::route::restore_skip_interval(forward);
+        prior
     }
 }
 #[cfg(any(test, feature = "test-support"))]
 impl Drop for SkipIntervalGuard {
     fn drop(&mut self) {
-        plx_media::route::restore_skip_interval(self.0);
+        plx_media::route::restore_skip_back(self.back);
+        plx_media::route::restore_skip_interval(self.forward);
     }
 }
 
@@ -2089,6 +2105,21 @@ mod tests {
     fn a_tap_burst_grows_its_hop() {
         let hops: Vec<i64> = (1..=8).map(tap_step_multiplier).collect();
         assert_eq!(hops, [1, 1, 1, 3, 3, 3, 6, 6]);
+    }
+
+    /// **The scrub step reads its direction's preference**: LEFT hops Skip back, RIGHT hops Skip
+    /// forward, and each follows its own pick, live.
+    #[test]
+    fn the_scrub_step_is_skip_back_for_left_and_skip_forward_for_right() {
+        use plx_media::route::SkipInterval;
+        let _g = plx_base::testlock::serial();
+        for back in SkipInterval::LADDER {
+            for forward in SkipInterval::LADDER {
+                let _skips = SkipIntervalGuard::pair(back, forward);
+                assert_eq!(scrub_step_ns(false), back.ns(), "{back:?} back");
+                assert_eq!(scrub_step_ns(true), forward.ns(), "{forward:?} forward");
+            }
+        }
     }
 
     /// **The transport's clocks are resident before the draw, this second's and the next one's.**

@@ -2735,6 +2735,9 @@ pub(crate) fn follow_auth_landing(pages: &mut Dispatcher<AppHost>, bridge: &mut 
         plx_media::route::restore_subtitle_position(saved.subtitle_position());
         plx_media::route::restore_next_episode_mode(saved.next_episode_mode());
         plx_media::route::restore_skip_interval(saved.skip_interval());
+        plx_media::route::restore_skip_back(saved.skip_back());
+        plx_media::route::restore_resume_rewind(saved.resume_rewind());
+        plx_media::route::restore_passout_protection(saved.passout_protection());
         plx_media::route::restore_skip_intro(saved.skip_intro());
         plx_media::route::restore_skip_credits(saved.skip_credits());
         plx_media::route::restore_deck_press(saved.deck_press());
