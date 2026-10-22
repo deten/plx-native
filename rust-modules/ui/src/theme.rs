@@ -45,6 +45,7 @@ const COOL_850: [f32; 4] = rgb8(0x1f, 0x21, 0x29);
 const COOL_900: [f32; 4] = rgb8(0x14, 0x17, 0x1c);
 
 // Neutral — achromatic: the shelf, panels, control plates, inks.
+const NEUTRAL_400: [f32; 4] = rgb8(0x33, 0x33, 0x33);
 const NEUTRAL_600: [f32; 4] = rgb8(0x25, 0x25, 0x27);
 const NEUTRAL_650: [f32; 4] = rgb8(0x22, 0x22, 0x24);
 const NEUTRAL_750: [f32; 4] = rgb8(0x1b, 0x1b, 0x1d);
@@ -1214,6 +1215,40 @@ pub const NAV_RAIL_INK: [f32; 4] = WHITE;
 pub const CLOCK_PILL_FILL: [f32; 4] = scrim_black(0.45);
 /// The clock's figures: white ~80% (`#d2d1d6` measured; the reading-copy stop).
 pub const CLOCK_INK: [f32; 4] = COOL_200;
+
+// ── Shield Home (`shield`: the focused-item header, its tinted ground and the poster rows) ──────
+// Measured off the Plex app on Android TV (SHIELD-LAYOUT-SPEC §1.4, §4, §5). Roles of their own
+// rather than the Standard card and hero tokens: the focus is a flat white ring with no glow, the
+// marks are dark plates, and the header's inks sit straight on the artwork's colours.
+/// The focused card's ring: a 4px solid white stroke standing 2px off the scaled card.
+pub const SHIELD_RING: [f32; 4] = WHITE;
+/// The progress bar's track: black ~80% inset in the card's foot.
+pub const SHIELD_PROGRESS_TRACK: [f32; 4] = with_a(BLACK, 0.80);
+/// The progress bar's fill: the measured accent (`#e5a00d`).
+pub const SHIELD_PROGRESS_FILL: [f32; 4] = AMBER_500;
+/// The watched plate in a card's top-right corner (badge.dark, black ~85% over the poster).
+pub const SHIELD_BADGE_FILL: [f32; 4] = with_a(BLACK, 0.85);
+/// The watched plate's check.
+pub const SHIELD_BADGE_INK: [f32; 4] = WHITE;
+/// The header's subtitle line (an episode's or a season's name): white ~85%.
+pub const SHIELD_HERO_SUBTITLE: [f32; 4] = with_a(WHITE, 0.85);
+/// The header's facts row and its two-line summary: white ~85% on the artwork's colours.
+pub const SHIELD_HERO_TEXT: [f32; 4] = with_a(WHITE, 0.85);
+/// The header's cast line: dimmer than the summary, white ~72%.
+pub const SHIELD_HERO_CAST: [f32; 4] = with_a(WHITE, 0.72);
+/// The content-rating plate's 2px outline (white ~25%)…
+pub const SHIELD_RATING_EDGE: [f32; 4] = with_a(WHITE, 0.25);
+/// …its fill (black ~30%)…
+pub const SHIELD_RATING_FILL: [f32; 4] = with_a(BLACK, 0.30);
+/// …and its letters.
+pub const SHIELD_RATING_INK: [f32; 4] = WHITE;
+/// A row heading's title (bold, full white).
+pub const SHIELD_HEADING: [f32; 4] = WHITE;
+/// The quiet `· source` after a row heading.
+pub const SHIELD_HEADING_SOURCE: [f32; 4] = COOL_400;
+/// **The neutral ground**, when the focused item carries no artwork colours: the measured dark
+/// diagonal (bg.neutral), corner-major TL, TR, BR, BL like every wash.
+pub const SHIELD_GROUND_NEUTRAL: [[f32; 4]; 4] = [NEUTRAL_400, NEUTRAL_950, NEUTRAL_600, NEUTRAL_950];
 
 // ── Review-score marks (detail hero ratings row) ─────────────────────────────
 // These used to be the ONE place the palette borrowed someone else's colour, justified by the

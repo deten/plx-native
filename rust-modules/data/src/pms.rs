@@ -139,7 +139,22 @@ pub struct PmsMovie {
     /// A collection's member count (`childCount`) — its tile's caption, "12 items". 0 on every
     /// other kind, where the listing's count fields mean leaves rather than members.
     pub child_count: i64,
+    /// The row's first [`ROW_GENRES_MAX`] `Genre` tags, as the listing sent them — the Shield
+    /// layout's header facts ("Family, Fantasy"). A listing names a few tags per kind and many rows
+    /// none at all (an episode, as a rule), so empty is the ordinary case. Absent from recordings
+    /// made before the field, hence default and skip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub genres: Vec<String>,
+    /// The row's first [`ROW_CAST_MAX`] `Role` tag NAMES (a listing's `Role` carries the name and
+    /// nothing else) — the Shield layout's header cast line. Same absence rules as `genres`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cast: Vec<String>,
 }
+
+/// How many of a row's `Genre` tags [`PmsMovie::genres`] keeps.
+pub const ROW_GENRES_MAX: usize = 3;
+/// How many of a row's `Role` names [`PmsMovie::cast`] keeps.
+pub const ROW_CAST_MAX: usize = 4;
 
 impl PmsMovie {
     /// Played fraction for the amber resume bar, or None when not in progress — THE one
@@ -415,6 +430,12 @@ pub fn parse_item(it: &plx_plex::plex::Metadata, sid: ServerId) -> PmsMovie {
         m.blur = blur;
         m.has_blur = true;
     }
+    // The listing's own tags, which it already carries: no request of their own.
+    let names = |tags: &[plx_plex::plex::Tag], max: usize| -> Vec<String> {
+        tags.iter().map(|t| clean(&t.tag)).filter(|t| !t.is_empty()).take(max).collect()
+    };
+    m.genres = names(&it.genre, ROW_GENRES_MAX);
+    m.cast = names(&it.role, ROW_CAST_MAX);
     m
 }
 
@@ -1253,6 +1274,7 @@ fn catalog_bytes(cat: &[Arc<PmsMovie>]) -> usize {
                 .iter()
                 .map(|s| s.capacity())
                 .sum::<usize>()
+                + m.genres.iter().chain(&m.cast).map(|s| std::mem::size_of::<String>() + s.capacity()).sum::<usize>()
         })
         .sum()
 }

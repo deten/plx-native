@@ -2365,10 +2365,14 @@ mod tests {
         // moving main's census (0x4687_2768_0762_9a4d, above; 0x3b46_89f3_2380_2be7 before the
         // collections member count) to 0xa1e4_897f_3373_3a4e.
         //
-        // **A collection shelf's total moves it to this value.** A Home shelf and a hub row carry
-        // the hub's `totalSize` (the linked heading's "· N"), in both the hubs record and the
-        // hubs initial state.
-        assert_eq!(plx_ui::rec::state_fp(APP_SHAPES), 0x68eb_d05d_f046_ba72);
+        // **A collection shelf's total moved it to 0x68eb_d05d_f046_ba72.** A Home shelf and a hub
+        // row carry the hub's `totalSize` (the linked heading's "· N"), in both the hubs record and
+        // the hubs initial state.
+        //
+        // **A row's genres and cast move it to this value.** `PmsMovie` gained `genres:[str]` and
+        // `cast:[str]` (the listing's own `Genre`/`Role` names, the Shield layout's header facts and
+        // cast line), carried by the hubs record and the hubs initial state.
+        assert_eq!(plx_ui::rec::state_fp(APP_SHAPES), 0x22c1_931d_db41_38fd);
     }
 
     /// The gate at the REAL hubs landing site, through the recording the driver loads: a result

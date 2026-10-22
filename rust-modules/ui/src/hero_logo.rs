@@ -140,6 +140,17 @@ pub fn place(band: Rect, w: f32, h: f32, align: HAlign) -> Rect {
     Rect::new(x, band.y + band.h - h, w, h)
 }
 
+/// The DRAWN size of a `src_w`×`src_h` logo CONTAINED in a `box_w`×`box_h` box — the aspect-fit a
+/// fixed logo box asks for (the Shield layout's header, `shield::LOGO_BOX`), where [`fit`] is the
+/// constant-area rule of a flowing title band. Pure; a degenerate source draws nothing.
+pub fn fit_box(src_w: f32, src_h: f32, box_w: f32, box_h: f32) -> (f32, f32) {
+    if !(src_w > 0.0) || !(src_h > 0.0) || !(box_w > 0.0) || !(box_h > 0.0) {
+        return (0.0, 0.0);
+    }
+    let s = (box_w / src_w).min(box_h / src_h);
+    (src_w * s, src_h * s)
+}
+
 /// The title band itself: the item's clearLogo if it has resolved, else its title as text. Owning
 /// both halves here is what makes the swap consistent across the three sites — and is why the two
 /// fallbacks that used to paint an unbounded run now elide like home's always did.
@@ -197,6 +208,30 @@ impl<'a> HeroLogo<'a> {
             p.tex(tex, place(band, w, h, self.align), 0.0, theme::TEXT_PRIMARY);
             return;
         }
+        self.draw_text(p, band, &line, sz);
+    }
+
+    /// Draw CONTAINED in the fixed box `bx` ([`fit_box`]), its top edge on the box's top and its
+    /// side on this logo's alignment — the Shield layout's header. The text fallback is `sz` bold,
+    /// its baseline on the box's bottom edge, with the same accounting as [`draw`](Self::draw)'s.
+    pub fn draw_boxed(&self, p: Painter, bx: Rect, sz: c_int, measure: &dyn Measure) {
+        // the fallback first, for the same replay-census reason as `draw`
+        let line = plx_gfx::text::elide_by(self.title, bx.w, false, |t| measure.width_str(t, sz, true));
+        if let Some((tex, sw, sh)) = crate::tex::logo_src(self.sid, self.rk) {
+            let (w, h) = fit_box(sw, sh, bx.w, bx.h);
+            let x = match self.align {
+                HAlign::Left => bx.x,
+                HAlign::Center => bx.x + (bx.w - w) * 0.5,
+                HAlign::Right => bx.x + bx.w - w,
+            };
+            p.tex(tex, Rect::new(x, bx.y, w, h), 0.0, theme::TEXT_PRIMARY);
+            return;
+        }
+        self.draw_text(p, bx, &line, sz);
+    }
+
+    /// The title as text in `band`, baseline on its bottom edge — the fallback both draws share.
+    fn draw_text(&self, p: Painter, band: Rect, line: &str, sz: c_int) {
         // `cs` must outlive the draw — `Label` holds a non-owning pointer (ui/CLAUDE.md's first gotcha)
         let Ok(cs) = std::ffi::CString::new(line) else {
             return;

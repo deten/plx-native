@@ -75,6 +75,19 @@ impl Shelf {
         self.style
     }
 
+    /// Re-dress the shelf in `style` (a live layout switch), keeping its place: the scroll moves to
+    /// the same cell in the new pitch (the cell the old scroll had nearest its first slot), clamped
+    /// to the new style's rule for `n` cards. The pops carry over; the next tick steers the scroll
+    /// by the new style's rule.
+    pub fn restyle(&mut self, style: &'static RowStyle, n: usize) {
+        if *self.style == *style {
+            return;
+        }
+        let cell = (self.row.scroll_x() / self.pitch()).round().max(0.0);
+        self.style = style;
+        self.row.restore_scroll(cell * self.pitch(), n, style);
+    }
+
     /// The y the screen last laid the shelf out at (kept in the motion canon).
     pub fn base_y(&self) -> f32 {
         self.row.base_y

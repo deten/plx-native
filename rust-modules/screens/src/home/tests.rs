@@ -3945,3 +3945,7 @@ fn a_row_whose_page_was_given_up_asks_again_on_the_next_focus_move_or_edge_press
     requests += page_requests(&step(&mut s, snapshot.view(), Some(next), &tick(85)).1);
     assert_eq!(requests, 3, "an edge press asks once more");
 }
+
+/// The Shield layout's Home, on this module's fixtures.
+#[path = "shield_tests.rs"]
+mod shield_tests;

@@ -80,6 +80,7 @@ pub mod press; // tvOS-style click: OK-down dips the focused card, OK-up springs
 pub use plx_gfx::gfx::profile; // the draw-phase profiler lives in `gfx` now (module-layers step L5)
 pub mod route_screen;
 pub mod side_nav; // the Shield layout chrome: the collapsed icon rail, the clock pill, the side panel geometry and paint
+pub mod shield; // the Shield layout's content: the focused-item header, its tinted ground, the ring-card poster rows
 pub mod rec; // RESTRUCTURE (spec §5.3): the recorder — format, bounded writer, loader, TableMeasure
 pub mod replay; // RESTRUCTURE (spec §5.5): `--targets` replay of a recording over the dispatcher
 pub mod screen; // RESTRUCTURE spike (spec §6.1, §7.1): Screen, Focusable, Composed/Part, DrawFrame

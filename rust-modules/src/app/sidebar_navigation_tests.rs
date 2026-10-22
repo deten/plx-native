@@ -132,6 +132,37 @@ fn the_standard_layout_opens_nothing_on_left() {
     assert!(rig.edge_surface(&AppArg::Home, plx_ui::screen::Dir::Left).is_none());
 }
 
+/// Home with rows, Shield layout, through the real frame: focus seats on the first row's first
+/// card; RIGHT slides the row under the slot and opens nothing; LEFT steps back to the first card,
+/// and LEFT there — nothing left of it — opens the side panel on Home.
+#[test]
+fn left_at_a_rows_first_card_opens_the_side_panel_and_nowhere_else() {
+    let _guard = plx_base::testlock::serial();
+    plx_ui::layout::with_shield(|| {
+        let mut d = Dispatcher::<AppHost>::new();
+        let mut rig = Bridge::for_test(|| 0);
+        rig.stores.hubs.seed_grid_for_test(3, 8);
+        let route = AppArg::Home;
+        let t = settle(&mut d, &mut rig, &route, 0, 6);
+        let at = |d: &Dispatcher<AppHost>, rig: &Bridge| rig.with_home(d, |s, cx, f| s.grid_position(f, cx)).flatten();
+        assert_eq!(at(&d, &rig), Some((0, 0)), "focus seats on the first row's first card");
+        let t = press(&mut d, &mut rig, &route, t, Key::Right);
+        assert_eq!(at(&d, &rig), Some((0, 1)));
+        assert!(sidebar(&d).is_none(), "RIGHT moves along the row");
+        let t = press(&mut d, &mut rig, &route, t, Key::Left);
+        assert_eq!(at(&d, &rig), Some((0, 0)));
+        assert!(sidebar(&d).is_none(), "LEFT with a card to its left moves to it");
+        let t = press(&mut d, &mut rig, &route, t, Key::Up);
+        assert_eq!(at(&d, &rig), Some((0, 0)), "UP from the first row has nowhere to go");
+        assert!(sidebar(&d).is_none());
+        let t = press(&mut d, &mut rig, &route, t, Key::Down);
+        assert_eq!(at(&d, &rig), Some((1, 0)), "DOWN lands in the next row's slot");
+        press(&mut d, &mut rig, &route, t, Key::Left);
+        assert!(sidebar(&d).is_some(), "LEFT at a row's first card opens the side panel");
+        assert_eq!(focused_go(&d), Some(Go::Home));
+    });
+}
+
 /// The Rig's answer: only LEFT, only Shield, only a bar-wearing page — and the argument names
 /// that page's row.
 #[test]

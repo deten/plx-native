@@ -671,6 +671,37 @@ pub fn card(p: Painter, frame: Rect, art: Art, rad: f32, focused: bool, scale: f
     card_named(p, frame, art, None, rad, focused, scale, f)
 }
 
+/// **The Shield layout's card face** (`shield::draw_card`, a `card_row::Treatment::Ring` row):
+/// [`card`]'s poster with no folded shadow or edge sheen, and the dark watched PLATE
+/// (`shield::draw_watched`) in place of the corner veil and tick. `r` is the DRAWN rect (pop and
+/// press already applied, `s` the scale they make). The poster's other states are [`card`]'s
+/// own — the skeleton while it loads, a collection's neutral tile and fan name, the same
+/// [`poster_mark`] precedence (in progress wins, and the caller draws its bar); the other art
+/// variants keep [`card`]'s face, at rest.
+pub fn card_flat(p: Painter, r: Rect, art: Art, rad: f32, s: f32) {
+    if p.is_recording() { return; }
+    let Art::Poster(m) = art else {
+        card(p, r, art, rad, false, 1.0, 0.0);
+        return;
+    };
+    let (t, tw, th) = resolve_card_art(p, r, &art);
+    if let Some(name) = neutral_collection_name(m.as_ref()) {
+        crate::collection_tile::draw(p, r, r, rad, name);
+        return;
+    }
+    if t != 0 {
+        p.tex_uv(t, art_uv(&art, tw, th, r), r, rad, theme::TINT_WHITE);
+        if let Some(m) = m.filter(|m| m.kind == TileKind::Collection && m.composite_thumb) {
+            crate::collection_tile::draw_fan_name(p, r, r, m.title);
+        }
+    } else {
+        crate::placeholder::skeleton(p, crate::placeholder::Reason::CardSkeleton, m.map_or("", |m| m.thumb), r, rad);
+    }
+    if m.is_some_and(|m| poster_mark(&m) == PosterMark::Watched) {
+        crate::shield::draw_watched(p, r, rad, s);
+    }
+}
+
 /// [`card`] for a caller whose art is a bare path to a collection's thumb and who knows the
 /// collection's name (the collection page's header): when the thumb is a server composite and so
 /// resolves to our baked fan, `fan_name` is set over it (`collection_tile::draw_fan_name`), as the
@@ -6061,7 +6092,7 @@ fn rel_luma(c: [f32; 4]) -> f32 {
     0.2126 * linearize(c[0]) + 0.7152 * linearize(c[1]) + 0.0722 * linearize(c[2])
 }
 /// WCAG contrast ratio between two opaque colours, brighter over darker.
-fn contrast(a: [f32; 4], b: [f32; 4]) -> f32 {
+pub(crate) fn contrast(a: [f32; 4], b: [f32; 4]) -> f32 {
     let (x, y) = (rel_luma(a), rel_luma(b));
     (x.max(y) + 0.05) / (x.min(y) + 0.05)
 }

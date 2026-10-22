@@ -21,7 +21,7 @@ pub const MAX_ROW_ITEMS: usize = 24; // == home MAX_ITEMS
 
 /// A card row's motion + geometry. [`RowStyle::HOME`] is the single value both the home grid and the
 /// detail Related row pass, so the two rows are indistinguishable in look and animation.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct RowStyle {
     pub w: f32,
     pub h: f32,
@@ -47,11 +47,44 @@ pub struct RowStyle {
     /// A reserve from the physical edge, intersected with the shared safe area;
     /// [`RowStyle::with_right_reserve`] is how a screen declares one.
     pub right_reserve: f32,
+    /// How the row scrolls to its focused cell ([`RowScroll`]).
+    pub scroll: RowScroll,
+    /// How a cell is drawn and how its focus reads ([`Treatment`]).
+    pub treatment: Treatment,
 }
+
+/// **How a row scrolls to its focused cell.**
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RowScroll {
+    /// Minimally: only far enough that the focused cell (plus a gap) is inside the viewport, so
+    /// focus walks across the visible cells ([`scroll_into_view`]). Every Standard row.
+    Reveal,
+    /// The focused cell always rests in the FIRST slot, at `margin_x`, and the row slides under it
+    /// by one pitch per step — the Shield layout's rows (SHIELD-LAYOUT-SPEC §2.3, §5.1). The last
+    /// cell still comes to the slot, so the row's furthest scroll is `(n - 1)` pitches, and the
+    /// cells before the slot stay drawn, sliding under the rail at the left edge.
+    FixedLeft,
+}
+
+/// **How a cell is drawn and how its focus reads.**
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Treatment {
+    /// The Standard tile: the folded drop shadow and edge sheen ramped with the pop, the corner
+    /// veil-and-tick, the full-bleed resume band and, on the focused cell, its label block.
+    Glow,
+    /// The Shield layout's tile (`shield::draw_card`): flat artwork with no shadow, a 4px white
+    /// ring standing off the focused card, an inset progress bar, a dark watched plate, no label.
+    Ring,
+}
+
 impl RowStyle {
     /// The furthest a row of `n` cells scrolls: the content past the viewport, 0 for a row that
-    /// fits whole.
+    /// fits whole — or, for a [`RowScroll::FixedLeft`] row, the scroll that brings its last cell
+    /// to the first slot.
     pub fn max_scroll(&self, n: usize) -> f32 {
+        if self.scroll == RowScroll::FixedLeft {
+            return n.saturating_sub(1) as f32 * (self.w + self.gap);
+        }
         let viewport = SCR_W - 2.0 * self.margin_x;
         (n as f32 * (self.w + self.gap) - self.gap - viewport).max(0.0)
     }
@@ -80,6 +113,8 @@ impl RowStyle {
         k_scroll: K_SCROLL,
         circular: false,
         right_reserve: 0.0,
+        scroll: RowScroll::Reveal,
+        treatment: Treatment::Glow,
     };
     /// **A shelf of EPISODES: landscape stills.** Same motion as HOME — the spring magnification,
     /// the scroll, the glow ring and the heading lift are all one vocabulary — and a different
@@ -106,6 +141,8 @@ impl RowStyle {
         k_scroll: K_SCROLL,
         circular: false,
         right_reserve: 0.0,
+        scroll: RowScroll::Reveal,
+        treatment: Treatment::Glow,
     };
     /// Detail "Cast & Crew": circular headshots, the tight strip ring. Same motion as HOME (spring
     /// magnification + scroll), so cast animates like the poster shelves.
@@ -127,6 +164,8 @@ impl RowStyle {
         k_scroll: K_SCROLL,
         circular: true,
         right_reserve: 0.0,
+        scroll: RowScroll::Reveal,
+        treatment: Treatment::Glow,
     };
     /// "Who's watching" profile pictures: big circular avatars with a clear pop. Centered by the
     /// caller (a short roster), so the scroll spring stays put unless the row overflows.
@@ -147,10 +186,30 @@ impl RowStyle {
         k_scroll: K_SCROLL,
         circular: true,
         right_reserve: 0.0,
+        scroll: RowScroll::Reveal,
+        treatment: Treatment::Glow,
+    };
+    /// **The Shield layout's poster row** (SHIELD-LAYOUT-SPEC §5.1, §1.6): 240x360 posters on a
+    /// 272 pitch from x 127, radius 12, popped to ~250x375 (x1.042) in the first slot with the
+    /// row sliding under it, and the flat ring treatment. The motion constants are Standard's:
+    /// the captures are stills and say nothing about timing.
+    pub const SHIELD_POSTER: RowStyle = RowStyle {
+        w: crate::shield::CARD_W,
+        h: crate::shield::CARD_H,
+        gap: crate::shield::CARD_GAP,
+        margin_x: crate::shield::CONTENT_X,
+        radius: crate::shield::CARD_RADIUS,
+        focus_scale: crate::shield::FOCUS_SCALE,
+        k_scale: K_SCALE,
+        k_scroll: K_SCROLL,
+        circular: false,
+        right_reserve: 0.0,
+        scroll: RowScroll::FixedLeft,
+        treatment: Treatment::Ring,
     };
     /// ring focus scalar denominator — `(s-1)/ring_denom` maps scale∈[1, focus_scale] to [0, 1].
     #[inline]
-    fn ring_denom(&self) -> f32 {
+    pub(crate) fn ring_denom(&self) -> f32 {
         self.focus_scale - 1.0
     }
     /// Corner radius for a tile of size `rect` at radius-scale `s`: half-width for a circle, else the
@@ -342,6 +401,9 @@ impl CardRow {
     /// The scroll offset [`scroll_into_view`] wants for `focused` — what `update` steers the
     /// spring to and `settle_lag` measures the live offset against.
     fn scroll_target(&self, focused: usize, n: usize, sty: &RowStyle) -> f32 {
+        if sty.scroll == RowScroll::FixedLeft {
+            return fixed_left_scroll(focused, n, sty);
+        }
         let vw = SCR_W - 2.0 * sty.margin_x;
         scroll_into_view(self.scroll_x.pos, focused, n, sty.w, sty.gap, vw)
     }
@@ -508,6 +570,13 @@ pub fn reveal(cur: f32, lo: f32, hi: f32, max: f32) -> f32 {
     cur.clamp(lo.min(hi), hi).clamp(0.0, max)
 }
 
+/// The [`RowScroll::FixedLeft`] rule: the scroll that rests cell `fc` of `n` in the first slot,
+/// clamped to the row. Pure, so a screen placing a SETTLED card (`At::SpringTarget`) reads the
+/// same number the row's spring is steered to.
+pub fn fixed_left_scroll(fc: usize, n: usize, sty: &RowStyle) -> f32 {
+    (fc as f32 * (sty.w + sty.gap)).clamp(0.0, sty.max_scroll(n))
+}
+
 /// The minimal scroll-into-view rule for uniform-slot strips (home shelves, detail
 /// Related/Cast/episodes, the profiles roster): scroll only when the focused item — padded by one
 /// `gap` of breathing room (which also covers the focus pop) — would clip the viewport `vw`,
@@ -553,6 +622,11 @@ pub fn heading_lift_max(sty: &RowStyle) -> f32 {
 /// one frame and sprang back. [`CardRow`] holds the result on its own spring, so the heading
 /// simply STAYS up for as long as something is under it and settles once when nothing is.
 pub fn heading_clearance(focused: Option<usize>, sty: &RowStyle, scroll: f32) -> f32 {
+    // A ring row's heading never rises: the ring has no glow to spill over it, and its measured
+    // heading sits a fixed 16px above the cards (SHIELD-LAYOUT-SPEC §5.1).
+    if sty.treatment == Treatment::Ring {
+        return 0.0;
+    }
     let Some(c) = focused else {
         return 0.0;
     };
@@ -731,6 +805,10 @@ pub fn draw_tile(
     sty: &RowStyle,
     resume: Option<f32>,
 ) {
+    if sty.treatment == Treatment::Ring {
+        crate::shield::draw_card(p, art, rect, s, sty, resume, false);
+        return;
+    }
     let rad = sty.tile_radius(rect, s);
     // every tile carries a resting shadow + 1px perimeter stroke, both FOLDED into card()'s single
     // composite pass; a near-neighbour mid-pop (s slightly >1) lifts smoothly toward the focused
@@ -867,6 +945,12 @@ pub fn draw_focused(
     label: &TileLabel,
     measure: &dyn plx_machine::machine::Measure,
 ) {
+    if sty.treatment == Treatment::Ring {
+        // the ring row draws no label block: the header above the rows describes the focus
+        let _ = (label, measure);
+        crate::shield::draw_card(p, art, rect, s, sty, resume, true);
+        return;
+    }
     let rad = sty.tile_radius(rect, s);
     // Home Screen focus treatment: soft drop-shadow + 1px perimeter sheen, both FOLDED into card()'s
     // single composite pass and ramped in with the pop `f` (the same 0→1 pop scalar the ring used).

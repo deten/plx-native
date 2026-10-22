@@ -6,11 +6,13 @@
 //! every auth landing, and when the Settings picker's write is durable. A read is one relaxed
 //! load, cheap enough for every frame and every key.
 //!
-//! **What Shield changes today is the CHROME, and only the chrome**: the bar-wearing pages draw the
-//! collapsed icon rail and the clock instead of the top bar, publish no top strip for focus to
-//! land on, and LEFT off their left-most content opens the side panel (`side_nav`). Page geometry
-//! is unchanged, which is what lets the swap apply live: nothing a page has laid out depends on
-//! this value.
+//! **What Shield changes today** is the CHROME — the bar-wearing pages draw the collapsed icon
+//! rail and the clock instead of the top bar, publish no top strip for focus to land on, and LEFT
+//! off their left-most content opens the side panel (`side_nav`) — and HOME, which wears a
+//! focused-item header over fixed-slot poster rows (`shield`, `screens::home`'s `shield`). Every
+//! other page's geometry is unchanged. The swap still applies live: the chrome reads this value per
+//! frame, and Home latches it at the top of each event and re-dresses itself in place when it
+//! changes, so no page is ever laid out by one layout and drawn by the other.
 //!
 //! In a test build the value is per THREAD, so a test that switches the layout cannot change what
 //! a parallel test's dispatcher, chrome or Home step sees. Production is one atomic, written on
