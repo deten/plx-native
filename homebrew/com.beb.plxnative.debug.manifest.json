@@ -7,9 +7,9 @@
   "iconUri": "https://raw.githubusercontent.com/deten/plx-native/main/pkg/dev/largeIcon.png",
   "sourceUrl": "https://github.com/deten/plx-native",
   "rootRequired": false,
-  "ipkUrl": "https://github.com/deten/plx-native/releases/download/test-9/com.beb.plxnative.debug_0.8.0_arm.ipk",
+  "ipkUrl": "https://github.com/deten/plx-native/releases/download/test-10/com.beb.plxnative.debug_0.8.0_arm.ipk",
   "ipkHash": {
-    "sha256": "eb11cee5f3a9fc5c499bfbfbdc9e5e1a1ea6a4c171ac888c877e29068f0ae94a"
+    "sha256": "684d749118104740e5ddc6fb1f727a37f121292616aa104703be8e274d9276e6"
   },
-  "ipkSize": 19858216
+  "ipkSize": 19868462
 }

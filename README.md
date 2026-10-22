@@ -22,6 +22,7 @@ At a glance:
 - [Added Watchlist](#watchlist-in-testing)
 - [Fixed Resume](#resume-and-seeking-in-testing) so it shows where you stopped right away
 - [Improved Seeking](#resume-and-seeking-in-testing): faster taps and holds, and steadier holds
+- [Added Skip Back and Skip Forward](#resume-and-seeking-in-testing) times, Rewind on Resume, and Passout Protection
 - [Added a Playback Log](#try-a-test-build) to help diagnose playback problems
 - [Install and Update from Homebrew Channel](#install-with-homebrew-channel)
 
@@ -162,6 +163,9 @@ Code: branch [`watchlist`](../../tree/watchlist), built on `library-views`.
   one interval for fine adjustments.
 - **Holding** Left or Right starts slowly for precise placement, then doubles in speed every 0.7
   seconds. At full speed it crosses the whole episode or film in about five seconds.
+- **Settings > Playback** has separate **Skip back** and **Skip forward** times, **Rewind on
+  resume** (start a few seconds before where you stopped), and **Passout protection** (stop Up
+  Next from starting another episode after 1, 2 or 3 hours with no button pressed).
 
 Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
 
@@ -198,7 +202,7 @@ app. To remove the repository, select its address under **Settings** in Homebrew
 You can also install by hand: download the `.ipk` from a [release](../../releases) and install it
 with `ares-install` from LG's webOS developer tools.
 
-The newest test build, [Test 9](../../releases/tag/test-9), carries every feature above. Test
+The newest test build, [Test 10](../../releases/tag/test-10), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
