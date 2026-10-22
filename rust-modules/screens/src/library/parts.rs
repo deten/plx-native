@@ -4,6 +4,9 @@
 //! items. This part keeps the publication (element identities, indexes, the known-place memory),
 //! the target-layout `SpringTarget` placement, `groups` and `seat`, which describe where the page
 //! is going rather than where it is.
+//!
+//! In the Shield layout the grid wears `RowStyle::SHIELD_GRID` from the layout's own left edge
+//! (`Layout::style`, `Layout::left`): a ring grid, every card captioned on a fixed row pitch.
 
 pub(super) use super::rail::RailPart;
 
@@ -200,7 +203,7 @@ impl GridPart {
     /// where it was on screen; the caller applies it to its scroll and scroll target.
     pub(super) fn on<H: LibraryLike>(&mut self, ev: &ScreenEvent<H>, cx: &Cx<'_, H>,
         fx: &mut Effects<'_, H>, scroll: f32) -> f32 {
-        self.grid.set_page(CONTENT_TOP + self.layout.grid_top(), scroll);
+        self.grid.set_page(self.layout.content_top() + self.layout.grid_top(), scroll);
         let src = GridSrc { elems: &self.elems, indexes: &self.indexes, view: H::listing(cx) };
         let _ = self.grid.on(ev, cx, &src, fx);
         if matches!(ev, ScreenEvent::Tick(_)) { self.grid.landed_shift() } else { 0.0 }
@@ -217,9 +220,13 @@ impl GridPart {
         self.scroll = scroll;
         self.target_layout = target_layout;
         self.scroll_target = scroll_target;
-        self.grid.set_columns(layout.cols(), layout.style(), MARGIN_X);
-        self.grid.set_page(CONTENT_TOP + layout.grid_top(), scroll);
+        self.grid.set_columns(layout.cols(), layout.style(), layout.left());
+        self.grid.set_page(layout.content_top() + layout.grid_top(), scroll);
     }
+
+    /// Close every caption band, settled: the layout changed under the grid (a ring grid opens
+    /// none, and a Standard grid adopts its focused row's band again on its next tick).
+    pub(super) fn reset_bands(&mut self) { self.grid.reset_bands(); }
 
     pub(super) fn restore_keys(&mut self, keys: &KeyRegistry) {
         self.grid.reset_bands();
@@ -374,13 +381,13 @@ impl GridPart {
 
     /// The painter the grid draws and registers stops through: the page's alpha, and the stops
     /// clipped to the content panel so a row scrolled up under the heading cannot be hit there.
-    fn painter<H: LibraryLike>(f: &plx_ui::screen::DrawFrame<'_, '_, H>) -> Painter {
-        f.painter.alpha(f.page_alpha).clipped(grid_clip())
+    fn painter<H: LibraryLike>(&self, f: &plx_ui::screen::DrawFrame<'_, '_, H>) -> Painter {
+        f.painter.alpha(f.page_alpha).clipped(grid_clip(&self.layout))
     }
 
     #[cfg(test)]
     pub(super) fn record_stops<H: LibraryLike>(&self, f: &mut plx_ui::screen::DrawFrame<'_, '_, H>) {
-        let p = Self::painter(f);
+        let p = self.painter(f);
         let src = self.source(f.cx);
         self.grid.record_stops(f, p, &src);
     }
@@ -410,8 +417,12 @@ impl GridPart {
     pub(super) fn window(&self) -> std::ops::Range<usize> { self.grid.window(self.elems.len()) }
 }
 
-/// The content panel the grid's stops are clipped to.
-fn grid_clip() -> Rect {
+/// The content panel the grid's stops are clipped to: under the top bar, or (Shield, where the
+/// tabs and chips scroll away with the grid) the whole height left of the rail.
+fn grid_clip(layout: &Layout) -> Rect {
+    if layout.is_shield() {
+        return super::shield::browse_clip();
+    }
     Rect::new(MARGIN_X - 32.0, CONTENT_TOP, GRID_RIGHT - MARGIN_X + 32.0, SCR_H - CONTENT_TOP)
 }
 
@@ -483,7 +494,8 @@ impl<H: LibraryLike> Focusable<H> for GridPart {
             seat: Seat::Remembered,
             reachable: AxisMask::BOTH,
             edge: [EdgeRule::Geometric; 4],
-            extent: Rect::new(MARGIN_X, self.target_layout.row_y(0, self.scroll_target), GRID_RIGHT - MARGIN_X, self.target_layout.card_h()),
+            extent: Rect::new(self.target_layout.left(), self.target_layout.row_y(0, self.scroll_target),
+                self.target_layout.grid_right() - self.target_layout.left(), self.target_layout.card_h()),
             len: self.elems.len(),
             elem: ElemKind::Card,
         });
@@ -502,7 +514,7 @@ impl<H: LibraryLike> Focusable<H> for GridPart {
     /// — which the grid, holding the live page, cannot say. The clip is the content panel's.
     fn place(&self, key: &u32, cx: &Cx<'_, H>, at: At) -> Option<Placed> {
         let index = self.index_of(*key)?;
-        let clip = grid_clip();
+        let clip = grid_clip(&self.layout);
         match at {
             At::Drawn => self.grid.place(cx, &self.source(cx), key, at).map(|placed| Placed { clip, ..placed }),
             At::SpringTarget => {
@@ -562,7 +574,7 @@ impl<H: LibraryLike> Part<H> for GridPart {
         // keep idle uploading. The one exception is the at-rest lookahead (`prepare`, on by
         // default), whose own slots the source protects. The grid also registers the stops of the
         // cards it draws.
-        let p = Self::painter(f);
+        let p = self.painter(f);
         let src = self.source(f.cx);
         self.grid.draw(f, p, &src);
     }

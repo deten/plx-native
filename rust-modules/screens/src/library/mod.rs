@@ -1,4 +1,7 @@
 //! Library instance: document motion and transactions belong here; focus belongs to Input.
+//! In the Shield layout the same page wears tabs, Home's header over its Recommended shelves, a
+//! captioned Browse grid and a Categories view (`shield`), latched per event so a live switch
+//! re-dresses it in place.
 mod identity;
 mod bookmark;
 mod layout;
@@ -14,6 +17,9 @@ mod views;
 #[cfg(test)]
 mod views_tests;
 mod status;
+mod shield;
+#[cfg(test)]
+mod shield_tests;
 pub mod menu;
 #[cfg(test)]
 mod tests;
@@ -63,6 +69,7 @@ use plx_ui::{Rect, Spring};
 use plx_ui::xfade::Xfade;
 use identity::{KeyRegistry, KeyRegion, region_of_elem};
 use layout::{Layout, Block, ShelfRun, CONTENT_TOP};
+use plx_machine::machine::Tick;
 #[cfg(test)]
 use layout::COLS;
 use parts::{GridPart, RailPart, GRID_GROUP, RAIL_GROUP};
@@ -87,7 +94,12 @@ const TYPE: u32 = 7;
 /// The view switcher's two pills (`views.rs`) and their row's group.
 const VIEW_RECOMMENDED: u32 = 8;
 const VIEW_ALL: u32 = 9;
+/// The Shield layout's third tab (`shield.rs`).
+const VIEW_CATEGORIES: u32 = 10;
 const VIEWS_GROUP: GroupId = GroupId(0x4c49_4214);
+/// The Categories tiles' group before a section is known (a known section's is its own, like the
+/// toolbar's).
+const CATEGORY_GROUP: GroupId = GroupId(0x4c49_4215);
 const STRIP: GroupId = plx_ui::containers::tabs::STRIP;
 
 // The shelves' `motion` bytes are `cards::Shelf::write`, the L0 row's write unchanged; the type's name
@@ -234,6 +246,19 @@ pub struct LibraryScreen {
     /// The standing "Hold OK for options" hint over a card (`plx_ui::hold_hint`, the rarer
     /// cadence of a non-Home card screen). Paint-only: not hashed, not in the shape.
     hold_hint: plx_ui::hold_hint::HoldHint,
+    /// The layout this page is laid out for: `plx_ui::layout::shield()`, latched at the top of
+    /// every event by `sync_layout` (`shield.rs`), so one event's focus geometry, layout and draw
+    /// read ONE layout. Not canonical state: the session digest already carries the preference.
+    shield: bool,
+    /// The Shield layout's focused-item header over Recommended. Paint state, like `ground`.
+    header: shield::Header,
+    /// The Shield layout's neutral ground under Browse and Categories. Paint state.
+    neutral: plx_ui::shield::HeroGround,
+    /// The Categories tiles' elements, one per genre of the listing in its order (Shield only): a
+    /// projection of the listing, refreshed by `sync`.
+    categories: Vec<u32>,
+    /// The tiles' group: per section and epoch, registered beside the toolbar's.
+    category_group: GroupId,
     /// Shelf rows the document draw and the stop recorder looked at, for the windowing test.
     #[cfg(test)]
     shelf_visits: std::cell::Cell<usize>,
@@ -268,6 +293,8 @@ impl LibraryScreen {
             clock: Default::default(),
             plaintext_alert: super::plaintext_question::PlaintextAlert::new(PLAINTEXT_GROUP, PLAINTEXT_CANCEL, PLAINTEXT_CONNECT),
             hold_hint: plx_ui::hold_hint::HoldHint::once_per_run(plx_ui::hold_hint::Kind::Library),
+            shield: plx_ui::layout::shield(), header: shield::Header::new(),
+            neutral: plx_ui::shield::HeroGround::new(), categories: Vec::new(), category_group: CATEGORY_GROUP,
             #[cfg(test)] shelf_visits: std::cell::Cell::new(0),
         }
     }
@@ -366,6 +393,8 @@ impl LibraryScreen {
             }, GroupId(0), 0));
             let groups = MasterDetailGroups { master: group("rail-group"), detail: group("grid-group") };
             self.toolbar = group("toolbar-group");
+            // Shield only: registering it consumes a key ordinal, and Standard's keys stay as they were.
+            if self.shield { self.category_group = group("category-group"); }
             if self.pair.groups_config() != groups {
                 self.pair = MasterDetail::new(
                     RailPart::new(self.entry, groups.master), GridPart::new(self.entry, groups.detail),
@@ -411,7 +440,8 @@ impl LibraryScreen {
             let saved = self.viewports.iter().find(|view| Some(view.epoch) == epoch && Some(&view.section) == identity.as_ref());
             let same_view = saved.is_none_or(|view| view.all == self.view.is_all());
             self.restore_scroll = saved.filter(|_| same_view).map(|view| view.scroll).or_else(||
-                (same_view && !self.view.is_all() && cx.focus.remembered(self.pair.groups_config().detail).is_none())
+                // (a bookmark's scroll is a Standard Recommended position: no Shield view has one)
+                (same_view && !self.view.is_all() && !self.shield && cx.focus.remembered(self.pair.groups_config().detail).is_none())
                     .then(|| listing.cursor().map(|cursor| cursor.scroll)).flatten());
             self.scroll.jump(self.restore_scroll.unwrap_or(0.0));
             self.scroll_target = self.scroll.pos;
@@ -428,7 +458,8 @@ impl LibraryScreen {
                 self.wanted_kind = None;
             }
         }
-        if let Some(current) = self.view_section(cx) {
+        // The Shield layout's side panel chooses the library: it builds no library row.
+        if let Some(current) = self.view_section(cx).filter(|_| !self.shield) {
             for (index, section) in directory.favorite_sections_for(current) {
                 let Some(sid) = section.sid else { continue };
                 let elem = self.keys.register(
@@ -475,9 +506,9 @@ impl LibraryScreen {
         }
         let hubs = H::section_hubs(cx);
         let publication = hubs.id().zip(hubs.revision());
-        if self.view.is_all() {
-            // All: the Recommended shelves stay off the page. The store keeps publishing them, so
-            // switching back shows them at once.
+        if !self.shows_shelves() {
+            // All (and Shield's Categories): the Recommended shelves stay off the page. The store
+            // keeps publishing them, so switching back shows them at once.
             self.shelves.clear();
             self.shelf_publication = None;
         } else if self.shelf_publication != publication {
@@ -497,7 +528,7 @@ impl LibraryScreen {
                     }).collect();
                     let cards = old.iter().position(|row| row.id == shelf.id && row.landscape == shelf.landscape)
                         .map(|i| old.remove(i).cards).unwrap_or_else(|| {
-                            let mut cards = hub_cards(self.entry, shelf.landscape);
+                            let mut cards = hub_cards(self.entry, shield::shelf_style(self.shield, shelf.landscape));
                             let saved = self.viewports.iter().find(|view| Some(view.epoch) == epoch && view.section == *section)
                                 .and_then(|view| view.shelves.iter().find(|(id, _)| *id == shelf.id));
                             if let Some((_, x)) = saved {
@@ -518,6 +549,7 @@ impl LibraryScreen {
             }
             self.shelf_publication = publication;
         }
+        self.sync_categories(cx);
         self.pair.detail.refresh(cx, &mut self.keys);
         self.relayout(cx.focus.current);
         self.pair.master.refresh(cx, &mut self.keys);
@@ -531,7 +563,7 @@ impl LibraryScreen {
         let held = self.page_fade.is_arriving();
         let hubs = H::section_hubs(cx);
         for (index, row) in self.shelves.iter_mut().enumerate() {
-            let src = draw::HubSrc { elems: &row.elems, shelf: hubs.shelves().get(index) };
+            let src = draw::HubSrc { elems: &row.elems, shelf: hubs.shelves().get(index), shield: self.shield };
             row.cards.dormant(held);
             let _ = row.cards.on(ev, cx, &src, fx);
         }
@@ -541,9 +573,12 @@ impl LibraryScreen {
         let grid_focus = focus.filter(|key| key.entry == self.entry)
             .and_then(|key| self.pair.detail.index_of(key.elem));
         self.pair.detail.settle_band(grid_focus.map(|index| index / self.layout.cols()));
-        self.run.set(self.shelves.iter().map(|row| layout::shelf_pitch(row.landscape, row.cards.band_expand())));
-        self.target_run.set(self.shelves.iter().map(|row| layout::shelf_pitch(row.landscape,
-            f32::from(focus.is_some_and(|key| row.elems.contains(&key.elem))))));
+        let shield = self.shield;
+        // Shield's shelves stand one fixed-slot pitch apart, whatever is focused
+        self.run.set(self.shelves.iter().map(|row| if shield { plx_ui::shield::ROW_PITCH }
+            else { layout::shelf_pitch(row.landscape, row.cards.band_expand()) }));
+        self.target_run.set(self.shelves.iter().map(|row| if shield { plx_ui::shield::ROW_PITCH }
+            else { layout::shelf_pitch(row.landscape, f32::from(focus.is_some_and(|key| row.elems.contains(&key.elem)))) }));
         let rows = self.pair.detail.elems.len().div_ceil(self.layout.cols());
         // A grid transaction's commit empties the store (`browse::requery`) while the grid is
         // dark and its answer is in flight. The shelves, heading and TYPE chip around it are
@@ -553,10 +588,12 @@ impl LibraryScreen {
         let rows = if rows == 0 && self.grid_fade.is_swapping() && self.readout == Readout::Loading {
             self.layout.rows
         } else { rows };
-        let grid_head = rows > 0 || self.grid_fade.is_swapping()
+        // Shield's Recommended and Categories carry no grid: Browse is the grid.
+        let rows = if self.shows_grid() { rows } else { 0 };
+        let grid_head = self.shows_grid() && (rows > 0 || self.grid_fade.is_swapping()
             // An empty answer keeps the heading row: its TYPE chip is how the reader leaves an
             // empty listing (no collections, no episodes) for one that has something in it.
-            || (self.section.is_some() && self.wanted_kind.is_none() && self.readout == Readout::Empty);
+            || (self.section.is_some() && self.wanted_kind.is_none() && self.readout == Readout::Empty));
         let episodes = self.layout.is_episodes();
         // The switcher names a library, so it stands whenever one is selected, except over the
         // failed read-out, which keeps the head it always had.
@@ -565,10 +602,13 @@ impl LibraryScreen {
             Layout::failed(!self.libraries.is_empty(), self.run.pitches())
         } else { Layout::new(!self.libraries.is_empty(), self.run.pitches(), rows, grid_head) }.with_episodes(episodes)
             .with_views(views)
+            .with_shield(shield).with_categories(self.categories.len())
             .with_grid_bands(self.pair.detail.band_geometry());
         self.target_layout = Layout::new(!self.libraries.is_empty(), self.target_run.pitches(), rows, grid_head).with_episodes(episodes)
             .with_views(views)
+            .with_shield(shield).with_categories(self.categories.len())
             .with_grid_focus(grid_focus.map(|index| index / self.layout.cols()));
+        self.pair.master.set_shield(shield, shield && self.shows_grid());
         if self.grid_reset_pending {
             self.scroll_target = self.target_layout.row_reveal(0);
             self.scroll.jump(self.scroll_target);
@@ -592,6 +632,12 @@ impl LibraryScreen {
 
     /// The document's first block's group: where DOWN from the top tab bar lands.
     fn first_group(&self) -> GroupId {
+        if self.shield {
+            // The Shield tabs stand above the content as Home's strip stands above Home: a page
+            // arriving takes its content's first block, and the tabs are one UP away.
+            let content = self.layout.with_views(false).first();
+            return self.group_of_block(content.or(self.layout.first()));
+        }
         self.group_of_block(self.layout.first())
     }
 
@@ -612,6 +658,7 @@ impl LibraryScreen {
             Some(Block::Shelf(index)) => self.shelves[index].entry_group(),
             Some(Block::Status) => STATUS_GROUP,
             Some(Block::Toolbar | Block::Grid(_)) => self.toolbar,
+            Some(Block::Categories) => self.category_group,
             None => STRIP,
         }
     }
@@ -648,13 +695,15 @@ impl LibraryScreen {
         } else if let Some(index) = self.shelves.iter().position(|row|
             row.elems.contains(&key.elem) || row.heading_elem() == Some(key.elem)) {
             Some(self.target_layout.shelf_reveal(&self.target_run, index))
-        } else if matches!(key.elem, TYPE | SORT | FILTER) {
+        } else if let Some(index) = self.categories.iter().position(|elem| *elem == key.elem) {
+            Some(self.target_layout.category_reveal(index / plx_ui::shield_browse::TILE_COLS))
+        } else if matches!(key.elem, TYPE | SORT | FILTER) || (self.shield && key.elem == MORE) {
             // With no shelf between them (All, or a library with none) the toolbar sits right under
             // the pill rows, and the page holds still so they stay in view above it.
             let top = if self.target_layout.shelves == 0 { 0.0 } else { self.target_layout.grid_block_top() };
             Some(top.clamp(0.0, self.target_layout.max_scroll()))
         } else if self.libraries.iter().any(|(elem, _)| *elem == key.elem) || key.elem == RETRY
-            || View::ELEMS.contains(&key.elem) {
+            || self.view_elems().contains(&key.elem) {
             Some(0.0)
         } else { None };
         if let Some(want) = want {
@@ -718,7 +767,7 @@ impl LibraryScreen {
     fn above_grid(&self, focus: Option<FocusKey<u32>>) -> bool {
         let Some(elem) = focus.filter(|key| key.entry == self.entry).map(|key| key.elem) else { return false };
         self.libraries.iter().any(|(library, _)| *library == elem)
-            || (self.layout.views && View::ELEMS.contains(&elem))
+            || (self.layout.views && self.view_elems().contains(&elem))
             || self.shelves.iter().any(|row| row.elems.contains(&elem) || row.heading_elem() == Some(elem))
             || (self.layout.grid_head && self.toolbar_elems().contains(&elem))
     }
@@ -752,7 +801,8 @@ impl LibraryScreen {
         }
         let region = match elem {
             Some(TYPE | SORT | FILTER) => "toolbar", Some(RETRY) => "status",
-            Some(VIEW_RECOMMENDED | VIEW_ALL) => "views",
+            Some(VIEW_RECOMMENDED | VIEW_ALL | VIEW_CATEGORIES) => "views",
+            Some(elem) if self.categories.contains(&elem) => "categories",
             Some(elem) if region_of_elem(elem) == Some(KeyRegion::Rail) => "rail",
             Some(elem) if elem >= plx_ui::dispatch::STRIP_BASE => "strip",
             Some(_) => "library", None => "none",
@@ -795,8 +845,11 @@ impl LibraryScreen {
         // and none of them moves focus, so no `FocusMoved` will release it.
         self.provisional = None;
         self.placed.retain(|(_, placed)| *placed != elem);
-        if let Some(view) = View::from_elem(elem).filter(|_| self.layout.views) {
+        if let Some(view) = View::from_elem(elem).filter(|_| self.layout.views && self.view_elems().contains(&elem)) {
             self.choose_view(view, cx, fx);
+            return Handled::Yes;
+        }
+        if self.activate_category(elem, cx, fx) {
             return Handled::Yes;
         }
         // A singleton never reaches this screen at all any more (`self.libraries` is cleared in
@@ -1030,6 +1083,7 @@ impl LibraryScreen {
 impl<H: LibraryLike> Machine<H> for LibraryScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        self.sync_layout(cx, fx);
         let handled = self.step_event(ev, cx, fx);
         // The page's fade can change on any event (and tick on while the page is covered), and the
         // draw reads the shelves' dormancy between events: re-sample it once, after all of them.
@@ -1184,10 +1238,14 @@ impl LibraryScreen {
                     self.library_capsules.update(selected, focused_library, |i| spans.get(i).copied(), plx_ui::widgets::SelMark::Travels, dt);
                     self.library_pop.step((focused_library >= 0).then_some(0), dt);
                     self.step_views(focused, cx, dt);
-                    let colours = self.focused_item(focused, cx).filter(|item| item.has_blur).map(|item| item.blur)
-                        .or_else(|| (!self.ground_seeded).then(|| H::listing(cx).item(0).filter(|item| item.has_blur).map(|item| item.blur)).flatten());
-                    self.ground_seeded |= colours.is_some();
-                    self.ground.key(colours, plx_ui::widgets::PageGround::CARD_W, dt);
+                    if self.shield {
+                        self.shield_tick(cx, *tick, fx);
+                    } else {
+                        let colours = self.focused_item(focused, cx).filter(|item| item.has_blur).map(|item| item.blur)
+                            .or_else(|| (!self.ground_seeded).then(|| H::listing(cx).item(0).filter(|item| item.has_blur).map(|item| item.blur)).flatten());
+                        self.ground_seeded |= colours.is_some();
+                        self.ground.key(colours, plx_ui::widgets::PageGround::CARD_W, dt);
+                    }
                     // A page still dissolving in shows its seat unpopped: the pop starts when the
                     // page is opaque, where it can be seen, instead of playing out under the fade.
                     // A shelf at exact rest is a fixed point of its tick, so a page of hundreds of
@@ -1215,13 +1273,16 @@ impl LibraryScreen {
                     // where the reader left. A head seat needs no wait — `provisional` follows the
                     // head when the shelves land — and a page already on screen seats as it did.
                     let settled = shelves || !self.page_fade.is_swapping() || self.restore_scroll.is_none();
-                    if self.initial && settled && self.layout.first().is_some() && self.seed_cursor(cx, fx) {
+                    // The Shield tabs stand before any content does: the first seat waits for the
+                    // content (a mount's own seat on the bare tabs is not the reader's choice).
+                    let head = if self.shield { self.layout.with_views(false).first() } else { self.layout.first() };
+                    if self.initial && settled && head.is_some() && self.seed_cursor(cx, fx) {
                         self.initial = false;
                         let opened = self.opening.as_ref().is_some_and(|opening| self.section.as_ref() == Some(&opening.section));
                         if opened { self.opening = None; }
                         // A view chosen in the switcher for this library with OK leaves focus there.
                         let in_switcher = opened && self.layout.views && focused
-                            .is_some_and(|key| key.entry == self.entry && View::ELEMS.contains(&key.elem));
+                            .is_some_and(|key| key.entry == self.entry && self.view_elems().contains(&key.elem));
                         let group = match self.layout.seat_for_scroll(&self.run, self.scroll.pos, self.layout.visible_rows(self.scroll.pos).0) {
                             Some(Block::Grid(_)) => self.pair.groups_config().detail,
                             Some(Block::Shelf(index)) => self.shelves[index].group,
@@ -1332,13 +1393,21 @@ impl<H: LibraryLike> Focusable<H> for LibraryScreen {
         if !self.libraries.is_empty() {
             out.push(row_group(LIBRARY_GROUP, self.libraries.len(), Rect::new(MARGIN_X, CONTENT_TOP - self.scroll.pos, layout::GRID_RIGHT - MARGIN_X, 52.0), ElemKind::Control));
         }
-        if let (Some(recommended), Some(all)) = (self.view_rect(VIEW_RECOMMENDED, cx), self.view_rect(VIEW_ALL, cx)) {
+        let views: Vec<Rect> = self.view_elems().iter().filter_map(|elem| self.view_rect(*elem, cx)).collect();
+        if let Some(first) = views.first().filter(|_| views.len() == self.view_elems().len()) {
             // Entered on the view shown (`seat`), from above or below: the switcher is a selector.
+            let extent = views.iter().fold(*first, |all, pill| all.union(*pill));
             out.push(GroupSpec { seat: Seat::Projected,
-                ..row_group(VIEWS_GROUP, View::ELEMS.len(), recommended.union(all), ElemKind::Control) });
+                ..row_group(VIEWS_GROUP, views.len(), extent, ElemKind::Control) });
         }
         for (index, row) in self.shelves.iter().enumerate() {
-            let mut shelf = row_group(row.group, row.elems.len(), Rect::new(MARGIN_X, self.target_layout.shelf_y(&self.target_run, index, self.scroll_target) + CARD_DY, SCR_W - 2.0 * MARGIN_X, row_style(row).h), ElemKind::Card);
+            let extent = if self.shield {
+                Rect::new(plx_ui::shield::CONTENT_X, self.shield_shelf_top(&self.target_run, index, self.scroll_target),
+                    plx_ui::shield::CONTENT_RIGHT - plx_ui::shield::CONTENT_X, plx_ui::shield::CARD_H)
+            } else {
+                Rect::new(MARGIN_X, self.target_layout.shelf_y(&self.target_run, index, self.scroll_target) + CARD_DY, SCR_W - 2.0 * MARGIN_X, row_style(row).h)
+            };
+            let mut shelf = row_group(row.group, row.elems.len(), extent, ElemKind::Card);
             if let Some((group, elem)) = row.heading {
                 if let Some(rect) = self.heading_rect(index, cx, At::SpringTarget) {
                     out.push(plx_ui::linked_heading::group_spec(group, rect));
@@ -1357,6 +1426,15 @@ impl<H: LibraryLike> Focusable<H> for LibraryScreen {
                     ..row_group(STATUS_GROUP, 1, rect, ElemKind::Control) });
             }
         }
+        if !self.categories.is_empty() {
+            out.push(GroupSpec { id: self.category_group, kind: GroupKind::Grid { cols: plx_ui::shield_browse::TILE_COLS, holes: &[] },
+                seat: Seat::Remembered, reachable: AxisMask::BOTH,
+                edge: [EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Stop, EdgeRule::Stop],
+                extent: self.category_rect(0, cx, At::SpringTarget), len: self.categories.len(), elem: ElemKind::Card });
+        }
+        if !self.shows_grid() {
+            return;
+        }
         if !self.pair.detail.elems.is_empty() && self.pair.master.eligible(cx) {
             self.pair.groups(cx, out);
         } else {
@@ -1366,18 +1444,22 @@ impl<H: LibraryLike> Focusable<H> for LibraryScreen {
     fn group_of(&self, elem: &u32, cx: &Cx<'_, H>) -> Option<GroupId> {
         if let Some(answer) = self.plaintext_alert.group_of(*elem) { return answer; }
         if self.libraries.iter().any(|(key, _)| key == elem) { return Some(LIBRARY_GROUP); }
-        if self.layout.views && View::ELEMS.contains(elem) { return Some(VIEWS_GROUP); }
+        if self.layout.views && self.view_elems().contains(elem) { return Some(VIEWS_GROUP); }
+        if self.categories.contains(elem) { return Some(self.category_group); }
         if let Some(row) = self.shelves.iter().find(|row| row.elems.contains(elem)) { return Some(row.group); }
         if let Some((group, _)) = self.shelves.iter().find_map(|row| row.heading.filter(|(_, e)| e == elem)) { return Some(group); }
         if self.layout.grid_head && self.toolbar_elems().contains(elem) { return Some(self.toolbar); }
         if self.readout == Readout::Failed && *elem == RETRY { return Some(STATUS_GROUP); }
+        if !self.shows_grid() { return None; }
         self.pair.group_of(elem, cx)
     }
     fn neighbour(&self, key: FocusKey<u32>, dir: Dir, cx: &Cx<'_, H>) -> Step<u32> {
         if let Some(step) = self.plaintext_alert.neighbour(key, dir) { return step; }
         if matches!(region_of_elem(key.elem), Some(KeyRegion::Grid | KeyRegion::Rail)) {
+            if !self.shows_grid() { return Step::Edge; }
             return self.pair.neighbour(key, dir, cx);
         }
+        if self.categories.contains(&key.elem) { return self.category_neighbour(key, dir); }
         let elems = self.row_elems(self.group_of(&key.elem, cx));
         let Some(index) = elems.iter().position(|elem| *elem == key.elem) else { return Step::Edge };
         let next = match dir { Dir::Left => index.checked_sub(1), Dir::Right => Some(index + 1), _ => None };
@@ -1386,8 +1468,15 @@ impl<H: LibraryLike> Focusable<H> for LibraryScreen {
     fn place(&self, elem: &u32, cx: &Cx<'_, H>, at: At) -> Option<Placed> {
         if let Some(placed) = self.plaintext_alert.place(*elem) { return placed; }
         if matches!(region_of_elem(*elem), Some(KeyRegion::Grid | KeyRegion::Rail)) {
+            if !self.shows_grid() { return None; }
             return self.pair.place(elem, cx, at);
         }
+        if let Some(index) = self.categories.iter().position(|key| key == elem) {
+            return Some(self.category_placed(index, cx, at));
+        }
+        // Shield's rows are cut under the header; its tabs and chips stand above that cut.
+        let shelf_clip = if self.shield { shield::shield_clip() } else { content_clip() };
+        let clip = if self.shield { Rect::FULL } else { content_clip() };
         let rect = if let Some(index) = self.libraries.iter().position(|(key, _)| key == elem) {
             self.library_rect(index, cx)
         } else if let Some(rect) = self.view_rect(*elem, cx) {
@@ -1395,17 +1484,19 @@ impl<H: LibraryLike> Focusable<H> for LibraryScreen {
         } else if let Some((row, col)) = self.shelves.iter().enumerate().find_map(|(row, shelf)|
             shelf.elems.iter().position(|key| key == elem).map(|col| (row, col))) {
             if at == At::Drawn { return self.shelf_placed(row, elem, cx); }
-            self.shelf_rect_at(row, col, cx)
+            let rect = self.shelf_rect_at(row, col, cx);
+            return Some(Placed { rect, rest_rect: rect, clip: shelf_clip, index: None });
         } else if let Some(index) = self.shelves.iter().position(|row| row.heading_elem() == Some(*elem)) {
-            self.heading_rect(index, cx, at)?
+            let rect = self.heading_rect(index, cx, at)?;
+            return Some(Placed { rect, rest_rect: rect, clip: shelf_clip, index: None });
         } else if self.toolbar_elems().contains(elem) && self.layout.grid_head { self.toolbar_chip_rect(*elem, cx, at) }
         else if *elem == RETRY && self.readout == Readout::Failed { self.status_rect(cx)? }
         else { return None };
-        Some(Placed { rect, rest_rect: rect, clip: content_clip(), index: None })
+        Some(Placed { rect, rest_rect: rect, clip, index: None })
     }
     fn reconcile(&self, want: FocusKey<u32>, cx: &Cx<'_, H>) -> FocusKey<u32> {
         if let Some(key) = self.plaintext_alert.reconcile(want) { return key; }
-        if matches!(self.keys.region(want.elem).or_else(|| region_of_elem(want.elem)), Some(KeyRegion::Grid | KeyRegion::Rail)) {
+        if self.shows_grid() && matches!(self.keys.region(want.elem).or_else(|| region_of_elem(want.elem)), Some(KeyRegion::Grid | KeyRegion::Rail)) {
             // Ownership is a typed identity query, even when group_of no longer places the key.
             let next = self.pair.reconcile(want, cx);
             if self.pair.place(&next.elem, cx, At::SpringTarget).is_some() { return next; }
@@ -1436,7 +1527,8 @@ impl LibraryScreen {
     fn row_elems(&self, group: Option<GroupId>) -> Vec<u32> {
         match group {
             Some(LIBRARY_GROUP) => self.libraries.iter().map(|(elem, _)| *elem).collect(),
-            Some(VIEWS_GROUP) if self.layout.views => View::ELEMS.to_vec(),
+            Some(VIEWS_GROUP) if self.layout.views => self.view_elems().to_vec(),
+            Some(group) if group == self.category_group && !self.categories.is_empty() => self.categories.clone(),
             Some(group) if group == self.toolbar => self.toolbar_elems().to_vec(),
             Some(STATUS_GROUP) => vec![RETRY],
             Some(group) => self.shelves.iter().find_map(|row| {
@@ -1448,11 +1540,12 @@ impl LibraryScreen {
     }
     /// Where shelf `index` sits for the component, in screen space: the top of its tiles.
     fn shelf_frame(&self, index: usize) -> SectionFrame {
+        if self.shield { return self.shield_shelf_frame(index); }
         SectionFrame { y: self.layout.shelf_y(&self.run, index, self.scroll.pos) + CARD_DY, clip: content_clip() }
     }
     /// Shelf `index`'s content, read off the published hub (borrows only).
     fn hub_src<'a, 'v: 'a, H: LibraryLike>(&'a self, index: usize, cx: &Cx<'v, H>) -> draw::HubSrc<'a> {
-        draw::HubSrc { elems: &self.shelves[index].elems, shelf: H::section_hubs(cx).shelves().get(index) }
+        draw::HubSrc { elems: &self.shelves[index].elems, shelf: H::section_hubs(cx).shelves().get(index), shield: self.shield }
     }
     /// The card `elem` of shelf `index` as drawn now: the component's placement (pop and press
     /// folded in, `rest_rect` the settled focus-scaled rect). `index` stays unset: nothing here
@@ -1466,6 +1559,7 @@ impl LibraryScreen {
     /// row scrolled to bring the focused card into view. The component, holding the live page,
     /// cannot say it.
     fn shelf_rect_at<H: LibraryLike>(&self, index: usize, col: usize, cx: &Cx<'_, H>) -> Rect {
+        if self.shield { return self.shield_shelf_rect_at(index, col, cx); }
         let row = &self.shelves[index];
         let style = row_style(row);
         let focused = cx.focus.current.filter(|key| key.entry == self.entry)
@@ -1485,6 +1579,7 @@ impl LibraryScreen {
     }
     /// The linked heading's face, cap top where an unlinked heading's would be.
     fn heading_rect<H: LibraryLike>(&self, index: usize, cx: &Cx<'_, H>, at: At) -> Option<Rect> {
+        if self.shield { return self.shield_heading_rect(index, cx, at); }
         let heading = self.heading_widget(index, cx)?;
         let row = &self.shelves[index];
         let focused = cx.focus.current.is_some_and(|key| key.entry == self.entry && Some(key.elem) == row.heading_elem());
@@ -1508,12 +1603,11 @@ impl HubShelf {
     /// The group a door INTO this shelf from above lands in: its linked heading when it has one.
     fn entry_group(&self) -> GroupId { self.heading.map_or(self.group, |(group, _)| group) }
 }
-fn row_style(row: &HubShelf) -> &'static RowStyle { hub_style(row.landscape) }
-fn hub_style(landscape: bool) -> &'static RowStyle { if landscape { &RowStyle::EPISODE } else { &RowStyle::HOME } }
-/// A hub shelf's card section. Cards a screen's width off to either side still paint: a popped
-/// card's shadow reaches onto the screen from beyond its edge.
-fn hub_cards(entry: EntryId, landscape: bool) -> plx_ui::cards::Shelf {
-    plx_ui::cards::Shelf::new(entry, hub_style(landscape)).cull_margin(32.0)
+fn row_style(row: &HubShelf) -> &'static RowStyle { shield::shelf_style(false, row.landscape) }
+/// A hub shelf's card section in `style` (`shield::shelf_style`). Cards a screen's width off to
+/// either side still paint: a popped card's shadow reaches onto the screen from beyond its edge.
+fn hub_cards(entry: EntryId, style: &'static RowStyle) -> plx_ui::cards::Shelf {
+    plx_ui::cards::Shelf::new(entry, style).cull_margin(32.0)
 }
 /// The panel the shelves' cards are placed and hit-tested in: everything under the top bar.
 fn content_clip() -> Rect {
@@ -1543,8 +1637,11 @@ impl<H: LibraryLike> Screen<H> for LibraryScreen {
         PageMemory::Library(self.page_memory())
     }
     fn links(&self, out: &mut Vec<Link>) {
-        out.push(Link { from: STRIP, dir: Dir::Down, to: self.first_group() });
-        out.push(Link { from: self.first_group(), dir: Dir::Up, to: STRIP });
+        // The Shield layout publishes no strip: UP from the content reaches the tabs (below).
+        if !self.shield {
+            out.push(Link { from: STRIP, dir: Dir::Down, to: self.first_group() });
+            out.push(Link { from: self.first_group(), dir: Dir::Up, to: STRIP });
+        }
         // A continuous document has adjacent blocks even while its offscreen geometry
         // passes the floating strip. Geometric ranking must not skip an intervening block.
         let mut document = Vec::new();
@@ -1558,7 +1655,8 @@ impl<H: LibraryLike> Screen<H> for LibraryScreen {
         }
         if self.layout.grid_head { document.push(self.toolbar); }
         if self.readout == Readout::Failed { document.push(STATUS_GROUP); }
-        if !self.pair.detail.elems.is_empty() { document.push(self.pair.groups_config().detail); }
+        if !self.categories.is_empty() { document.push(self.category_group); }
+        if self.shows_grid() && !self.pair.detail.elems.is_empty() { document.push(self.pair.groups_config().detail); }
         for pair in document.windows(2) {
             out.push(Link { from: pair[0], dir: Dir::Down, to: pair[1] });
             out.push(Link { from: pair[1], dir: Dir::Up, to: pair[0] });

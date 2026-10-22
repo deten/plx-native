@@ -99,6 +99,15 @@ impl ListingSnapshot {
         self
     }
 
+    /// This fixture with `genres` as its Genre filter's list.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_genres(mut self, genres: Vec<super::GenreEntry>) -> Self {
+        if let Some(data) = &mut self.data {
+            data.genres = Arc::new(genres);
+        }
+        self
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_library_type(mut self, library_type: super::LibraryType) -> Self {
         if let Some(data) = &mut self.data {

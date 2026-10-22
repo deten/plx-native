@@ -181,7 +181,7 @@ impl Row {
     }
     /// The word this row's trailing slot shows, if any: an explicit [`Row::value`], else a switch's
     /// `On`/`Off`. ONE resolver, so the two can never both be drawn.
-    fn readout(&self) -> Option<&str> {
+    pub fn readout(&self) -> Option<&str> {
         match (&self.value, self.toggle) {
             (Some(v), _) => Some(v.as_str()),
             (None, Some(on)) => Some(if on { plx_platform::i18n::msg::widgets_toggle_on() } else { plx_platform::i18n::msg::widgets_toggle_off() }),

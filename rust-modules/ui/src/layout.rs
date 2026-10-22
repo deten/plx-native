@@ -8,11 +8,14 @@
 //!
 //! **What Shield changes today** is the CHROME — the bar-wearing pages draw the collapsed icon
 //! rail and the clock instead of the top bar, publish no top strip for focus to land on, and LEFT
-//! off their left-most content opens the side panel (`side_nav`) — and HOME, which wears a
-//! focused-item header over fixed-slot poster rows (`shield`, `screens::home`'s `shield`). Every
+//! off their left-most content opens the side panel (`side_nav`) — HOME, which wears a
+//! focused-item header over fixed-slot poster rows (`shield`, `screens::home`'s `shield`), and the
+//! LIBRARY, whose Recommended | Browse | Categories tabs, captioned grid, A–Z rail, genre tiles and
+//! right-side panels are `shield_browse` and `shield_panel` (`screens::library`'s `shield`). Every
 //! other page's geometry is unchanged. The swap still applies live: the chrome reads this value per
-//! frame, and Home latches it at the top of each event and re-dresses itself in place when it
-//! changes, so no page is ever laid out by one layout and drawn by the other.
+//! frame, and Home, the Library and its menu latch it at the top of each event and re-dress
+//! themselves in place when it changes, so no page is ever laid out by one layout and drawn by the
+//! other.
 //!
 //! In a test build the value is per THREAD, so a test that switches the layout cannot change what
 //! a parallel test's dispatcher, chrome or Home step sees. Production is one atomic, written on

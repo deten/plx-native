@@ -13,198 +13,23 @@
 //!   the first slot; the focused row's cards always sit at `shield::ROW_CARD_Y`, the others a
 //!   `shield::ROW_PITCH` apart around it, gliding on the page's vertical spring
 //!   ([`HomeScreen::shield_reveal`]); rows above the slot fade and are cut under the header.
-//! - **A header that follows focus** ([`Header`]): the focused card's item — its clearLogo (title
+//! - **A header that follows focus** (`registry::shield_header::Header`, which the Library's
+//!   Recommended tab wears too): the focused card's item — its clearLogo (title
 //!   text until the logo lands), facts, summary and cast, all from the catalog row — over its
 //!   backdrop and a ground keyed from its UltraBlur colours. The subject changes once focus has
-//!   RESTED on a card for [`SETTLE_MS`] (immediately for the first), so a held key running along a
+//!   RESTED on a card for `SETTLE_MS` (immediately for the first), so a held key running along a
 //!   row asks the server for no backdrop or logo it passes; a settled subject warms the next card's
 //!   logo and backdrop while the source is idle.
 //! - **Live.** The layout is latched once per event ([`HomeScreen::sync_layout`]): a switch while
 //!   Home is mounted re-dresses the shelves in place, re-seats the dive, the slot and focus, and
 //!   resets the header, so the page is never laid out by one layout and drawn by the other.
 
-use std::sync::Arc;
-
-use plx_data::pms::PmsMovie;
 use plx_ui::shield as geo;
 
 use super::*;
-
-/// How long focus must rest on a card before the header takes it as its subject, ms of `Tick`.
-pub(super) const SETTLE_MS: u32 = 200;
-/// The header text's cross-fade into a new subject (the focus pop's rate: a quick dissolve).
-const K_FADE: f32 = K_SCALE;
-
-/// What the header says about its subject, formatted once per subject rather than per frame.
-#[derive(Default)]
-struct Facts {
-    sid: u16,
-    logo_rk: String,
-    title: String,
-    subtitle: String,
-    facts: Vec<String>,
-    rating: String,
-    summary: String,
-    cast: String,
-}
-
-impl Facts {
-    /// An episode or a season shows its SHOW's logo (falling back to the show's title) over its own
-    /// name; anything else its own. The facts follow the measured rows: an episode's address, air
-    /// date and runtime; a movie's year, runtime and genres; a show's year and genres.
-    fn of(m: &PmsMovie) -> Self {
-        let child = matches!(m.kind, 2 | 3) && !m.show_rk.is_empty();
-        let (logo_rk, title, subtitle) = if child {
-            let show = if m.show_title.is_empty() { &m.title } else { &m.show_title };
-            (m.show_rk.clone(), show.clone(), m.title.clone())
-        } else {
-            (m.rk.clone(), m.title.clone(), String::new())
-        };
-        let runtime = (m.dur_ns > 0).then(|| plx_ui::fmt::dur_short(m.dur_ns / 1_000_000));
-        let year = (m.year > 0).then(|| m.year.to_string());
-        let genres = (!m.genres.is_empty()).then(|| m.genres.iter().take(2).cloned().collect::<Vec<_>>().join(", "));
-        let facts: Vec<String> = match m.kind {
-            3 => [
-                Some(plx_ui::fmt::episode_address(i64::from(m.season_index), i64::from(m.ep_index))),
-                Some(plx_ui::fmt::pretty_date(&m.aired, i64::from(m.year))),
-                runtime,
-            ].into_iter().flatten().collect(),
-            2 => [year].into_iter().flatten().collect(),
-            plx_data::pms::KIND_COLLECTION => vec![plx_ui::fmt::item_count(m.child_count)],
-            _ => [year, runtime, genres].into_iter().flatten().collect(),
-        };
-        Facts {
-            sid: m.sid.raw(),
-            logo_rk,
-            title,
-            subtitle,
-            facts: facts.into_iter().filter(|f| !f.is_empty()).collect(),
-            rating: m.rating.clone(),
-            summary: m.summary.clone(),
-            cast: m.cast.join(", "),
-        }
-    }
-
-    fn view(&self) -> geo::HeroFacts<'_> {
-        geo::HeroFacts {
-            sid: self.sid,
-            logo_rk: &self.logo_rk,
-            title: &self.title,
-            subtitle: &self.subtitle,
-            facts: &self.facts,
-            rating: &self.rating,
-            summary: &self.summary,
-            cast: &self.cast,
-        }
-    }
-}
-
-/// **The focused-item header**: its subject, the debounce that picks it, its formatted facts, the
-/// text's cross-fade and the ground under it. Paint state: no focus, reveal or press decision reads
-/// it (`LogicalState` leaves it out, as it does the Standard billboard's `Backdrop`).
-pub(super) struct Header {
-    subject: Option<Arc<PmsMovie>>,
-    /// The card focus is on while it has not yet rested long enough to be the subject, and the
-    /// `Tick` time it arrived at (an absolute clock, never an accumulated delta).
-    pending: Option<(plx_plex::plex::ServerId, String, u32)>,
-    fade: Spring,
-    facts: Facts,
-    ground: geo::HeroGround,
-}
-
-impl Header {
-    pub(super) fn new() -> Self {
-        Self { subject: None, pending: None, fade: Spring::at(1.0), facts: Facts::default(),
-            ground: geo::HeroGround::new() }
-    }
-
-    pub(super) fn reset(&mut self) {
-        *self = Self::new();
-    }
-
-    /// The item the header describes.
-    #[cfg(test)]
-    pub(super) fn subject(&self) -> Option<&PmsMovie> {
-        self.subject.as_deref()
-    }
-
-    /// Is a focused card still waiting out the settle?
-    pub(super) fn settling(&self) -> bool {
-        self.pending.is_some()
-    }
-
-    /// One frame at `t` with `focused` the card focus is on (`None` on a heading or nothing: the
-    /// subject stays). Returns whether the subject changed, for the caller to ask for a frame: the
-    /// settle is a TIMER on the page's `Tick`, which runs whether or not a frame presents, and
-    /// reports no motion of its own (the billboard's countdown rule).
-    pub(super) fn step(&mut self, focused: Option<&Arc<PmsMovie>>, t: Tick) -> bool {
-        let dt = t.dt();
-        let mut changed = false;
-        if let Some(item) = focused.filter(|m| !m.rk.is_empty()) {
-            let same = self.subject.as_ref().is_some_and(|s| s.sid == item.sid && s.rk == item.rk);
-            if same {
-                self.pending = None;
-                // the catalog republished the row (a resume point moved): describe the new copy
-                if !self.subject.as_ref().is_some_and(|s| Arc::ptr_eq(s, item)) {
-                    self.facts = Facts::of(item);
-                    self.subject = Some(Arc::clone(item));
-                }
-            } else {
-                if !self.pending.as_ref().is_some_and(|(sid, rk, _)| *sid == item.sid && *rk == item.rk) {
-                    self.pending = Some((item.sid, item.rk.clone(), t.ms));
-                }
-                let since = self.pending.as_ref().map_or(t.ms, |pending| pending.2);
-                if self.subject.is_none() || t.ms.wrapping_sub(since) >= SETTLE_MS {
-                    self.show(item);
-                    changed = true;
-                }
-            }
-        } else {
-            self.pending = None;
-        }
-        let blur = self.subject.as_ref().filter(|m| m.has_blur).map(|m| m.blur);
-        self.ground.update(geo::ground_target(blur), dt);
-        // decorative: the header's dissolve must not hold the page-freeze snapshot
-        plx_machine::idle::decorative(|| self.fade.step(1.0, K_FADE, dt));
-        changed
-    }
-
-    fn show(&mut self, item: &Arc<PmsMovie>) {
-        let first = self.subject.is_none();
-        self.facts = Facts::of(item);
-        self.subject = Some(Arc::clone(item));
-        self.pending = None;
-        self.ground.subject((!item.art.is_empty()).then(|| (item.sid.raw(), item.art.as_str())));
-        if !first {
-            self.fade.jump(0.0);
-        }
-    }
-
-    /// While the subject has settled and the source is idle, warm `next`'s logo, then its backdrop:
-    /// the card one step along the row, so the common single step finds both resident. One key a
-    /// frame, the billboard's prefetch rule.
-    pub(super) fn warm(&self, next: Option<&PmsMovie>) {
-        use plx_ui::tex::Warm;
-        let Some(next) = next.filter(|_| !self.settling() && plx_ui::tex::source_idle()) else { return };
-        let logo_rk = Facts::of(next).logo_rk;
-        if plx_ui::tex::logo_warm(next.sid.raw(), &logo_rk) == Warm::Claimed {
-            return;
-        }
-        plx_ui::tex::warm_on(next.sid.raw(), &next.art, 1280, 720, false);
-    }
-
-    /// The ground: the tinted wash and the subject's backdrop.
-    pub(super) fn draw_ground(&self, p: Painter) {
-        self.ground.draw(p);
-    }
-
-    /// The header's column, at the subject cross-fade.
-    pub(super) fn draw_text(&self, p: Painter, measure: &dyn Measure) {
-        if self.subject.is_some() {
-            geo::draw_hero(p.alpha(self.fade.pos), &self.facts.view(), measure);
-        }
-    }
-}
+pub(super) use crate::registry::shield_header::Header;
+#[cfg(test)]
+pub(super) use crate::registry::shield_header::SETTLE_MS;
 
 /// Is a shelf whose cards' top is at `top` on screen below the header's cut?
 pub(super) fn shelf_visible_at(top: f32) -> bool {

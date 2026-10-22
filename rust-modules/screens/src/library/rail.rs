@@ -1,4 +1,8 @@
 //! Fixed-band rail owned by MasterDetail. Only Input owns its focused/remembered letter.
+//!
+//! In the Shield layout (`set_shield`) the rail is the measured A–Z column (`plx_ui::shield_browse`,
+//! SHIELD-LAYOUT-SPEC §6.2): 32-pitch letters centred on the page, always drawn while Browse is up,
+//! the grid's letter ringed and a focused one on a white disc, with no track under them.
 use std::ffi::CString;
 use super::identity::{KeyRegistry, KeyRegion, region_of_elem};
 use super::layout::{rail_geom, rail_scroll_target, MAX_LETTERS, RAIL_CAP_PAD, RAIL_PITCH, RAIL_TRACK_W};
@@ -20,6 +24,10 @@ pub(super) struct RailPart {
     scroll: Spring,
     scroll_target: f32,
     alpha: Spring,
+    /// Laid out and drawn by the Shield layout's measurements, and whether the page shows the
+    /// grid it indexes (Shield's Browse). Set by the page's every relayout; not canonical state.
+    shield: bool,
+    shown: bool,
 }
 
 impl RailPart {
@@ -28,7 +36,32 @@ impl RailPart {
     pub(super) fn new(entry: EntryId, group: GroupId) -> Self {
         Self { entry, group, elems: Vec::new(), labels: Vec::new(), starts: Vec::new(),
             rect: Rect::new(0.0, 0.0, 0.0, 0.0), scroll: Spring::at(0.0),
-            scroll_target: 0.0, alpha: Spring::at(0.0) }
+            scroll_target: 0.0, alpha: Spring::at(0.0), shield: false, shown: false }
+    }
+
+    /// Follow the page's layout: Shield's measurements, and whether its grid is on the page.
+    pub(super) fn set_shield(&mut self, shield: bool, shown: bool) {
+        self.shield = shield;
+        self.shown = shown;
+    }
+
+    /// The rail for `n` letters in the layout: `(top, centre x, visible height, max scroll)`.
+    fn geom(&self, n: usize) -> (f32, f32, f32, f32) {
+        if self.shield { plx_ui::shield_browse::rail_geom(n) } else { rail_geom(n) }
+    }
+
+    fn pitch(&self) -> f32 {
+        if self.shield { plx_ui::shield_browse::RAIL_PITCH } else { RAIL_PITCH }
+    }
+
+    /// The scroll that keeps letter `drive` a pitch inside the window ([`rail_scroll_target`]'s rule).
+    fn scroll_target_for(&self, scroll: f32, drive: usize, n: usize) -> f32 {
+        if !self.shield {
+            return rail_scroll_target(scroll, drive, n);
+        }
+        let (_, _, height, max) = self.geom(n);
+        let (drive, pitch) = (drive.min(n.saturating_sub(1)) as f32, self.pitch());
+        plx_ui::cards::reveal(scroll, (drive + 2.0) * pitch - height, (drive - 1.0) * pitch, max)
     }
 
     pub(super) fn clear_projection(&mut self) {
@@ -37,7 +70,7 @@ impl RailPart {
     }
 
     pub(super) fn write(&self, c: &mut Canon) {
-        let Self { entry: _, group, elems, labels, starts, rect, scroll, scroll_target, alpha } = self;
+        let Self { entry: _, group, elems, labels, starts, rect, scroll, scroll_target, alpha, shield: _, shown: _ } = self;
         c.u32(group.0).seq(elems.len());
         for elem in elems { c.u32(*elem); }
         c.seq(labels.len());
@@ -59,7 +92,7 @@ impl RailPart {
             self.elems.push(keys.register(LibraryIdentity::Rail { section: section.clone(), label: label.clone() }, self.group, index));
             self.labels.push(CString::new(label.as_str()).unwrap_or_default());
         }
-        let (y, cx, height, max) = rail_geom(self.elems.len());
+        let (y, cx, height, max) = self.geom(self.elems.len());
         self.rect = Rect::new(cx - RAIL_TRACK_W * 0.5, y, RAIL_TRACK_W, height);
         self.scroll_target = self.scroll_target.clamp(0.0, max);
     }
@@ -67,7 +100,8 @@ impl RailPart {
     fn in_region<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> bool {
         cx.focus.current.filter(|key| key.entry == self.entry).is_some_and(|key|
             matches!(region_of_elem(key.elem), Some(KeyRegion::Grid | KeyRegion::Rail))
-                || matches!(key.elem, super::SORT | super::FILTER))
+                || matches!(key.elem, super::SORT | super::FILTER)
+                || (self.shield && matches!(key.elem, super::TYPE | super::MORE)))
     }
 
     pub(super) fn eligible<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> bool {
@@ -79,12 +113,13 @@ impl RailPart {
         let drive = cx.focus.current.filter(|key| key.entry == self.entry)
             .and_then(|key| self.elems.iter().position(|elem| *elem == key.elem))
             .or_else(|| grid_index.map(|index| self.letter_for_item(index)));
-        self.step_motion(drive, live && !self.elems.is_empty() && self.in_region(cx), dt);
+        let active = if self.shield { self.shown } else { self.in_region(cx) };
+        self.step_motion(drive, live && !self.elems.is_empty() && active, dt);
     }
 
     fn step_motion(&mut self, drive: Option<usize>, active: bool, dt: f32) {
         if let Some(drive) = drive {
-            self.scroll_target = rail_scroll_target(self.scroll.pos, drive, self.elems.len());
+            self.scroll_target = self.scroll_target_for(self.scroll.pos, drive, self.elems.len());
         }
         self.scroll.step(self.scroll_target, K_SCROLL, dt);
         self.alpha.step(if active { 1.0 } else { 0.0 }, K_SCROLL, dt);
@@ -101,17 +136,18 @@ impl RailPart {
     fn slot(&self, index: usize, at: At) -> Rect {
         let scroll = match at {
             At::Drawn => self.scroll.pos,
-            At::SpringTarget => rail_scroll_target(self.scroll.pos, index, self.elems.len()),
+            At::SpringTarget => self.scroll_target_for(self.scroll.pos, index, self.elems.len()),
         };
-        Rect::new(self.rect.x, self.rect.y + index as f32 * RAIL_PITCH - scroll, RAIL_TRACK_W, RAIL_PITCH)
+        Rect::new(self.rect.x, self.rect.y + index as f32 * self.pitch() - scroll, RAIL_TRACK_W, self.pitch())
     }
 
     fn letter_alpha(&self, index: usize) -> f32 {
         let rel = self.slot(index, At::Drawn).cy() - self.rect.y;
-        let max = rail_geom(self.elems.len()).3;
+        let max = self.geom(self.elems.len()).3;
+        let pitch = self.pitch();
         let mut alpha = 1.0f32;
-        if self.scroll.pos > 0.5 { alpha = alpha.min(rel / RAIL_PITCH); }
-        if self.scroll.pos < max - 0.5 { alpha = alpha.min((self.rect.h - rel) / RAIL_PITCH); }
+        if self.scroll.pos > 0.5 { alpha = alpha.min(rel / pitch); }
+        if self.scroll.pos < max - 0.5 { alpha = alpha.min((self.rect.h - rel) / pitch); }
         alpha.clamp(0.0, 1.0)
     }
 
@@ -128,6 +164,10 @@ impl RailPart {
     }
 
     pub(super) fn draw_with_current<H: LibraryLike>(&self, f: &mut DrawFrame<'_, '_, H>, _frame: Rect, grid_index: Option<usize>) {
+        if self.shield {
+            self.draw_shield(f, grid_index);
+            return;
+        }
         if self.elems.is_empty() || (!self.in_region(f.cx) && self.alpha.pos <= 0.01) { return; }
         let p = f.painter.alpha(f.page_alpha * self.alpha.pos);
         let track = Rect::new(self.rect.x, self.rect.y - RAIL_CAP_PAD, self.rect.w, self.rect.h + 2.0 * RAIL_CAP_PAD);
@@ -147,6 +187,25 @@ impl RailPart {
             } else if current == Some(index) { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY };
             plx_ui::label::Label::new(label.as_ptr(), theme::size::CAPTION, ink).bold()
                 .h(plx_ui::label::HAlign::Center).draw(q, slot);
+        }
+        self.record_stops(f);
+    }
+
+    /// The Shield rail: every letter while Browse is up, the grid's letter ringed, the focused one
+    /// on a white disc (`shield_browse::draw_rail_letter`).
+    fn draw_shield<H: LibraryLike>(&self, f: &mut DrawFrame<'_, '_, H>, grid_index: Option<usize>) {
+        use plx_ui::shield_browse::{draw_rail_letter, RailLetter};
+        if self.elems.is_empty() || !self.shown { return; }
+        let p = f.painter.alpha(f.page_alpha);
+        let _clip = (self.geom(self.elems.len()).3 > 0.5).then(|| f.clip(p, self.rect));
+        let current = grid_index.map(|index| self.letter_for_item(index));
+        for (index, label) in self.labels.iter().enumerate() {
+            let alpha = self.letter_alpha(index);
+            if alpha <= 0.0 { continue; }
+            let focused = f.focus.current == Some(FocusKey { entry: self.entry, elem: self.elems[index] });
+            let state = if focused { RailLetter::Focused }
+                else if current == Some(index) { RailLetter::Current } else { RailLetter::Idle };
+            draw_rail_letter(p.alpha(alpha), self.slot(index, At::Drawn), label, state);
         }
         self.record_stops(f);
     }

@@ -207,6 +207,14 @@ impl RowStyle {
         scroll: RowScroll::FixedLeft,
         treatment: Treatment::Ring,
     };
+    /// **The Shield layout's Browse grid** (SHIELD-LAYOUT-SPEC §6.1): [`Self::SHIELD_POSTER`]'s
+    /// 240x360 posters and ring on the grid's ~282.6 column pitch from x 127. A `cards::Grid` of a
+    /// ring style captions every card (`shield_browse::draw_caption`) on a fixed row pitch.
+    pub const SHIELD_GRID: RowStyle = RowStyle {
+        gap: crate::shield_browse::GRID_GAP,
+        scroll: RowScroll::Reveal,
+        ..Self::SHIELD_POSTER
+    };
     /// ring focus scalar denominator — `(s-1)/ring_denom` maps scale∈[1, focus_scale] to [0, 1].
     #[inline]
     pub(crate) fn ring_denom(&self) -> f32 {

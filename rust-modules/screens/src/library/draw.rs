@@ -94,6 +94,10 @@ mod layer_tests {
 
 impl LibraryScreen {
     pub(super) fn draw_page<H: LibraryLike>(&mut self, f: &mut DrawFrame<'_, '_, H>) {
+        if self.shield {
+            self.draw_shield(f);
+            return;
+        }
         // **The Library's own phase names**, in the `hm.*`/`st.*` family — `/tmp/plxnative-cpuprof`
         // times each on the render thread (inclusive wall, no `glFinish`, every phase at once) and
         // `--graphics-profile --profile-phase <name>` samples one. They exist because the owned
@@ -146,7 +150,6 @@ impl LibraryScreen {
 
     fn draw_document<H: LibraryLike>(&self, f: &mut DrawFrame<'_, '_, H>) {
         let p = f.painter.alpha(f.page_alpha * self.page_fade.alpha());
-        let env = Env::inert();
         self.draw_library_controls(f);
         self.draw_view_controls(f);
         plx_ui::profile::phase("lb.shelves", || {
@@ -169,6 +172,16 @@ impl LibraryScreen {
             }
         });
         self.draw_grid_header(f);
+        self.draw_readout(f);
+        if !self.plaintext_alert.visible() {
+            // the question owns the pointer while it is up; nothing under it is a target
+            self.record_document_stops(f);
+        }
+    }
+
+    /// The read-out over the content: the loading spinner, or the empty or failed status.
+    pub(super) fn draw_readout<H: LibraryLike>(&self, f: &DrawFrame<'_, '_, H>) {
+        let env = Env::inert();
         if self.readout == Readout::Loading {
             // Preserve the Library's standalone loading spinner, outside either content fade.
             plx_ui::placeholder::note(f.painter, plx_ui::placeholder::Reason::LibrarySpinner, "");
@@ -179,10 +192,6 @@ impl LibraryScreen {
             let status = self.status_overlay(f.cx, &text, reason.as_deref());
             let alpha = if self.readout == Readout::Empty { self.page_fade.alpha() * self.grid_fade.alpha() } else { 1.0 };
             status.draw_measured(&env, f.painter.alpha(f.page_alpha * alpha), f.cx.measure);
-        }
-        if !self.plaintext_alert.visible() {
-            // the question owns the pointer while it is up; nothing under it is a target
-            self.record_document_stops(f);
         }
     }
 
@@ -260,13 +269,15 @@ impl LibraryScreen {
     #[cfg(test)]
     pub fn record_stops<H: LibraryLike>(&self, f: &mut DrawFrame<'_, '_, H>) {
         layers(|layer| match layer {
-            Layer::Grid => self.pair.detail.record_stops(f),
+            Layer::Grid if self.shows_grid() => self.pair.detail.record_stops(f),
+            Layer::Grid => {}
+            Layer::Document if self.shield => self.record_shield_stops(f),
             Layer::Document => self.record_document_stops(f),
             Layer::Rail => self.pair.master.record_stops(f),
         });
     }
 
-    fn stop<H: LibraryLike>(&self, elem: u32, f: &mut DrawFrame<'_, '_, H>) {
+    pub(super) fn stop<H: LibraryLike>(&self, elem: u32, f: &mut DrawFrame<'_, '_, H>) {
         let Some(placed) = <Self as Focusable<H>>::place(self, &elem, f.cx, At::Drawn) else { return };
         f.stop(f.painter, Stop {
             key: self.key(elem), rect: placed.rect, rest_rect: placed.rest_rect, clip: placed.clip,
@@ -306,6 +317,9 @@ pub(super) struct HubSrc<'a> {
     /// `None` while the page still names a shelf the store has not published (a frame between a
     /// store change and the next `sync`): its cards draw nothing.
     pub(super) shelf: Option<&'a plx_data::browse::section_hubs::Shelf>,
+    /// The Shield layout's rows: every card a poster (an episode its show's), none overlaid, and
+    /// a partly shown row never takes a passing pointer's focus (it would slide under it).
+    pub(super) shield: bool,
 }
 
 impl HubSrc<'_> {
@@ -318,9 +332,12 @@ impl<H: Host<Elem = u32>> CardSource<H> for HubSrc<'_> {
     fn index_of(&self, e: &u32) -> Option<usize> { self.elems.iter().position(|elem| elem == e) }
     /// A card whose item the hub has not published draws nothing (its stop still registers).
     fn loaded(&self, i: usize) -> bool { self.item(i).is_some() }
+    fn hover(&self, _i: usize) -> Hover {
+        if self.shield { Hover::OnlyIfFocused } else { Hover::Focus }
+    }
     fn art(&self, i: usize) -> Art<'_> {
         match (self.item(i), self.shelf) {
-            (Some(item), Some(shelf)) if shelf.landscape => Art::Still(Some(tile_facts::of(item))),
+            (Some(item), Some(shelf)) if shelf.landscape && !self.shield => Art::Still(Some(tile_facts::of(item))),
             (Some(item), _) => Art::Poster(Some(tile_facts::of(item))),
             _ => Art::Poster(None),
         }
@@ -335,7 +352,7 @@ impl<H: Host<Elem = u32>> CardSource<H> for HubSrc<'_> {
     /// play mark when a press plays.
     fn overlay(&self, p: plx_ui::Painter, i: usize, tile: &Tile, measure: &dyn Measure) {
         let (Some(shelf), Some(item)) = (self.shelf, self.item(i)) else { return };
-        if shelf.landscape {
+        if shelf.landscape && !self.shield {
             plx_ui::widgets::still_overlay(p, &tile_facts::of(item), tile.rect, tile.radius,
                 shelf.is_continue && plx_media::route::deck_press().press_plays(), measure);
         }

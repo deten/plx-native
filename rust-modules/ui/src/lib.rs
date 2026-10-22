@@ -81,6 +81,8 @@ pub use plx_gfx::gfx::profile; // the draw-phase profiler lives in `gfx` now (mo
 pub mod route_screen;
 pub mod side_nav; // the Shield layout chrome: the collapsed icon rail, the clock pill, the side panel geometry and paint
 pub mod shield; // the Shield layout's content: the focused-item header, its tinted ground, the ring-card poster rows
+pub mod shield_browse; // the Shield layout's library pages: page tabs, chip bar, captioned grid, A–Z rail, Categories tiles
+pub mod shield_panel; // the Shield layout's right-side panel: a table menu's rows as full-width pills on a fixed frame
 pub mod rec; // RESTRUCTURE (spec §5.3): the recorder — format, bounded writer, loader, TableMeasure
 pub mod replay; // RESTRUCTURE (spec §5.5): `--targets` replay of a recording over the dispatcher
 pub mod screen; // RESTRUCTURE spike (spec §6.1, §7.1): Screen, Focusable, Composed/Part, DrawFrame

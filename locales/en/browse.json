@@ -265,6 +265,18 @@
     "value": "All",
     "description": "Library view switcher, the small pill under the selected library: the library's full list with the recommended shelves hidden"
   },
+  "browse.library.tab.browse": {
+    "value": "Browse",
+    "description": "A library page's tab in the Shield layout (beside Recommended and Categories): the library's full list as a grid, with its filter and sort chips"
+  },
+  "browse.library.tab.categories": {
+    "value": "Categories",
+    "description": "A library page's tab in the Shield layout (beside Recommended and Browse): the library's genres as tiles, each opening the list filtered by that genre"
+  },
+  "browse.library.by": {
+    "value": "by",
+    "description": "The quiet word between the type chip and the sort chip on the Shield layout's Browse tab, read together as e.g. 'Movies by Title'"
+  },
   "browse.library.all_genres": {
     "value": "All Genres",
     "description": "browse library all_genres"

@@ -1,0 +1,9 @@
+<!-- A vertical ellipsis — "more options" at the end of a row of chips (the Shield layout's Browse
+     chip bar). `more.svg` turned upright rather than redrawn: the same three r 2.25 dots, built by
+     the same two-arc construction with sweep-flag 0, as THREE SUBPATHS of one path, at y 5 / 12 / 19
+     on the centre line x 12, spanning 2.75..21.25. -->
+<svg viewBox="0 0 24 24" fill="#ffffff">
+  <path d="M 12 2.75 a 2.25 2.25 0 1 0 0 4.5 a 2.25 2.25 0 1 0 0 -4.5 Z
+           M 12 9.75 a 2.25 2.25 0 1 0 0 4.5 a 2.25 2.25 0 1 0 0 -4.5 Z
+           M 12 16.75 a 2.25 2.25 0 1 0 0 4.5 a 2.25 2.25 0 1 0 0 -4.5 Z"/>
+</svg>

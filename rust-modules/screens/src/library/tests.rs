@@ -805,7 +805,7 @@ fn pending_semantic_commits_change_the_library_state_hash() {
 // harness wholesale rather than duplicating it, per the guide at the top of that file.
 pub(super) struct Fixture {
     stores: Option<plx_data::stores::Stores>,
-    listing: plx_data::stores::browse::ListingSnapshot,
+    pub(super) listing: plx_data::stores::browse::ListingSnapshot,
     pub(super) directory: plx_data::stores::browse::DirectorySnapshot,
     hubs: plx_data::stores::browse::HubsSnapshot,
     measure: FixtureMeasure,
@@ -1010,7 +1010,7 @@ fn section_viewport_bookmarks_survive_switch_and_evicted_body() {
     }
 }
 impl Fixture {
-    fn shelves(titles: &[&str], count: usize) -> Self {
+    pub(super) fn shelves(titles: &[&str], count: usize) -> Self {
         let mut fixture = Self::new();
         let stores = plx_data::stores::Stores::default();
         stores.browse.borrow_mut().seed_two_source_table_for_test();

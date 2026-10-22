@@ -37,6 +37,10 @@ use plx_ui::screen::{Mounter, ReturnState, Screen};
 /// because a screen may name `registry` but never a sibling screen, and `ui` cannot name the row.
 pub mod tile_facts;
 
+/// The Shield layout's focused-item header over a page's poster rows: its settled subject, facts
+/// and ground. Home and the Library's Recommended tab both wear it, and neither may name the other.
+pub mod shield_header;
+
 /// The application's effects (spec §3.1). `Store` since phase 4; `Consent` and `Loop` since 5b.
 pub enum AppFx {
     Session(plx_session::auth::SessionCmd),

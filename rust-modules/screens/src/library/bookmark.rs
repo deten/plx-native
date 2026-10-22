@@ -79,6 +79,10 @@ impl LibraryScreen {
         if self.wanted_kind.is_some() || cx.focus.remembered(group).is_some() {
             return true;
         }
+        // The Shield layout shows the grid only on Browse: no other view seats on a bookmark.
+        if !self.shows_grid() {
+            return true;
+        }
         let Some(cursor) = H::listing(cx).cursor() else {
             return true;
         };
@@ -116,7 +120,8 @@ impl LibraryScreen {
             // trusted in): All, or a section last left in All, reveals the remembered row instead.
             let left_in_all = self.viewports.iter().any(|view| Some(view.epoch) == self.epoch
                 && Some(&view.section) == self.section.as_ref() && view.all);
-            let scroll = if index == slot && !self.view.is_all() && !left_in_all {
+            // (a Shield document is not the one a bookmark's scroll was taken in)
+            let scroll = if index == slot && !self.view.is_all() && !left_in_all && !self.shield {
                 cursor.scroll
             } else {
                 self.target_layout.row_reveal(index / self.layout.cols())

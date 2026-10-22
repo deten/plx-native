@@ -1,6 +1,8 @@
 //! **The Shield layout's content geometry and paint** (`layout::shield()`): the focused-item header
 //! a Home-like page wears above its rows, the ground keyed from that item's artwork, and the poster
-//! rows' card treatment. `side_nav` is the same layout's chrome; this is what stands inside it.
+//! rows' card treatment. `side_nav` is the same layout's chrome; this is what stands inside it,
+//! with `shield_browse` (the library pages' tabs, chips, grid, rail and tiles) and `shield_panel`
+//! (the right-side panel).
 //!
 //! Every number is measured off the Plex app on Android TV at 1920x1080 (SHIELD-LAYOUT-SPEC §1,
 //! §4.1, §4.4, §5), the logical space this app draws in, so they transfer 1:1 and are pinned by

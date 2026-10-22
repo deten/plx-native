@@ -1,7 +1,15 @@
 //! Pure geometry for the owned Library's single vertical document.
+//!
+//! The Shield layout's document ([`Layout::with_shield`], `shield.rs`) answers the same questions on
+//! its own measurements (SHIELD-LAYOUT-SPEC §3, §5.1, §6): the tabs head it at y 32; Browse's chip
+//! bar and captioned grid (`plx_ui::shield_browse`) or Categories' tiles follow and scroll away
+//! with it; Recommended's shelves stand in a fixed slot one `shield::ROW_PITCH` a step. Every
+//! Shield answer is a branch beside the Standard one, which is untouched.
 
 use plx_ui::consts::{CARD_H, CARD_W, MARGIN_X, MARGIN_Y, SCR_H, SCR_W};
 use plx_ui::cards::RowStyle;
+use plx_ui::shield as geo;
+use plx_ui::shield_browse as sb;
 use plx_ui::theme;
 
 pub(super) const COLS: usize = 6;
@@ -105,6 +113,8 @@ pub(super) enum Block {
     Toolbar,
     Grid(usize),
     Status,
+    /// The Shield layout's Categories tiles.
+    Categories,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -123,13 +133,20 @@ pub(super) struct Layout {
     /// Total height of the shelf run: the sequential sum of every shelf pitch.
     shelf_run: f32,
     grid_bands: [GridBand; MAX_GRID_BANDS],
+    /// Laid out by the Shield layout's measurements. Neither this nor [`Self::categories`] is
+    /// canonical state: the first is the session's layout preference (as Home's latch is), the
+    /// second a projection of the listing's genres; every `relayout` refreshes both.
+    shield: bool,
+    /// The Categories tiles standing under the tabs (Shield only).
+    pub categories: usize,
 }
 
 impl Layout {
     pub(super) const SHAPE: &'static str = "LibraryLayout{libraries:bool,views:bool,shelves:u32,rows:u32,grid_head:bool,status:bool,empty:bool,episodes:bool,shelf_run:f32,grid_bands:[(row:u32,expansion:f32)]}";
 
     pub(super) fn write(&self, c: &mut plx_machine::machine::Canon) {
-        let Self { libraries, views, shelves, rows, grid_head, status, empty, episodes, shelf_run, grid_bands } = self;
+        let Self { libraries, views, shelves, rows, grid_head, status, empty, episodes, shelf_run, grid_bands,
+            shield: _, categories: _ } = self;
         c.bool(*libraries).bool(*views).u32(*shelves as u32).u32(*rows as u32).bool(*grid_head).bool(*status).bool(*empty).bool(*episodes);
         c.f32(*shelf_run);
         c.seq(grid_bands.iter().filter(|band| band.row != usize::MAX).count());
@@ -150,7 +167,39 @@ impl Layout {
             episodes: false,
             shelf_run: shelf_pitches.iter().sum::<f32>(),
             grid_bands: [GridBand::CLOSED; MAX_GRID_BANDS],
+            shield: false,
+            categories: 0,
         }
+    }
+
+    /// This document laid out by the Shield layout's measurements (module doc).
+    pub(super) fn with_shield(self, shield: bool) -> Self { Self { shield, ..self } }
+
+    /// This document with `categories` tiles under its tabs (Shield).
+    pub(super) fn with_categories(self, categories: usize) -> Self { Self { categories, ..self } }
+
+    pub(super) fn is_shield(&self) -> bool { self.shield }
+
+    /// The screen y of the document's top at scroll 0: under the top bar, or (Shield) the tabs'.
+    pub(super) fn content_top(&self) -> f32 { if self.shield { sb::TAB_TRACK_Y } else { CONTENT_TOP } }
+
+    /// The x of the grid's first column.
+    pub(super) fn left(&self) -> f32 { if self.shield { geo::CONTENT_X } else { MARGIN_X } }
+
+    /// The right end of the grid's last column.
+    pub(super) fn grid_right(&self) -> f32 {
+        if self.shield { self.cell_x(self.cols() - 1) + self.card_w() } else { GRID_RIGHT }
+    }
+
+    /// The Categories tiles' first row, in document space.
+    pub(super) fn categories_top(&self) -> f32 { sb::TILE_TOP - sb::TAB_TRACK_Y }
+
+    /// The scroll that shows tile row `row`: none for the first; else the row held where the
+    /// second rests, the row above it still in view.
+    pub(super) fn category_reveal(&self, row: usize) -> f32 {
+        if row == 0 { return 0.0; }
+        (self.content_top() + self.categories_top() + row as f32 * sb::TILE_PITCH_Y - sb::TILE_FOCUS_ROW_Y)
+            .clamp(0.0, self.max_scroll())
     }
 
     pub(super) fn failed(libraries: bool, shelf_pitches: &[f32]) -> Self {
@@ -169,6 +218,10 @@ impl Layout {
 
     pub(super) fn with_grid_focus(mut self, row: Option<usize>) -> Self {
         self.grid_bands = [GridBand::CLOSED; MAX_GRID_BANDS];
+        if self.shield {
+            // every Shield card wears its caption: no row's band opens
+            return self;
+        }
         self.grid_bands[..1].copy_from_slice(&plx_ui::cards::grid_settled(row.filter(|&row| row < self.rows)));
         self
     }
@@ -179,6 +232,7 @@ impl Layout {
     }
 
     fn band_growth_before(&self, row: usize) -> f32 {
+        if self.shield { return 0.0; }
         plx_ui::cards::grid_growth_before(row.min(self.rows), &self.grid_bands)
     }
 
@@ -194,6 +248,16 @@ impl Layout {
     /// before the alphabet rail. Its height follows the shared aspect, so the grid's hit boxes,
     /// scroll window and draws all describe the same cards.
     pub(super) fn style(&self) -> RowStyle {
+        if self.shield {
+            // Shield: the captioned posters from x 127 (`RowStyle::SHIELD_GRID`); an episode
+            // listing fits four stills of the shared aspect into the same span
+            let base = RowStyle::SHIELD_GRID;
+            if !self.episodes { return base; }
+            let span = sb::GRID_LAST_X + base.w - geo::CONTENT_X;
+            let w = (span - (EPISODE_COLS - 1) as f32 * base.gap) / EPISODE_COLS as f32;
+            let still = RowStyle::EPISODE;
+            return RowStyle { w, h: w * still.h / still.w, ..base };
+        }
         let style = if self.episodes {
             let base = RowStyle::EPISODE;
             let w = (GRID_RIGHT - MARGIN_X - (EPISODE_COLS - 1) as f32 * base.gap)
@@ -208,17 +272,22 @@ impl Layout {
     pub(super) fn card_h(&self) -> f32 { self.style().h }
 
     pub(super) fn grid_pitch(&self) -> f32 {
+        if self.shield { return self.card_h() + sb::GRID_CAPTION_BAND; }
         self.card_h() + plx_ui::cards::LABEL_BAND_COLLAPSED + plx_ui::consts::UNDER_LABEL_AIR
     }
 
     pub(super) fn cell_x(&self, col: usize) -> f32 {
         let style = self.style();
-        MARGIN_X + col as f32 * (style.w + style.gap)
+        self.left() + col as f32 * (style.w + style.gap)
     }
 
     /// The head of the document: the library row, the view switcher under it, and the air down
     /// to the first shelf's heading. Either row may be absent; with neither there is no head.
     pub(super) fn library_h(&self) -> f32 {
+        if self.shield {
+            // the tabs' band, down to the chip bar (Browse) or the document's next block
+            return if self.views { sb::CHIP_Y - sb::TAB_TRACK_Y } else { 0.0 };
+        }
         match (self.libraries, self.views) {
             (false, false) => 0.0,
             (true, false) => LIBRARY_ROW_H,
@@ -242,11 +311,12 @@ impl Layout {
     }
 
     pub(super) fn grid_top(&self) -> f32 {
-        self.grid_block_top() + if self.grid_head { GRID_HEAD_H } else { 0.0 }
+        let head = if self.shield { sb::GRID_TOP - sb::CHIP_Y } else { GRID_HEAD_H };
+        self.grid_block_top() + if self.grid_head { head } else { 0.0 }
     }
 
     pub(super) fn row_y(&self, row: usize, scroll: f32) -> f32 {
-        CONTENT_TOP + self.row_top(row) - scroll
+        self.content_top() + self.row_top(row) - scroll
     }
 
     pub(super) fn shelf_y(&self, run: &ShelfRun, shelf: usize, scroll: f32) -> f32 {
@@ -255,7 +325,12 @@ impl Layout {
 
     pub(super) fn doc_to_grid(&self, scroll: f32) -> f32 { scroll - self.grid_top() }
 
-    pub(super) fn doc_h(&self) -> f32 { self.row_top(self.rows) + self.empty_band().map_or(0.0, |(_, h)| h) }
+    pub(super) fn doc_h(&self) -> f32 {
+        if self.shield && self.categories > 0 {
+            return self.categories_top() + self.categories.div_ceil(sb::TILE_COLS) as f32 * sb::TILE_PITCH_Y;
+        }
+        self.row_top(self.rows) + self.empty_band().map_or(0.0, |(_, h)| h)
+    }
 
     /// The document band an empty answer's read-out stands in — `(top, height)` in document
     /// space, directly under the heading row — when the layout reserves one.
@@ -264,10 +339,24 @@ impl Layout {
     }
 
     pub(super) fn max_scroll(&self) -> f32 {
+        if self.shield {
+            // Recommended's rows: the last one comes to the slot; a document: its foot on the
+            // screen's (the last grid row's caption band and tile row's air already end in air)
+            if self.shelves > 0 && self.rows == 0 && self.categories == 0 {
+                return (self.shelf_run - geo::ROW_PITCH).max(0.0);
+            }
+            return (self.content_top() + self.doc_h() - SCR_H).max(0.0);
+        }
         (self.doc_h() - (SCR_H - CONTENT_TOP) + MARGIN_Y).max(0.0)
     }
 
     pub(super) fn row_reveal(&self, row: usize) -> f32 {
+        if self.shield {
+            // the first row shows the tabs and chips over it; a later one is held at
+            // `GRID_FOCUS_ROW_Y`, the row above it still in view (d02)
+            if row == 0 { return 0.0; }
+            return (self.content_top() + self.row_top(row) - sb::GRID_FOCUS_ROW_Y).clamp(0.0, self.max_scroll());
+        }
         // With no shelf above it (All, or a library with none) the grid's first row stands under
         // the pill rows; when it fits whole there the page holds still, so the rows above it stay
         // in view instead of sliding half under the top bar.
@@ -280,6 +369,10 @@ impl Layout {
     }
 
     pub(super) fn shelf_reveal(&self, run: &ShelfRun, shelf: usize) -> f32 {
+        if self.shield {
+            // the fixed slot: shelf `i` rests there at `i` pitches
+            return run.origin(shelf).clamp(0.0, self.max_scroll());
+        }
         // With no library row, all that stands above the first shelf is a lone library's view
         // switcher (or nothing): the page holds still, so the switcher stays in view with it.
         if shelf == 0 && !self.libraries { return 0.0; }
@@ -292,6 +385,7 @@ impl Layout {
         else if self.shelves > 0 { Some(Block::Shelf(0)) }
         else if self.status { Some(Block::Status) }
         else if self.grid_head { Some(Block::Toolbar) }
+        else if self.categories > 0 { Some(Block::Categories) }
         else { None }
     }
 
@@ -337,7 +431,7 @@ impl Layout {
     /// pushes rows further down, so the document's head shows no more than this either.
     #[cfg(any(test, feature = "devtriggers"))]
     pub(super) fn rows_per_screen(&self) -> usize {
-        ((SCR_H - CONTENT_TOP) / self.grid_pitch()).ceil() as usize
+        ((SCR_H - self.content_top()) / self.grid_pitch()).ceil() as usize
     }
 
     pub(super) fn visible_rows(&self, scroll: f32) -> (usize, usize) {
@@ -348,7 +442,7 @@ impl Layout {
         // inverse retains only nearby rows without scanning a catalog or binary-searching it.
         let growth = self.band_growth_before(self.rows);
         let lo = ((local - self.card_h() - growth) / pitch).floor().max(0.0) as usize;
-        let hi = (((local + SCR_H - CONTENT_TOP) / pitch).ceil().max(0.0) as usize + 1).min(self.rows);
+        let hi = (((local + SCR_H - self.content_top()) / pitch).ceil().max(0.0) as usize + 1).min(self.rows);
         (lo.min(hi), hi)
     }
 

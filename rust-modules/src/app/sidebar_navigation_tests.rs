@@ -222,3 +222,70 @@ fn the_layout_write_is_durable_before_it_is_live() {
     assert!(!plx_ui::layout::shield());
     assert_eq!(plx_plex::plex::session::peek().layout_mode(), LayoutMode::Standard);
 }
+
+fn library(d: &Dispatcher<AppHost>) -> Option<&plx_screens::library::LibraryScreen> {
+    d.nav.top_page()?.inst.as_ref()?.screen.as_any()?.downcast_ref()
+}
+
+/// A Library with a listing and Recommended shelves, on one owned server.
+fn rig_with_a_library() -> Bridge {
+    let mut rig = Bridge::for_test(|| 0);
+    plx_plex::plex::reset_servers_for_test();
+    let sid = plx_plex::plex::register_for_test("shield-library", "127.0.0.1", 9, "synthetic", "fixture");
+    plx_plex::plex::set_current(sid);
+    rig.stores.browse.borrow_mut().seed_registered_table_for_test([sid, sid]);
+    rig.refresh_browse_directory();
+    rig.browse_run(plx_data::stores::browse::BrowseCmd::SetCur(0));
+    rig.stores.browse.borrow_mut().seed_items_for_test(120);
+    rig.stores.browse.borrow_mut().seed_shelves_for_test(0, &["movie.inprogress.1", "movie.recentlyadded.1"], 10);
+    rig
+}
+
+/// The Library, Shield layout, through the real frame: focus arrives on Recommended's first row
+/// (not the tabs above it); UP reaches the tabs; LEFT at the first tab opens the side panel on
+/// this library's row.
+#[test]
+fn the_library_seats_its_first_row_and_left_at_the_first_tab_opens_the_side_panel() {
+    let _guard = plx_base::testlock::serial();
+    let session = plx_plex::plex::session::TempSession::new("shield-library-nav");
+    session.watching("u-shield-library-nav");
+    plx_ui::layout::with_shield(|| {
+        let mut d = Dispatcher::<AppHost>::new();
+        let mut rig = rig_with_a_library();
+        let route = AppArg::Library;
+        let t = settle(&mut d, &mut rig, &route, 0, 40);
+        let region = |d: &Dispatcher<AppHost>| library(d).map(|l| l.probe_viewport(page_focus(d)).0);
+        assert_eq!(library(&d).and_then(|l| l.shelf_position(page_focus(&d))), Some((0, 0)),
+            "focus arrives on the first row's first card, region {:?}", region(&d));
+        let t = press(&mut d, &mut rig, &route, t, Key::Up);
+        assert_eq!(region(&d), Some("views"), "UP from the first row reaches the tabs");
+        assert!(sidebar(&d).is_none());
+        press(&mut d, &mut rig, &route, t, Key::Left);
+        assert!(sidebar(&d).is_some(), "LEFT at the first tab opens the side panel");
+        assert!(matches!(focused_go(&d), Some(Go::Library { .. })), "…on this library's row");
+    });
+    plx_plex::plex::reset_servers_for_test();
+}
+
+/// The same arrival from Home through the side panel's library row (`show_library`): the page
+/// mounts before its shelves land and still seats on the first row once they do.
+#[test]
+fn the_library_reached_from_the_side_panel_seats_its_first_row() {
+    let _guard = plx_base::testlock::serial();
+    let session = plx_plex::plex::session::TempSession::new("shield-library-panel");
+    session.watching("u-shield-library-panel");
+    plx_ui::layout::with_shield(|| {
+        let mut d = Dispatcher::<AppHost>::new();
+        let mut rig = rig_with_a_library();
+        let t = settle(&mut d, &mut rig, &AppArg::Home, 0, 3);
+        let directory = rig.directory.view();
+        let section = &directory.sections()[0];
+        let (sid, key, kind) = (section.sid.unwrap(), section.key, section.kind);
+        rig.show_library(&mut d, sid, key, kind);
+        settle(&mut d, &mut rig, &AppArg::Library, t, 40);
+        let focus = page_focus(&d);
+        assert_eq!(library(&d).and_then(|l| l.shelf_position(focus)), Some((0, 0)),
+            "region {:?}", library(&d).map(|l| l.probe_viewport(focus).0));
+    });
+    plx_plex::plex::reset_servers_for_test();
+}

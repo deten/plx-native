@@ -70,6 +70,23 @@ const CAPTION_28: [f32; 4] = rgb8(0x47, 0x47, 0x47);
 // Sand — one warm off-white, and it has exactly one job: the ambient wash's resting cast.
 const SAND_100: [f32; 4] = rgb8(0xe9, 0xe6, 0xe0);
 
+// Genre — muted mid-dark hues, and they have exactly one job: the Shield layout's Categories tiles
+// (`shield_browse::tile_tint`), where each genre wears a solid wash of its own in place of the
+// artwork the Plex app lays under it. Every stop carries the tile's white bold label above the 3:1
+// large-text floor (`shield_browse`'s `every_category_tint_carries_white_type`).
+const GENRE_TEAL: [f32; 4] = rgb8(0x2b, 0x7a, 0x8c);
+const GENRE_OLIVE: [f32; 4] = rgb8(0x5c, 0x52, 0x1e);
+const GENRE_GREEN: [f32; 4] = rgb8(0x3a, 0x7e, 0x42);
+const GENRE_MOSS: [f32; 4] = rgb8(0x4e, 0x62, 0x22);
+const GENRE_PINE: [f32; 4] = rgb8(0x1f, 0x4a, 0x34);
+const GENRE_PLUM: [f32; 4] = rgb8(0x50, 0x2e, 0x60);
+const GENRE_NAVY: [f32; 4] = rgb8(0x2e, 0x40, 0x66);
+const GENRE_RUST: [f32; 4] = rgb8(0x86, 0x47, 0x26);
+const GENRE_SAND: [f32; 4] = rgb8(0x8a, 0x74, 0x4a);
+const GENRE_FERN: [f32; 4] = rgb8(0x48, 0x58, 0x24);
+const GENRE_OCHRE: [f32; 4] = rgb8(0x84, 0x5c, 0x1e);
+const GENRE_INDIGO: [f32; 4] = rgb8(0x3c, 0x3e, 0x82);
+
 // Atmosphere — deliberately dark, warm light for a pre-content route. These are not state colours
 // and never ink a control; together they stand in for an artwork UltraBlur envelope before the
 // catalog has supplied one. The range stays on PlxNative's graphite/amber axis so first-run does
@@ -1249,6 +1266,56 @@ pub const SHIELD_HEADING_SOURCE: [f32; 4] = COOL_400;
 /// **The neutral ground**, when the focused item carries no artwork colours: the measured dark
 /// diagonal (bg.neutral), corner-major TL, TR, BR, BL like every wash.
 pub const SHIELD_GROUND_NEUTRAL: [[f32; 4]; 4] = [NEUTRAL_400, NEUTRAL_950, NEUTRAL_600, NEUTRAL_950];
+
+// ── Shield library pages (`shield_browse`: the page tabs, the chip bar, the captioned grid, the
+// A–Z rail and the Categories tiles; `shield_panel`: the right-side panel) ──────────────────────
+// Measured off the Plex app on Android TV (SHIELD-LAYOUT-SPEC §1.4, §3, §6). Every control on these
+// pages reads focus the one way the layout's side panel does: a white plate with black ink.
+/// A page's tab track: black ~30% over the page.
+pub const SHIELD_TAB_TRACK: [f32; 4] = with_a(BLACK, 0.30);
+/// An unselected tab's label: white ~60%.
+pub const SHIELD_TAB_IDLE_INK: [f32; 4] = with_a(WHITE, 0.60);
+/// The selected tab's label, and every chip's.
+pub const SHIELD_TAB_INK: [f32; 4] = WHITE;
+/// The selected (unfocused) tab's 2px outline: white ~30%.
+pub const SHIELD_TAB_SELECTED_RING: [f32; 4] = with_a(WHITE, 0.30);
+/// A focused tab, chip, rail letter or panel row: a full white plate…
+pub const SHIELD_FOCUS_FILL: [f32; 4] = WHITE;
+/// …and its black ink.
+pub const SHIELD_FOCUS_INK: [f32; 4] = BLACK;
+/// A chip's idle plate (control.idle, white ~10%).
+pub const SHIELD_CHIP_FILL: [f32; 4] = with_a(WHITE, 0.10);
+/// The quiet word between two chips ("by").
+pub const SHIELD_CHIP_WORD_INK: [f32; 4] = with_a(WHITE, 0.70);
+/// The item count's dark box (chip.dark, black ~60%) and its figures.
+pub const SHIELD_COUNT_FILL: [f32; 4] = with_a(BLACK, 0.60);
+pub const SHIELD_COUNT_INK: [f32; 4] = WHITE;
+/// A grid card's caption: its title in white…
+pub const SHIELD_CAPTION_TITLE: [f32; 4] = WHITE;
+/// …and its year in the secondary grey (`#a1a1a1` measured, white ~60%).
+pub const SHIELD_CAPTION_SUB: [f32; 4] = with_a(WHITE, 0.60);
+/// An A–Z rail letter at rest (`#9c9c9c` measured).
+pub const SHIELD_RAIL_INK: [f32; 4] = with_a(WHITE, 0.60);
+/// The letter the grid's focus is under: a 2px ring (white ~60%) round a white glyph.
+pub const SHIELD_RAIL_CURRENT_RING: [f32; 4] = with_a(WHITE, 0.60);
+pub const SHIELD_RAIL_CURRENT_INK: [f32; 4] = WHITE;
+/// A Categories tile's genre name.
+pub const SHIELD_TILE_INK: [f32; 4] = WHITE;
+/// **The Categories tiles' washes**, one per genre in the listing's order, cycling.
+pub const SHIELD_CATEGORY_TINTS: [[f32; 4]; 12] = [
+    GENRE_TEAL, GENRE_OLIVE, GENRE_GREEN, GENRE_MOSS, GENRE_PINE, GENRE_PLUM,
+    GENRE_NAVY, GENRE_RUST, GENRE_SAND, GENRE_FERN, GENRE_OCHRE, GENRE_INDIGO,
+];
+/// The right-side panel's ground (panel.fill)…
+pub const SHIELD_PANEL_FILL: [f32; 4] = BLACK;
+/// …its 2px border and the hairline between its groups (panel.border, `#1a1a1a` measured).
+pub const SHIELD_PANEL_EDGE: [f32; 4] = NEUTRAL_750;
+/// The panel's title and an idle row's label.
+pub const SHIELD_PANEL_INK: [f32; 4] = WHITE;
+/// A row's trailing value and a group's title: the tertiary grey (`#999999` measured).
+pub const SHIELD_PANEL_VALUE_INK: [f32; 4] = COOL_400;
+/// A trailing value on the focused row's white plate (dark grey).
+pub const SHIELD_PANEL_VALUE_FOCUS_INK: [f32; 4] = with_a(BLACK, 0.60);
 
 // ── Review-score marks (detail hero ratings row) ─────────────────────────────
 // These used to be the ONE place the palette borrowed someone else's colour, justified by the

@@ -1,4 +1,8 @@
 //! A registered Library menu surface. Navigation owns its lifetime, phase, and input scope.
+//!
+//! In the Shield layout the same menu, with the same rows, keys and actions, stands as the
+//! right-side panel (`plx_ui::shield_panel`, SHIELD-LAYOUT-SPEC §6.4) over a 50% dim instead of a
+//! popover beside its chip: the layout is latched per event, so a live switch re-presents it.
 use plx_data::browse::{LibraryType, GenreEntry, SecKind, SortEntry, SrcGroup, SrcRow};
 use crate::registry::{AppFx, AppMsg, LibraryLike, LibraryMenuArg, LibraryMenuKind};
 use plx_data::stores::browse::{BrowseCmd, LibraryWork, QueryEdit, SectionAddress};
@@ -392,6 +396,12 @@ pub struct LibraryMenu {
     identities: Vec<String>,
     stamp: Vec<u8>,
     desired_unwatched: Option<bool>,
+    /// Presented as the Shield layout's right-side panel: `plx_ui::layout::shield()`, latched at
+    /// the top of every event.
+    shield: bool,
+    /// The Shield panel's list scroll: how far its rows have moved up to keep focus in the window
+    /// (`shield_panel::scroll_for`).
+    panel_scroll: f32,
     #[cfg(test)] draft_rebuilds: usize,
 }
 
@@ -405,12 +415,41 @@ impl LibraryMenu {
             identities: Vec::new(),
             stamp: Vec::new(),
             desired_unwatched: None,
+            shield: plx_ui::layout::shield(),
+            panel_scroll: 0.0,
             #[cfg(test)] draft_rebuilds: 0,
+        }
+    }
+
+    /// The menu's title: what it chooses.
+    fn title(&self) -> &'static str {
+        match self.kind {
+            LibraryMenuKind::Type => plx_platform::i18n::msg::browse_library_filter_by(),
+            LibraryMenuKind::Sort => plx_platform::i18n::msg::browse_library_sort_by(),
+            LibraryMenuKind::Filter => plx_platform::i18n::msg::browse_library_filter(),
+            LibraryMenuKind::Genre => plx_platform::i18n::msg::browse_library_genre(),
+            LibraryMenuKind::Sources => plx_platform::i18n::msg::browse_library_libraries(),
+        }
+    }
+
+    /// The Shield panel's list, laid out from the rows the table holds.
+    fn panel_lines(&self) -> Vec<plx_ui::shield_panel::Line> {
+        plx_ui::shield_panel::lay_out(&self.form.table.sections, self.title())
+    }
+
+    /// Keep the focused row inside the Shield panel's list window.
+    fn follow_panel(&mut self) {
+        let Ok(sel) = usize::try_from(self.form.table.sel) else { return };
+        if let Some((top, h)) = plx_ui::shield_panel::row_span(&self.panel_lines(), sel) {
+            self.panel_scroll = plx_ui::shield_panel::scroll_for(top, h, self.panel_scroll);
         }
     }
     /// Hugs its rows: width is the shared menu rule ([`TableView::menu_panel_width`]), hung off the
     /// anchor's left edge and pulled back so the right edge stays inside the keep-out.
     fn frame(&self, measure: &dyn plx_machine::machine::Measure) -> Rect {
+        if self.shield {
+            return plx_ui::shield_panel::PANEL;
+        }
         let [x, y, _, h] = self.arg.anchor.map(f32::from_bits);
         let height = self.form.table.measured_height().clamp(120.0, 740.0);
         let width = self.form.table.menu_panel_width(measure);
@@ -457,14 +496,7 @@ impl LibraryMenu {
         listing: plx_data::stores::browse::ListingView<'_>,
         directory: plx_data::stores::browse::DirectoryView<'_>,
     ) -> MenuDraft {
-        let title = match self.kind {
-            LibraryMenuKind::Type => plx_platform::i18n::msg::browse_library_filter_by(),
-            LibraryMenuKind::Sort => plx_platform::i18n::msg::browse_library_sort_by(),
-            LibraryMenuKind::Filter => plx_platform::i18n::msg::browse_library_filter(),
-            LibraryMenuKind::Genre => plx_platform::i18n::msg::browse_library_genre(),
-            LibraryMenuKind::Sources => plx_platform::i18n::msg::browse_library_libraries(),
-        };
-        let mut section = MenuSection::new(title);
+        let mut section = MenuSection::new(self.title());
         match self.kind {
             LibraryMenuKind::Type => return type_draft(listing_kind(listing, directory), listing.library_type()),
             LibraryMenuKind::Sort => {
@@ -559,6 +591,12 @@ impl LibraryMenu {
 impl<H: LibraryLike> Machine<H> for LibraryMenu {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        let shield = plx_ui::layout::shield();
+        if shield != self.shield {
+            self.shield = shield;
+            self.panel_scroll = 0.0;
+            fx.invalidate(plx_machine::present::Provenance::Nav);
+        }
         match ev {
             ScreenEvent::App(AppMsg::Library(crate::registry::LibraryCmd::SwitchStep(step))) => {
                 let key = match step % 14 {
@@ -595,12 +633,18 @@ impl<H: LibraryLike> Machine<H> for LibraryMenu {
                     .and_then(|focus| self.form.index_of_key(RowKey(focus.elem)))
                     .map_or(-1, |i| i as i32);
                 self.form.table.update(tick.dt(), self.frame(cx.measure).h);
+                if self.shield {
+                    self.follow_panel();
+                }
             }
             ScreenEvent::FocusMoved { to, .. } => {
                 self.form.table.sel = self
                     .form
                     .index_of_key(RowKey(to.elem))
                     .map_or(-1, |i| i as i32);
+                if self.shield {
+                    self.follow_panel();
+                }
             }
             ScreenEvent::Activate(elem) => self.activate(*elem, cx, fx),
             ScreenEvent::PressCommit(_) => {
@@ -663,6 +707,10 @@ impl<H: LibraryLike> Focusable<H> for LibraryMenu {
     }
     fn place(&self, elem: &u32, cx: &Cx<'_, H>, _: At) -> Option<Placed> {
         let index = self.form.index_of_key(RowKey(*elem))?;
+        if self.shield {
+            let rect = plx_ui::shield_panel::row_rect(&self.panel_lines(), index, self.panel_scroll)?;
+            return Some(Placed { rect, rest_rect: rect, clip: plx_ui::shield_panel::list_clip(), index: Some(index as u32) });
+        }
         let rect = self.form.table.row_frame(self.frame(cx.measure), index as i32)?;
         Some(Placed {
             rect,
@@ -703,6 +751,10 @@ impl<H: LibraryLike> Screen<H> for LibraryMenu {
     /// chip-shaped control on a live page opening a list beside it. The page recedes (inheriting
     /// its own light through the container's field) and stays readable.
     fn scrim(&self) -> plx_ui::screen::Scrim {
+        // the Shield panel takes a side of the screen: the sheet's dim, the measured 50%
+        if self.shield {
+            return plx_ui::screen::Scrim::dim(plx_ui::theme::underlay::DIM_SHEET);
+        }
         plx_ui::screen::Scrim::dim(plx_ui::theme::underlay::DIM_COMPACT)
     }
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
@@ -714,6 +766,12 @@ impl<H: LibraryLike> Screen<H> for LibraryMenu {
         let field = f.underlay;
         let frame = self.frame(measure);
         plx_ui::profile::phase("lb.menu", || {
+            if self.shield {
+                let focused = usize::try_from(self.form.table.sel).ok();
+                plx_ui::shield_panel::draw(p, self.title(), &self.form.table.sections, &self.panel_lines(), focused,
+                    self.panel_scroll, measure);
+                return;
+            }
             plx_ui::widgets::panel_ground(p, frame, PANEL_RADIUS, field);
             self.form.table.draw(p, frame, measure);
         });
@@ -762,6 +820,10 @@ impl LogicalState for LibraryMenu {
             }
         }
         self.form.table.write_motion(c);
+        // The Shield panel's scroll moves its rows' rects; Standard writes nothing new.
+        if self.shield {
+            c.f32(self.panel_scroll);
+        }
     }
     fn probe(&self, out: &mut String) {
         out.push_str("library_menu");
@@ -1221,6 +1283,43 @@ mod tests {
     }
 
     include!("menu_contract_tests.rs");
+
+    /// **The Shield layout's right-side panel** (SHIELD-LAYOUT-SPEC §6.4): the same Sort menu, its
+    /// rows and keys untouched, stands at the 640x1016 frame at x 1248 over the sheet's 50% dim,
+    /// its rows 508x64 on a 72 pitch from y 210; the Standard popover is left as it was.
+    #[test]
+    fn the_shield_layout_presents_the_menu_as_the_right_side_panel() {
+        let sorts: Vec<SortEntry> = ["titleSort", "addedAt", "year"].iter().map(|key| SortEntry {
+            key: (*key).into(), desc_key: String::new(), title: (*key).into(), default_desc: false,
+        }).collect();
+        let arg = LibraryMenuArg {
+            host: plx_machine::machine::InstanceId(8),
+            target: SectionAddress { epoch: 11, sid: ServerId::from_raw(1), section: 7 },
+            kind: LibraryMenuKind::Sort, anchor: [0; 4],
+        };
+        let standard = {
+            let mut menu = LibraryMenu::new(EntryId(7), arg.clone());
+            menu.apply_draft(sort_draft(&sorts, 0, false));
+            menu
+        };
+        plx_ui::layout::with_shield(|| {
+            let mut menu = LibraryMenu::new(EntryId(7), arg.clone());
+            menu.apply_draft(sort_draft(&sorts, 0, false));
+            let measure = FixtureMeasure;
+            assert_eq!(menu.frame(&measure), plx_ui::shield_panel::PANEL);
+            let rows: Vec<Rect> = (0..3).map(|i| {
+                let key = menu.form.key_at(i).expect("a bound row").0;
+                with_cx(|cx| <LibraryMenu as Focusable<HostFixture>>::place(&menu, &key, cx, At::Drawn).unwrap().rect)
+            }).collect();
+            assert_eq!(rows[0], Rect::new(1314.0, 210.0, 508.0, 64.0));
+            assert_eq!(rows[1].y - rows[0].y, 72.0);
+            assert_eq!(rows[2].y - rows[1].y, 72.0);
+            let dim = |m: &LibraryMenu| <LibraryMenu as Screen<HostFixture>>::scrim(m).alpha;
+            assert_eq!(dim(&menu), plx_ui::screen::Scrim::dim(plx_ui::theme::underlay::DIM_SHEET).alpha);
+            assert_ne!(dim(&menu), dim(&standard), "the Standard popover keeps its compact dim");
+        });
+        assert_ne!(standard.frame(&FixtureMeasure), plx_ui::shield_panel::PANEL, "Standard: the popover");
+    }
 
     /// **Every TYPE row fits the popover, in every shipped language** — movie and TV sections
     /// alike, Collections included, with the section header. Measured with the device's

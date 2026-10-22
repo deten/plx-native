@@ -22,6 +22,11 @@
 //! screen. OK on a view there opens that library straight into the view chosen ([`Opening`]) and
 //! records the choice. DOWN there goes nowhere: the content below is the library on screen's, and
 //! only OK chooses. UP returns to its pill, and leaving the switcher any other way forgets it.
+//!
+//! **The Shield layout** puts the same choice in the page's tabs (`shield.rs`): *Recommended |
+//! Browse | Categories* ([`View::SHIELD_ELEMS`]), Browse being [`View::All`]. Categories is that
+//! layout's own third view: it is never recorded as a library's choice and never the view a library
+//! opens in, so *Library opens on* and its *Last* keep meaning Recommended or All.
 use super::*;
 use super::layout::{VIEW_PILL_H, VIEW_SZ};
 
@@ -38,23 +43,28 @@ pub(super) enum View {
     #[default]
     Recommended,
     All,
+    /// The listing's genres as tiles (the Shield layout's Categories tab only).
+    Categories,
 }
 
 impl View {
     /// The switcher's elements, in the order its pills stand.
     pub(super) const ELEMS: [u32; 2] = [VIEW_RECOMMENDED, VIEW_ALL];
+    /// The Shield layout's tabs, in the order they stand: Recommended, Browse, Categories.
+    pub(super) const SHIELD_ELEMS: [u32; 3] = [VIEW_RECOMMENDED, VIEW_ALL, VIEW_CATEGORIES];
 
     pub(super) fn of(all: bool) -> Self { if all { View::All } else { View::Recommended } }
 
     pub(super) fn is_all(self) -> bool { self == View::All }
 
-    /// This view's pill in the switcher.
-    pub(super) fn elem(self) -> u32 { Self::ELEMS[self.index()] }
+    /// This view's pill in the switcher (its tab in the Shield layout).
+    pub(super) fn elem(self) -> u32 { Self::SHIELD_ELEMS[self.index()] }
 
-    pub(super) fn index(self) -> usize { match self { View::Recommended => 0, View::All => 1 } }
+    pub(super) fn index(self) -> usize { match self { View::Recommended => 0, View::All => 1, View::Categories => 2 } }
 
     pub(super) fn from_elem(elem: u32) -> Option<Self> {
-        Self::ELEMS.iter().position(|e| *e == elem).map(|i| View::of(i == 1))
+        Self::SHIELD_ELEMS.iter().position(|e| *e == elem)
+            .map(|i| [View::Recommended, View::All, View::Categories][i])
     }
 }
 
@@ -98,7 +108,7 @@ impl LibraryScreen {
 
     /// Focus is on one of the switcher's pills.
     fn in_switcher<H: LibraryLike>(&self, cx: &Cx<'_, H>) -> bool {
-        self.layout.views && cx.focus.current.is_some_and(|key| key.entry == self.entry && View::ELEMS.contains(&key.elem))
+        self.layout.views && cx.focus.current.is_some_and(|key| key.entry == self.entry && self.view_elems().contains(&key.elem))
     }
 
     /// The library (section index) the switcher stands under and acts on.
@@ -131,12 +141,12 @@ impl LibraryScreen {
     /// library's; a move inside the switcher keeps it; any other move forgets it.
     pub(super) fn track_views_for<H: LibraryLike>(&mut self, from: Option<FocusKey<u32>>, to: FocusKey<u32>, cx: &Cx<'_, H>) {
         let mine = |key: FocusKey<u32>| key.entry == self.entry;
-        if !(mine(to) && self.layout.views && View::ELEMS.contains(&to.elem)) {
+        if !(mine(to) && self.layout.views && self.view_elems().contains(&to.elem)) {
             self.views_for = None;
             return;
         }
         let Some(from) = from.filter(|key| mine(*key)) else { self.views_for = None; return };
-        if View::ELEMS.contains(&from.elem) { return; }
+        if self.view_elems().contains(&from.elem) { return; }
         self.views_for = self.libraries.iter().find(|(elem, _)| *elem == from.elem && *elem != MORE)
             .map(|(_, section)| *section)
             .filter(|section| Some(*section) != self.view_section(cx));
@@ -151,6 +161,9 @@ impl LibraryScreen {
 
     /// Where the switcher pill `elem` stands, while the switcher is shown.
     pub(super) fn view_rect<H: LibraryLike>(&self, elem: u32, cx: &Cx<'_, H>) -> Option<Rect> {
+        if self.shield {
+            return self.shield_tab_rect(elem, cx, At::Drawn);
+        }
         let index = View::ELEMS.iter().position(|e| *e == elem).filter(|_| self.layout.views)?;
         self.view_lays(cx).get(index).map(|lay|
             plx_ui::widgets::strip_pill_rect(lay, self.view_y(), VIEW_PILL_H))
@@ -179,20 +192,28 @@ impl LibraryScreen {
         if self.pending.section().is_some() { self.cancel_library_switch(); }
         if view == self.view { return; }
         self.view = view;
-        if let Some(target) = self.address(cx) {
+        // Categories is the Shield layout's own view, not a choice the library remembers.
+        if let Some(target) = self.address(cx).filter(|_| view != View::Categories) {
             self.store(target, LibraryWork::Page { all: view.is_all() }, fx);
         }
         // The shelves are rebuilt from the published hubs by `sync` (Recommended) or stay away (All).
         self.shelves.clear();
         self.shelf_publication = None;
         self.sync(cx);
+        if self.shield {
+            // three different documents: each view opens at its head
+            self.scroll_target = 0.0;
+            self.scroll.jump(0.0);
+            self.relayout(cx.focus.current);
+        }
         self.scroll_target = self.scroll_target.clamp(0.0, self.target_layout.max_scroll());
         fx.invalidate(Provenance::Input);
     }
 
     /// Step the switcher's capsules: the selection on the view shown, the focus on its pill.
     pub(super) fn step_views<H: LibraryLike>(&mut self, focused: Option<FocusKey<u32>>, cx: &Cx<'_, H>, dt: f32) {
-        let shown = self.layout.views;
+        // the Shield tabs carry no travelling capsule: their marks are drawn where they stand
+        let shown = self.layout.views && !self.shield;
         let selected = if shown { self.switcher_view(cx).index() as i32 } else { -1 };
         let focused = focused.filter(|key| key.entry == self.entry && shown)
             .and_then(|key| View::ELEMS.iter().position(|e| *e == key.elem)).map_or(-1, |i| i as i32);

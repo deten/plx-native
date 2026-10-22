@@ -10,7 +10,7 @@
 //! paging all describe the same cells. [`neighbour`], [`settled`] and [`growth_before`] are
 //! column-count agnostic, and the Library's rail-aware layout uses them too.
 
-use crate::card_row::{self, RowStyle, LABEL_BAND_COLLAPSED, UNDER_LABEL_H};
+use crate::card_row::{self, RowStyle, Treatment, LABEL_BAND_COLLAPSED, UNDER_LABEL_H};
 #[cfg(test)]
 use crate::consts::CARD_H;
 use crate::consts::{CARD_W, MARGIN_X, MARGIN_Y, SCR_H, SCR_W, UNDER_LABEL_AIR};
@@ -218,18 +218,28 @@ pub struct Geom {
     pub w: f32,
     pub h: f32,
     pub gap: f32,
+    /// The band under a row's cards at rest: the collapsed caption band and its air — or, for a
+    /// ring grid (`card_row::Treatment::Ring`, the Shield layout), the caption every card wears
+    /// and the air under it, which never opens or closes.
+    pub under: f32,
 }
 
 impl Geom {
     #[cfg(test)]
-    pub const DEFAULT: Self = Self { cols: COLS, left: MARGIN_X, w: CARD_W, h: CARD_H, gap: GAP };
+    pub const DEFAULT: Self = Self { cols: COLS, left: MARGIN_X, w: CARD_W, h: CARD_H, gap: GAP,
+        under: LABEL_BAND_COLLAPSED + UNDER_LABEL_AIR };
 
     pub const fn of(cols: usize, left: f32, style: &RowStyle) -> Self {
-        Self { cols, left, w: style.w, h: style.h, gap: style.gap }
+        let under = if matches!(style.treatment, Treatment::Ring) {
+            crate::shield_browse::GRID_CAPTION_BAND
+        } else {
+            LABEL_BAND_COLLAPSED + UNDER_LABEL_AIR
+        };
+        Self { cols, left, w: style.w, h: style.h, gap: style.gap, under }
     }
 
-    /// A COLLAPSED row's pitch.
-    pub fn pitch(&self) -> f32 { self.h + LABEL_BAND_COLLAPSED + UNDER_LABEL_AIR }
+    /// A COLLAPSED row's pitch (a ring grid's every row: its band never opens).
+    pub fn pitch(&self) -> f32 { self.h + self.under }
 }
 
 #[cfg(test)]
@@ -335,6 +345,17 @@ pub fn visible_in(g: &Geom, len: usize, top: f32, scroll: f32) -> std::ops::Rang
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A ring grid (the Shield layout's Browse) captions every row on the measured 460 pitch, and
+    /// the Standard grids keep their collapsed pitch.
+    #[test]
+    fn a_ring_grid_keeps_one_captioned_pitch_and_the_standard_ones_are_unchanged() {
+        let ring = Geom::of(6, crate::shield::CONTENT_X, &RowStyle::SHIELD_GRID);
+        assert_eq!(ring.pitch(), 460.0);
+        assert_eq!(cell_in(&ring, 7, 204.0, 0.0, &[]), Rect::new(127.0 + ring.w + ring.gap, 664.0, 240.0, 360.0));
+        assert_eq!(Geom::of(COLS, MARGIN_X, &STYLE), Geom::DEFAULT);
+        assert_eq!(Geom::DEFAULT.pitch(), ROW_PITCH);
+    }
 
     #[test]
     fn six_portraits_keep_existing_card_size_and_share_one_pitch() {

@@ -250,6 +250,10 @@ pub enum Icon {
     Tv,
     /// A gear — the Settings entry.
     Gear,
+    /// A vertical ellipsis — the round "more options" chip that ends the Browse page's chip bar
+    /// (`shield_browse`). [`Icon::More`] turned upright: the Plex app's chip stands its dots on end,
+    /// and a horizontal ellipsis in a round chip reads as a page indicator.
+    MoreVertical,
 }
 
 /// **Where a mark's INK sits inside its 24-unit viewBox**, as `(left, right)` fractions — and
@@ -344,6 +348,7 @@ fn src(id: Icon) -> &'static str {
         Icon::Film => include_str!("../../../assets/icons/film.svg"),
         Icon::Tv => include_str!("../../../assets/icons/tv.svg"),
         Icon::Gear => include_str!("../../../assets/icons/gear.svg"),
+        Icon::MoreVertical => include_str!("../../../assets/icons/more-vertical.svg"),
     }
 }
 
@@ -574,7 +579,7 @@ mod ink_tests {
     /// panel's 32): full opacity inside, nothing on the border.
     #[test]
     fn the_shield_navigation_marks_rasterize_clean_at_their_draw_sizes() {
-        for id in [Icon::Home, Icon::Menu, Icon::Film, Icon::Tv, Icon::Gear] {
+        for id in [Icon::Home, Icon::Menu, Icon::Film, Icon::Tv, Icon::Gear, Icon::MoreVertical] {
             for px in [24, 32] {
                 let rgba = plx_gfx::svg::rasterize(src(id), px, px)
                     .unwrap_or_else(|| panic!("{id:?} failed to rasterize at {px}px"));

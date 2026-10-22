@@ -6,6 +6,10 @@
 //! It owns (unless external) the scroll, the caption bands and the focus pop ([`GridBands`], [`GridPop`]) and runs
 //! the same arithmetic for draw, stops, `Focusable` placement and paging, so the rect a card is
 //! drawn at, the stop it registers and the rect `place` answers are one value.
+//!
+//! A grid of a ring style (`card_row::Treatment::Ring`, the Shield layout's Browse grid) captions
+//! EVERY card instead (`shield_browse::draw_caption`): its rows keep one fixed pitch, so its bands
+//! never open.
 
 use plx_machine::machine::{Canon, Cx, Effects, EntryId, FocusKey, GroupId, Host, ScreenEvent};
 use plx_machine::present::{PresentEvent, Provenance};
@@ -141,7 +145,9 @@ impl Grid {
                 if let Some(a) = arrived {
                     self.seen = Seen::of(by, a);
                 }
-                self.bands.focus(arrived.map(|i| i / self.spec.cols), deliberate);
+                if !self.captioned() {
+                    self.bands.focus(arrived.map(|i| i / self.spec.cols), deliberate);
+                }
                 if let Some(i) = arrived.filter(|_| deliberate) {
                     self.pop.arm(i);
                 }
@@ -172,7 +178,9 @@ impl Grid {
         // where the previously focused cell was on screen, before any band moves
         let was = prev.map(|p| self.cell(p, &self.bands.geometry()).y);
         // A focus the reader did not move (a restore, a landing) adopts its band settled.
-        self.bands.focus(focus.map(|i| i / self.spec.cols), false);
+        if !self.captioned() {
+            self.bands.focus(focus.map(|i| i / self.spec.cols), false);
+        }
         if let Some(i) = focus {
             match (self.seen, prev) {
                 (Seen::Deliberate(a), _) if a == i => {}
@@ -266,7 +274,14 @@ impl Grid {
     /// A no-op when `row` is already the focused row, so it never cuts short a band `on` is
     /// animating.
     pub fn settle_band(&mut self, row: Option<usize>) {
-        self.bands.focus(row, false);
+        if !self.captioned() {
+            self.bands.focus(row, false);
+        }
+    }
+
+    /// Does every card wear its caption (a ring grid), so no row's band ever opens?
+    fn captioned(&self) -> bool {
+        self.spec.style.treatment == card_row::Treatment::Ring
     }
 
     /// Forget the focus pop's cell and any pending move: a fresh content set whose old indexes mean
@@ -443,6 +458,10 @@ impl Grid {
             card_row::draw_tile(p, src.art(i), rect, s, &self.spec.style, src.progress(i));
         }
         src.overlay(p, i, &Tile { rect, scale: s, radius: self.spec.style.tile_radius(rect, s), focused }, f.measure);
+        if self.captioned() {
+            let rest = super::to_local(p, self.cell(i, bands));
+            crate::shield_browse::draw_caption(p, rest, &src.label(i), s, focused, f.measure);
+        }
     }
 
     /// The `Focusable` neighbour of `key`: down from above a short last row lands on its last card.
