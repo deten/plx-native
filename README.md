@@ -23,6 +23,7 @@ At a glance:
 - [Fixed Resume](#resume-and-seeking-in-testing) so it shows where you stopped right away
 - [Improved Seeking](#resume-and-seeking-in-testing): faster taps and holds, and steadier holds
 - [Added Skip Back and Skip Forward](#resume-and-seeking-in-testing) times, Rewind on Resume, and Passout Protection
+- [Added an Optional Shield Layout](#shield-layout-in-testing) modelled on the Plex app for Android TV
 - [Added a Playback Log](#try-a-test-build) to help diagnose playback problems
 - [Install and Update from Homebrew Channel](#install-with-homebrew-channel)
 
@@ -169,6 +170,22 @@ Code: branch [`watchlist`](../../tree/watchlist), built on `library-views`.
 
 Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
 
+### Shield layout (in testing)
+
+**Settings > Libraries > Layout** switches between **Standard**, PlxNative's own layout, and
+**Shield**, which follows the Plex app on Android TV and NVIDIA Shield. It switches straight away.
+
+- **Navigation:** a small icon rail sits at the left edge, with a clock at the top right. Press
+  Left at the left edge of a page to open the side panel: your profile, Watchlist, Search, Home,
+  each library in your Library order, and Settings.
+- **Home:** the top of the screen describes the focused card (logo, episode, year, runtime,
+  genres, rating, summary and cast) over a background tinted from its artwork. Each row keeps the
+  focused card in the same place at the left and slides under it.
+
+Library pages, detail pages and Search are next.
+
+Code: branch [`shield-layout`](../../tree/shield-layout), built on `resume-seek`.
+
 ## Try a test build
 
 Test builds are published as [pre-releases](../../releases). They use the **debug** flavour, which
@@ -202,7 +219,7 @@ app. To remove the repository, select its address under **Settings** in Homebrew
 You can also install by hand: download the `.ipk` from a [release](../../releases) and install it
 with `ares-install` from LG's webOS developer tools.
 
-The newest test build, [Test 10](../../releases/tag/test-10), carries every feature above. Test
+The newest test build, [Test 11](../../releases/tag/test-11), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
