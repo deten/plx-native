@@ -380,3 +380,18 @@ the recorded data state. The state shape changed from 6411129155501563480 to
 9159381185758612433. All three anchors were recorded again against the synthetic server
 and installed with `tools/plxnative-rec rerecord`. Their anchor flags remain set.
 Targets and Resolve both report SAME, with every difference counter at zero.
+
+The Watchlist page, the Library order, Home hub rows that carry genres and cast, the new
+preferences and the Shield layout's surfaces moved the state shape from 9159381185758612433 to
+7755621897639715768. All three anchors were observed being refused in both modes (`invalid or
+incompatible recording`). They were recorded again with `tests/focusfp.sh --rec --only 1,6,12`
+on the Linux simulator (`make sim-linux`) under a private Xvfb display, so no desktop pointer can
+reach the window, and installed with `tools/plxnative-rec rerecord`. Their anchor flags remain
+set. This display runs at 60 Hz with the script's own 0.9 s key interval, so the recordings are
+longer in wall time than the 120 Hz ones they replace, and two waits are now long enough to
+measure more: Home draws the hold hint after flow 1's last key, and flow 12's Detail draws its
+audio line and the About card's MORE mark. The journeys are unchanged. Flow 1's second shelf is
+now Recently Added TV, since Home orders its Recently Added shelves by the Library order. The
+closed alphabet gains the top bar's `Watchlist` pill and the `S{season} • E{episode}` caption of
+a focused episode card. Targets and Resolve both report SAME on Linux, with every difference
+counter at zero, on three consecutive runs (one at 960x540) and once more under WSLg.
