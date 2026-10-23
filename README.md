@@ -187,7 +187,13 @@ Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
   count, and the A to Z rail at the right. **Categories** shows a tile per genre that opens Browse
   filtered to it. Filter, sort and other menus open as a panel from the right edge.
 
-Detail pages and Search are next.
+- **Detail pages:** a film leads with its title block, a white Play or Resume pill, round buttons
+  for play from start, trailer, Watchlist, watched and More, and the version, audio and subtitle
+  chips at the right, then Cast and Crew and related titles. A show page has Show and season tabs
+  and a Watch pill for the next episode. A season page describes the focused episode above a row
+  of episode stills. More opens a panel from the right edge.
+
+Search and Watchlist are next.
 
 Code: branch [`shield-layout`](../../tree/shield-layout), built on `resume-seek`.
 
@@ -224,7 +230,7 @@ app. To remove the repository, select its address under **Settings** in Homebrew
 You can also install by hand: download the `.ipk` from a [release](../../releases) and install it
 with `ares-install` from LG's webOS developer tools.
 
-The newest test build, [Test 12](../../releases/tag/test-12), carries every feature above. Test
+The newest test build, [Test 13](../../releases/tag/test-13), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
