@@ -29,6 +29,7 @@ fn base_root_inputs() -> RootInputs {
         library_opens: plx_plex::plex::session::LibraryOpens::Default,
         layout: plx_plex::plex::session::LayoutMode::Standard,
         auto_sign_in: false, trailer_autoplay: true,
+        detailed_logging: Some(plx_plex::plex::session::DetailedLogging::Off),
         language: plx_platform::i18n::Preference::System, plaintext: Vec::new(),
     }
 }
@@ -80,6 +81,10 @@ fn every_settings_row_fits_its_column_in_every_language() {
         for layout in plx_plex::plex::session::LayoutMode::LADDER {
             overflowing_root(&format!("{tag} layout={layout:?}"),
                 &RootInputs { layout, ..base_root_inputs() }, &mut out);
+        }
+        for mode in plx_plex::plex::session::DetailedLogging::LADDER {
+            overflowing_root(&format!("{tag} detailed_logging={mode:?}"),
+                &RootInputs { detailed_logging: Some(mode), ..base_root_inputs() }, &mut out);
         }
         for language_pref in LANGUAGES {
             overflowing_root(&format!("{tag} language={language_pref:?}"),

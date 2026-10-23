@@ -636,6 +636,32 @@ fn the_unencrypted_connection_switch_shows_the_grant_and_revokes_it_at_once() {
     plx_plex::plex::reset_servers_for_test();
 }
 
+/// **Detailed logging** is a test build's own row: absent where no history is kept, and where one
+/// is, a door to its picker under System, reading out the published choice.
+#[test]
+fn the_detailed_logging_row_is_listed_only_where_a_history_is_kept() {
+    let _g = plx_base::testlock::serial();
+    let _sess = scratch_session("root-detailed-logging");
+    let mut root = RootPage::new(EntryId(0), cx(None).views);
+    assert_eq!(root.form.index_of(&RootId::DetailedLogging), None, "a build that keeps no history lists no row");
+    root.keeps_history = true;
+    plx_base::eventlog::history::restore_detailed(true);
+    root.rebuild(cx(None).views);
+    plx_base::eventlog::history::restore_detailed(false);
+    let row = root.form.index_of(&RootId::DetailedLogging).expect("a test build lists it");
+    let drawn = root.form.table.sections.iter().flat_map(|s| &s.rows).nth(row).unwrap();
+    assert_eq!(drawn.label, "Detailed logging");
+    assert_eq!(drawn.detail, "Keeps more detail in the TV's log.");
+    assert_eq!(drawn.value.as_deref(), Some("On"));
+    let trailers = root.form.index_of(&RootId::TrailerAutoplay);
+    let language = root.form.index_of(&RootId::Language).unwrap();
+    assert!(row > trailers.unwrap_or(language), "it closes the System section");
+    assert_eq!(
+        root.form.activate(row),
+        Some(Activation::Push(SettingsPage::Picker(super::super::family::PickerKind::DetailedLogging)))
+    );
+}
+
 /// Nobody was ever asked, so there is nothing to turn off: no section at all.
 #[test]
 fn no_unencrypted_connection_section_without_an_answer() {
@@ -707,7 +733,7 @@ fn inputs_for(signed_in: bool) -> RootInputs {
         signed_in, multi_user: true, library_count: 3,
         library_opens: plx_plex::plex::session::LibraryOpens::Default,
         layout: plx_plex::plex::session::LayoutMode::Standard,
-        auto_sign_in: false, trailer_autoplay: true,
+        auto_sign_in: false, trailer_autoplay: true, detailed_logging: None,
         language: plx_platform::i18n::Preference::System, plaintext: Vec::new(),
     }
 }

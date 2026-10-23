@@ -180,6 +180,16 @@ fn every_picker_level_fits_its_column_in_every_language() {
             out.extend(table_of(section).app_fit_failures(frame_w(), &format!("{tag} {field:?} shield={shield} picker")));
         }
         plx_ui::layout::publish(false);
+        // …and the Detailed logging picker, under each published choice.
+        for on in [false, true] {
+            plx_base::eventlog::history::restore_detailed(on);
+            let field = PickerKind::DetailedLogging;
+            let current = resolve_value(field, Quality::Original, DirectPlayMode::Auto, None);
+            let section = field_options(field, Quality::Original, DirectPlayMode::Auto, None).into_iter()
+                .fold(Section::new(""), |section, (label, value)| section.row(Row::new(&label).checked(value == current)));
+            out.extend(table_of(section).app_fit_failures(frame_w(), &format!("{tag} {field:?} on={on} picker")));
+        }
+        plx_base::eventlog::history::restore_detailed(false);
     }
     plx_ui::table::assert_no_fit_failures(&out);
 }
@@ -262,7 +272,8 @@ fn every_explanation_under_a_title_fits_the_column_in_every_language() {
         PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::SkipIntro, PickerKind::SkipCredits,
         PickerKind::SkipBack, PickerKind::ResumeRewind, PickerKind::PassoutProtection,
         PickerKind::AudioLanguage, PickerKind::SubtitleMode,
-        PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::LibraryOpens, PickerKind::Layout];
+        PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles, PickerKind::LibraryOpens, PickerKind::Layout,
+        PickerKind::DetailedLogging];
     let mut out = Vec::new();
     for language in SHIPPED {
         let _guard = language_on_this_thread_for_test(language);
@@ -302,7 +313,8 @@ fn each_local_picker_has_its_own_explanation_in_every_language() {
     let _serial = plx_base::testlock::serial();
     let fields = [PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition,
         PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::SkipIntro, PickerKind::SkipCredits,
-        PickerKind::SkipBack, PickerKind::ResumeRewind, PickerKind::PassoutProtection, PickerKind::LibraryOpens, PickerKind::Layout];
+        PickerKind::SkipBack, PickerKind::ResumeRewind, PickerKind::PassoutProtection, PickerKind::LibraryOpens, PickerKind::Layout,
+        PickerKind::DetailedLogging];
     for language in SHIPPED {
         let _guard = language_on_this_thread_for_test(language);
         let tag = language.tag();

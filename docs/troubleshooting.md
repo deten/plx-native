@@ -124,14 +124,76 @@ The crash log is different: it only grows, so earlier crashes stay in it across 
 cleared when the TV restarts, because `/tmp` is.
 
 A test or developer build (`com.beb.plxnative.debug`) also keeps `plxnative-history.log` in its
-folder: every event-log line, cleaned the same way and stamped with the time (UTC), kept across
-relaunches. It holds up to 1 MB; past that the older part moves to `plxnative-history.log.1`, so
-the two together never pass 2 MB. Each launch starts with a `history: launch` line giving the
-date. Playback writes greppable lines there: `playstart:` once per item (its intro and credits
-markers, the Skip intro, Skip credits and Next episode settings, shuffle), `endreason:` for each
-way an item ends or hands over to the next one, `advance:` when the next episode starts,
-`playstate:` for each change of playback state, and `stop:` and `reopen:` when the player is torn
-down or reloaded.
+folder: every event-log line except the once-a-second `loop=` line, cleaned the same way and
+stamped with the time (UTC), kept across relaunches. It holds up to 1 MB; past that the older part
+moves to `plxnative-history.log.1`, so the two together never pass 2 MB. Each launch starts with a
+`history: launch` line giving the date. Playback writes greppable lines there: `playstart:` once
+per item (its intro and credits markers, the Skip intro, Skip credits and Next episode settings,
+shuffle), `endreason:` for each way an item ends or hands over to the next one, `advance:` when the
+next episode starts, `playstate:` for each change of playback state, and `stop:` and `reopen:`
+when the player is torn down or reloaded.
+
+#### Detailed logging (test builds)
+
+On a test build, **Settings, System, Detailed logging** keeps a more detailed history in a folder
+that a TV restart does not clear. It applies at once, and the choice is remembered. While it is
+on, the history moves to:
+
+| Install | Folder |
+| --- | --- |
+| Installed with Dev Manager (Developer Mode) | `/media/developer/com.beb.plxnative.debug-logs/` |
+| Installed with the Homebrew Channel | `/media/internal/.com.beb.plxnative.debug-logs/` |
+
+The app uses the first of the two it can write. The files keep their names,
+`plxnative-history.log` and `plxnative-history.log.1`; each holds up to 4 MB. Every launch with
+detailed logging on writes one line saying exactly where the history goes, for example:
+
+```
+21:04:11.310 history: /media/developer/com.beb.plxnative.debug-logs/plxnative-history.log (detailed logging by preference, 4 MB cap, kept across a TV restart)
+```
+
+Turning it on or off in Settings writes a `history: detailed logging on, ...` or `... off, ...`
+line naming the file the history goes to from then on. Off, the history is exactly as described
+above, in `/tmp/com.beb.plxnative.debug/`. In Dev Manager's Files view, start at `/`, then open
+**media** and **developer** (or **internal**, where the folder name starts with a dot).
+
+Detailed logging adds these lines, all in the history only (the event log is unchanged):
+
+| Prefix | What it records | Example |
+| --- | --- | --- |
+| `key:` | each remote key press and release, where it landed, and the focused element; a held key's repeats are counted on its release | `key: RIGHT up held 2.4s repeats=46 route=player overlay=none focus=7/0` |
+| `scrub:` | each scrub press (tap burst size, target), hold, release, grace and lost key-up | `scrub: tap released taps=3 target=1830.000s commit in 450ms unless tapped again` |
+| `seek:` | every seek the app asks for, with its cause and from and to positions | `seek: cause=scrub-tap from=1800.412s to=1830.000s taps=3 hold=0` |
+| `sub:` | subtitle choices (track, sidecar, codec, auto-sync, offset) and each cue the first time it is shown, with its text exactly as the file or the demuxer gave it | `sub: cue src=embedded track=2 start=61.250s end=63.000s len=20 text="TH E FACE IS\nVAGUELY"` |
+| `player:` | every 10 s of playback, the playhead against the wall clock; and each buffering stall with its length | `player: pace pos=1840.500s media=10500ms wall=10000ms drift=+500ms rate=1.050 vtick=5 vgap=201ms` |
+| `nav:` | each page opened or closed, panel shown or dismissed, and layout change | `nav: push route=detail overlay=- pages=2 surfaces=0 layout=shield` |
+
+The `seek:` causes are `scrub-tap`, `scrub-hold`, `scrub-pointer`, `scrub-lost-keyup`,
+`scrub-lost-keyup-after-resume`, `skip-intro-manual`, `skip-intro-auto`, `skip-credits-manual`,
+`skip-credits-auto`, `chapter`, `from-beginning`, `resume`, `rewind-on-resume`, `retry`,
+`reopen-play-automatically`, `up-next` and `post-play-replay`. In cue text a line break is `\n`,
+and any character other than a plain space that could look like one, such as a no-break space, is
+spelled `\u{a0}`, so a stray gap shows exactly what the subtitle carried. For an embedded
+subtitle, a `sub: raw` line also gives each cue as the demuxer delivered it, before formatting tags
+are removed. Cue text is cut after 200 characters.
+
+These lines carry subtitle text and what was playing, which the ordinary logs never do. Like
+every log line they are cleaned of tokens, server addresses and account names. Delete all local
+data removes the detailed history too.
+
+For testing without opening Settings, an empty file named `plxnative-detailed-logging` in either
+folder above turns detailed logging on at the next launch, whatever Settings says; the
+`history:` line then says `detailed logging by marker file`. Only a test build reads it, and
+Delete all local data leaves it in place. The app writes its history as its own user, not as
+root, so a folder made by hand over ssh must be writable for it, or the history falls back to
+`/tmp` (the `history:` line says so with `cleared by a TV restart`). For example, as root:
+
+```
+D=/media/developer/com.beb.plxnative.debug-logs
+mkdir -p "$D" && chmod 1777 "$D" && touch "$D/plxnative-detailed-logging"
+```
+
+Remove the file to stop; a choice made in Settings then applies again from the next launch.
 
 ### Fetching them with Dev Manager
 

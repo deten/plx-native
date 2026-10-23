@@ -698,6 +698,11 @@ pub struct Session {
     /// before.
     #[serde(default, deserialize_with = "de_soft_layout_mode", skip_serializing_if = "is_default_layout_mode")]
     pub layout_mode: LayoutMode,
+    /// **Whether a test build keeps the detailed log**: see [`DetailedLogging`]. Install-wide like
+    /// [`Session::layout_mode`]. Absence is Off, what every build before the field kept; skipped at
+    /// the default so an older session serializes exactly as before.
+    #[serde(default, deserialize_with = "de_soft_detailed_logging", skip_serializing_if = "is_default_detailed_logging")]
+    pub detailed_logging: DetailedLogging,
     /// **Device-wide ambient memory**: the last hero `UltraBlurColors` envelope Home actually
     /// rendered on this television, so a route in the Settings/first-run family that opens
     /// BEFORE Home has fetched anything this boot — first-run consent moved ahead of the
@@ -839,6 +844,8 @@ struct CanonicalSessionPreferences {
     library_opens: LibraryOpens,
     #[serde(default, deserialize_with = "de_soft_layout_mode", skip_serializing_if = "is_default_layout_mode")]
     layout_mode: LayoutMode,
+    #[serde(default, deserialize_with = "de_soft_detailed_logging", skip_serializing_if = "is_default_detailed_logging")]
+    detailed_logging: DetailedLogging,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
     plaintext_consent: Vec<PlaintextConsent>,
     #[serde(default, deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
@@ -888,6 +895,7 @@ impl Default for CanonicalSessionPreferences {
             deck_press: DeckPress::Details,
             library_opens: LibraryOpens::Default,
             layout_mode: LayoutMode::Standard,
+            detailed_logging: DetailedLogging::Off,
             plaintext_consent: Vec::new(),
             server_key_pins: Vec::new(),
             audio_enhancements: crate::plex::AudioEnhancements::NONE,
@@ -950,6 +958,7 @@ fn split_public(session: &Session) -> Result<plx_platform::storage::state::Publi
         deck_press: session.deck_press,
         library_opens: session.library_opens,
         layout_mode: session.layout_mode,
+        detailed_logging: session.detailed_logging,
         plaintext_consent: session.plaintext_consent.clone(),
         server_key_pins: session.server_key_pins.clone(),
         audio_enhancements: session.audio_enhancements,
@@ -1034,6 +1043,7 @@ pub fn join_canonical(
         deck_press: preferences.deck_press,
         library_opens: preferences.library_opens,
         layout_mode: preferences.layout_mode,
+        detailed_logging: preferences.detailed_logging,
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
         audio_enhancements: preferences.audio_enhancements,
@@ -1077,6 +1087,7 @@ fn public_session(public: &plx_platform::storage::state::PublicPayload) -> Sessi
         deck_press: preferences.deck_press,
         library_opens: preferences.library_opens,
         layout_mode: preferences.layout_mode,
+        detailed_logging: preferences.detailed_logging,
         plaintext_consent: preferences.plaintext_consent,
         server_key_pins: preferences.server_key_pins,
         audio_enhancements: preferences.audio_enhancements,
@@ -1811,6 +1822,36 @@ impl LayoutMode {
     /// Whether this is the Shield layout, the one fact `plx_ui::layout` holds.
     pub fn is_shield(self) -> bool {
         self == LayoutMode::Shield
+    }
+}
+
+/// Whether a test build keeps the DETAILED log (Settings > Detailed logging): key presses, scrub
+/// and seek decisions, subtitle cues and the playback pace, in a history file that survives a TV
+/// restart (`plx_base::eventlog::history`). Install-wide, like [`LayoutMode`]. Absence is `Off`.
+/// Only the debug flavour keeps a history at all, so only it shows the row; the live value is
+/// `plx_base::eventlog::history`'s, which the application publishes from this one at boot, at every
+/// auth landing and when the Settings row writes it.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailedLogging {
+    /// the history as it always was: the event log's lines, in the runtime directory
+    #[default]
+    #[serde(rename = "off")]
+    Off,
+    /// the history kept across a TV restart, with the detailed lines
+    #[serde(rename = "on")]
+    On,
+}
+
+impl DetailedLogging {
+    /// Every option, the order the picker lists them in.
+    pub const LADDER: [DetailedLogging; 2] = [DetailedLogging::Off, DetailedLogging::On];
+
+    pub fn from_on(on: bool) -> DetailedLogging {
+        if on { DetailedLogging::On } else { DetailedLogging::Off }
+    }
+
+    pub fn is_on(self) -> bool {
+        self == DetailedLogging::On
     }
 }
 
@@ -3010,6 +3051,22 @@ fn is_default_layout_mode(mode: &LayoutMode) -> bool {
     *mode == LayoutMode::default()
 }
 
+/// The detailed-logging choice is a preference too: a spelling this build does not know degrades to
+/// Off.
+fn de_soft_detailed_logging<'de, D>(d: D) -> Result<DetailedLogging, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(DetailedLogging::default());
+    };
+    Ok(serde_json::from_value::<DetailedLogging>(v).unwrap_or_default())
+}
+
+fn is_default_detailed_logging(mode: &DetailedLogging) -> bool {
+    *mode == DetailedLogging::default()
+}
+
 /// The audio-enhancement toggle is a preference too: an unknown shape degrades to both flags
 /// off rather than failing the enclosing [`Session`].
 fn de_soft_audio_enhancements<'de, D>(d: D) -> Result<crate::plex::AudioEnhancements, D::Error>
@@ -3317,6 +3374,16 @@ impl Session {
     pub fn with_layout_mode(&self, mode: LayoutMode) -> Self {
         let mut next = self.clone();
         next.layout_mode = mode;
+        next
+    }
+
+    pub fn detailed_logging(&self) -> DetailedLogging {
+        self.detailed_logging
+    }
+
+    pub fn with_detailed_logging(&self, mode: DetailedLogging) -> Self {
+        let mut next = self.clone();
+        next.detailed_logging = mode;
         next
     }
 
@@ -6488,6 +6555,57 @@ mod layout_mode_tests {
         assert_eq!(LayoutMode::from_index(200), LayoutMode::Standard);
         assert!(LayoutMode::Shield.is_shield());
         assert!(!LayoutMode::Standard.is_shield());
+    }
+}
+
+/// `Session::detailed_logging`: soft-parse to Off, omit at the default (so committed replay fixtures
+/// and every older session serialize exactly as before), round-trip through both formats.
+#[cfg(test)]
+mod detailed_logging_tests {
+    use super::*;
+
+    #[test]
+    fn absent_or_malformed_is_off() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"detailed_logging": null}),
+            serde_json::json!({"detailed_logging": "verbose"}),
+            serde_json::json!({"detailed_logging": true}),
+        ] {
+            let session: Session = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{value}: a bad preference must not fail the session: {e}"));
+            assert_eq!(session.detailed_logging(), DetailedLogging::Off, "{value}");
+        }
+    }
+
+    #[test]
+    fn the_stored_spelling_is_detailed_logging_on() {
+        let json = serde_json::to_string(&Session::default().with_detailed_logging(DetailedLogging::On)).unwrap();
+        assert!(json.contains(r#""detailed_logging":"on""#), "{json}");
+        let session: Session = serde_json::from_value(serde_json::json!({"detailed_logging": "on"})).unwrap();
+        assert_eq!(session.detailed_logging(), DetailedLogging::On);
+    }
+
+    #[test]
+    fn the_default_is_not_serialized() {
+        let session = Session::default();
+        assert!(!serde_json::to_string(&session).unwrap().contains("detailed_logging"));
+        let prefs = serde_json::to_string(&split_public(&session).unwrap().preferences).unwrap();
+        assert!(!prefs.contains("detailed_logging"), "{prefs}");
+    }
+
+    #[test]
+    fn each_choice_round_trips_through_both_formats() {
+        for mode in [DetailedLogging::Off, DetailedLogging::On] {
+            let session = Session::default().with_detailed_logging(mode);
+            let round: Session = serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+            assert_eq!(round.detailed_logging(), mode);
+            let (public, protected) = split_canonical(&session).unwrap();
+            assert_eq!(join_canonical(&public, &protected).unwrap().detailed_logging(), mode);
+            assert_eq!(public_session(&public).detailed_logging(), mode);
+        }
+        assert!(DetailedLogging::from_on(true).is_on());
+        assert!(!DetailedLogging::from_on(false).is_on());
     }
 }
 

@@ -960,6 +960,7 @@ enum RootId {
     Layout,
     AutoSignIn,
     TrailerAutoplay,
+    DetailedLogging,
     /// One server's switch. Its key is [`PLAINTEXT_KEY_BASE`] plus its position in the section
     /// ([`root_form`] assigns it); its identity is the machine, so a rebuild keeps the row.
     Plaintext(ServerMachineId),
@@ -986,6 +987,7 @@ impl FormId for RootId {
             RootId::LibraryOrder => 10,
             RootId::LibraryOpens => 11,
             RootId::Layout => 12,
+            RootId::DetailedLogging => 13,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1013,6 +1015,9 @@ pub struct RootPage {
     session_snapshot: std::sync::Arc<plx_plex::plex::session::Session>,
     pending_auto: Option<(bool, plx_base::storage_worker::TypedTicket<bool>)>,
     pending_trailer: Option<(bool, plx_base::storage_worker::TypedTicket<bool>)>,
+    /// Whether this install keeps a history at all (`plx_base::eventlog::history::enabled`, the
+    /// debug flavour), and so lists Detailed logging. A field so a test can stand in a test build.
+    keeps_history: bool,
     /// The servers the signed-in account answered plx_platform::i18n::msg::settings_plaintext_question() for, then the
     /// ones discovery offers it for and nobody has answered, by row — the `(machine_id, allowed)`
     /// each switch shows.
@@ -1088,6 +1093,9 @@ struct RootInputs {
     layout: plx_plex::plex::session::LayoutMode,
     auto_sign_in: bool,
     trailer_autoplay: bool,
+    /// Whether a test build keeps the detailed log: the Detailed logging row's read-out, `None`
+    /// listing no row (an install that keeps no history).
+    detailed_logging: Option<plx_plex::plex::session::DetailedLogging>,
     language: plx_platform::i18n::Preference,
     /// Unencrypted-connection switches, in row order — empty when signed out or when nobody has
     /// an answered/offered plaintext question.
@@ -1101,7 +1109,8 @@ struct RootInputs {
 fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
     let signed_in = inputs.signed_in;
     // Order: Libraries, Playback (player experience only), System (Language, Automatically Sign
-    // In, Trailer autoplay), Unencrypted connections, Privacy, then About alone at the very end.
+    // In, Trailer autoplay, Detailed logging), Unencrypted connections, Privacy, then About alone at
+    // the very end.
     //
     // The Libraries section is Libraries and the row is Favorite libraries: the switch governs
     // the whole app — Home's shelves, the top tab strip and the Library's Sources picker.
@@ -1190,6 +1199,18 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Row::new(plx_platform::i18n::msg::settings_trailers_title())
                 .detail(plx_platform::i18n::msg::settings_trailers_detail())
                 .toggle(inputs.trailer_autoplay),
+        )
+        // A test build's own row (`plx_base::eventlog::history`), signed in or not: a sign-in
+        // problem is as much what it may be turned on to catch as a playback one.
+        .item_if(
+            inputs.detailed_logging.is_some(),
+            RootId::DetailedLogging,
+            RowKind::Nav(SettingsPage::Picker(super::family::PickerKind::DetailedLogging)),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::settings_detailed_logging_title())
+                .detail(plx_platform::i18n::msg::settings_detailed_logging_detail())
+                .value(super::preferences::detailed_logging_label(inputs.detailed_logging.unwrap_or_default()))
+                .chevron(true),
         );
     let has_plaintext = signed_in && !inputs.plaintext.is_empty();
     let mut plaintext = FormSection::new(plx_platform::i18n::msg::settings_plaintext_section()).visible(has_plaintext);
@@ -1250,6 +1271,7 @@ impl RootPage {
             session_watch: Default::default(),
             session_snapshot: Default::default(),
             pending_auto: None, pending_trailer: None,
+            keeps_history: plx_base::eventlog::history::enabled(),
             plaintext_rows: Vec::new(),
             pending_plaintext: None,
             alert: PlaintextAlert::new(ALERT_GROUP, super::registry::ALERT, super::registry::ALERT + 1),
@@ -1285,7 +1307,9 @@ impl RootPage {
             signed_in, multi_user, library_count: directory.pinned_count() as i64,
             library_opens: plx_data::browse::library_opens(),
             layout: super::preferences::layout_mode(),
-            auto_sign_in, trailer_autoplay, language: self.state.language, plaintext,
+            auto_sign_in, trailer_autoplay,
+            detailed_logging: self.keeps_history.then(super::preferences::detailed_logging),
+            language: self.state.language, plaintext,
         });
         let keep = self.form.selected_id().cloned();
         self.form.table.compact = false;

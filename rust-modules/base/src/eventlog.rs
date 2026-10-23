@@ -13,8 +13,12 @@
 /// remote one may drop a line.
 pub mod scrub;
 /// The debug flavour's kept copy of the event log, which a relaunch does not truncate: see the
-/// module's doc. Every line reaches it through [`log`], after the same redaction.
+/// module's doc. Every line reaches it through [`log`], after the same redaction; Settings >
+/// Detailed logging moves it to a directory a TV restart keeps and adds [`history::detail`] lines.
 pub mod history;
+/// The pure halves of the detailed-logging lines (`key:`, `sub: cue`, `player: pace`, `nav:`) —
+/// see the module's doc.
+pub mod detail;
 /// The bounded in-memory record ring, tapped by [`log`] one call below the redaction. Behind the
 /// lab feature: a build without it has nothing to put in a ring.
 #[cfg(feature = "lab-diagnostics")]

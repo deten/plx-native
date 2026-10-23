@@ -102,6 +102,9 @@ pub enum PreferenceCmd {
     LibraryOpens { mode: plx_plex::plex::session::LibraryOpens, reply: std::sync::mpsc::Sender<bool> },
     /// Which layout the app wears (Settings > Layout): persisted, then published live.
     LayoutMode { mode: plx_plex::plex::session::LayoutMode, reply: std::sync::mpsc::Sender<bool> },
+    /// Whether a test build keeps the detailed log (Settings > Detailed logging): persisted, then
+    /// published to `plx_base::eventlog::history`.
+    DetailedLogging { mode: plx_plex::plex::session::DetailedLogging, reply: std::sync::mpsc::Sender<bool> },
     SubtitleSize { size: plx_plex::plex::session::SubtitleSize, reply: std::sync::mpsc::Sender<bool> },
     SubtitlePosition { position: plx_plex::plex::session::SubtitlePosition, reply: std::sync::mpsc::Sender<bool> },
     Language { language: plx_platform::i18n::Preference, reply: std::sync::mpsc::Sender<bool> },

@@ -22,6 +22,20 @@ pub(super) fn set_layout_mode(mode: plx_plex::plex::session::LayoutMode) -> bool
     saved
 }
 
+/// **Settings > Detailed logging's persistence seam**, run on the storage worker like Layout's: the
+/// kept history (`plx_base::eventlog::history`) moves and widens only once the write is durable, so
+/// a failed save claims nothing, and the switch is logged with the file the history now goes to.
+pub(super) fn set_detailed_logging(mode: plx_plex::plex::session::DetailedLogging) -> bool {
+    let saved = plx_plex::plex::session::update_with_outcome(|s| Some(s.with_detailed_logging(mode)))
+        .is_some_and(|write| matches!(write.classify(),
+            plx_plex::plex::session::async_persistence::CompletionOutcome::Durable(_)));
+    if saved {
+        plx_base::eventlog::history::publish_detailed(mode.is_on());
+        plx_machine::idle::invalidate();
+    }
+    saved
+}
+
 pub(super) fn execute(command: PreferenceCmd) {
     match command {
         PreferenceCmd::Load { reply } => {
@@ -86,6 +100,12 @@ pub(super) fn execute(command: PreferenceCmd) {
         PreferenceCmd::LayoutMode { mode, reply } => {
             let _ = plx_base::storage_worker::submit_retained(move || {
                 let _ = reply.send(set_layout_mode(mode));
+                plx_machine::idle::invalidate();
+            });
+        }
+        PreferenceCmd::DetailedLogging { mode, reply } => {
+            let _ = plx_base::storage_worker::submit_retained(move || {
+                let _ = reply.send(set_detailed_logging(mode));
                 plx_machine::idle::invalidate();
             });
         }

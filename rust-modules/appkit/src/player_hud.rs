@@ -150,7 +150,23 @@ pub fn draw_subtitles(hud_up: bool, burned: bool) {
         Some(t) if !t.trim().is_empty() => t,
         _ => return,
     };
+    note_drawn_cue(now_ns, burned);
     draw_subtitle_message(&text, hud_up);
+}
+
+/// Detailed logging's `sub: cue` line, once per cue: the cue this frame draws, from whichever
+/// producer [`draw_subtitles`] took it, with its text as that producer holds it — before the
+/// wrapping and trimming the caption draw does. One atomic read while detailed logging is off.
+fn note_drawn_cue(now_ns: i64, burned: bool) {
+    if !plx_base::eventlog::history::detailed() {
+        return;
+    }
+    let clock_ns = plx_media::player::subtitle_clock_ns(now_ns);
+    if let Some(cue) = plx_media::player::sidecar::active_cue(clock_ns, burned) {
+        plx_base::eventlog::detail::cue_drawn("sidecar", -1, cue.start_ns, cue.end_ns, &cue.text);
+    } else if let Some((track, start_ns, end_ns, text)) = plx_media::player::active_subtitle_cue(now_ns) {
+        plx_base::eventlog::detail::cue_drawn("embedded", track, start_ns, end_ns, &text);
+    }
 }
 
 /// Shared caption placement for plain text and a styled-renderer failure message. Text size and

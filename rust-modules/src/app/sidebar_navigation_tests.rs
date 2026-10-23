@@ -228,6 +228,23 @@ fn the_layout_write_is_durable_before_it_is_live() {
     assert_eq!(plx_plex::plex::session::peek().layout_mode(), LayoutMode::Standard);
 }
 
+/// Settings > Detailed logging's seam: a durable write publishes the choice to the kept history
+/// and the session keeps it. (Whether lines are then written is the debug flavour's question,
+/// `plx_base::eventlog::history::detailed`; a host build has none.)
+#[test]
+fn the_detailed_logging_write_is_durable_before_it_is_live() {
+    use plx_plex::plex::session::DetailedLogging;
+    let _guard = plx_base::testlock::serial();
+    let _session = plx_plex::plex::session::TempSession::new("detailed-logging-write");
+    assert!(!plx_base::eventlog::history::preference());
+    assert!(super::super::preferences::set_detailed_logging(DetailedLogging::On));
+    assert!(plx_base::eventlog::history::preference());
+    assert_eq!(plx_plex::plex::session::peek().detailed_logging(), DetailedLogging::On);
+    assert!(super::super::preferences::set_detailed_logging(DetailedLogging::Off));
+    assert!(!plx_base::eventlog::history::preference());
+    assert_eq!(plx_plex::plex::session::peek().detailed_logging(), DetailedLogging::Off);
+}
+
 fn library(d: &Dispatcher<AppHost>) -> Option<&plx_screens::library::LibraryScreen> {
     d.nav.top_page()?.inst.as_ref()?.screen.as_any()?.downcast_ref()
 }

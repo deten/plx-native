@@ -119,6 +119,18 @@
     "value": "After a moment on a title, play its trailer with sound.",
     "description": "Settings, account, onboarding or privacy UI: settings.trailers.detail"
   },
+  "settings.detailed_logging.title": {
+    "value": "Detailed logging",
+    "description": "Settings row title and picker title (test builds only): keep a more detailed diagnostic log on the TV, Off or On"
+  },
+  "settings.detailed_logging.detail": {
+    "value": "Keeps more detail in the TV's log.",
+    "description": "Settings row detail line under settings.detailed_logging.title"
+  },
+  "settings.detailed_logging.copy": {
+    "value": "Keeps a more detailed log on the TV to help track down playback problems.",
+    "description": "Explanation under the title of the Detailed logging picker, whose options are the switch words widgets.toggle.off and widgets.toggle.on"
+  },
   "settings.about.title": {
     "value": "About PlxNative",
     "description": "Settings, account, onboarding or privacy UI: settings.about.title"

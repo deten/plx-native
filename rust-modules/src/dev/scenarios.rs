@@ -1045,6 +1045,7 @@ fn settings_boot_arm(app: &mut App, fr: &mut Frame) {
                 "picker-skip-credits" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::SkipCredits),
                 "picker-library-opens" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::LibraryOpens),
                 "picker-layout" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::Layout),
+                "picker-detailed-logging" => plx_screens::family::SettingsPage::Picker(plx_screens::family::PickerKind::DetailedLogging),
                 "audio" => plx_screens::family::SettingsPage::AudioSubtitles,
                 _other => {
                     #[cfg(feature = "devtriggers")]

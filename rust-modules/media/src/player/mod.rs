@@ -1675,7 +1675,11 @@ pub fn desired_sub_idx() -> i32 {
 /// would reintroduce the ~10-20s buffer-gap delay (the demuxer runs well ahead of the playhead).
 /// A new item / transcode re-point clears the store via reset_session / the pump.
 pub fn request_subtitle(idx: i32) {
-    SHARED.desired_sub_idx.store(idx, Relaxed);
+    if SHARED.desired_sub_idx.swap(idx, Relaxed) != idx {
+        plx_base::eventlog::history::detail_with(|| {
+            format!("sub: track ordinal={idx}{}", if idx < 0 { " (no embedded track drawn)" } else { "" })
+        });
+    }
     if idx < 0 {
         // subs Off: free the image-cue store now (the demuxer also stops decoding new
         // bitmap cues while off — see ff.rs's desired_sub_idx gate)
@@ -1864,6 +1868,7 @@ pub fn restore_subtitle_auto_sync(on: bool) {
 /// than on the next one. MAIN THREAD.
 pub fn set_subtitle_auto_sync(on: bool) {
     SUBTITLE_AUTO_SYNC.store(on, Relaxed);
+    plx_base::eventlog::history::detail_with(|| format!("sub: auto-sync {}", if on { "on" } else { "off" }));
     let _ = plx_base::storage_worker::submit_retained(move || plx_plex::plex::session::set_subtitle_auto_sync(on));
     sidecar::reapply_auto_sync();
     plx_machine::idle::invalidate();
@@ -1889,7 +1894,10 @@ pub fn set_subtitle_tone(tone: plx_plex::plex::session::SubtitleTone) {
 /// effect on the next drawn frame, with nothing to reload. Never persisted — see
 /// [`SUBTITLE_OFFSET_MS`].
 pub fn set_subtitle_offset(offset_ms: i64) {
-    SUBTITLE_OFFSET_MS.store(clamp_subtitle_offset_ms(offset_ms), Relaxed);
+    let offset_ms = clamp_subtitle_offset_ms(offset_ms);
+    if SUBTITLE_OFFSET_MS.swap(offset_ms, Relaxed) != offset_ms {
+        plx_base::eventlog::history::detail_with(|| format!("sub: offset={offset_ms}ms"));
+    }
     plx_machine::idle::invalidate();
 }
 
@@ -1954,6 +1962,19 @@ pub fn push_subtitle_cue(
         return;
     }
     if track == SHARED.desired_sub_idx.load(Relaxed) {
+        // Detailed logging (a test build's, opted in) is the one place the dialogue is kept: the
+        // payload exactly as the demuxer handed it over, before the tag strip above, so a stray
+        // gap can be told apart from one the cleaning or the renderer made.
+        plx_base::eventlog::history::detail_with(|| {
+            let raw = String::from_utf8_lossy(payload);
+            format!(
+                "sub: raw track={track} start={} end={} len={} text=\"{}\"",
+                plx_base::eventlog::detail::secs(start_ns),
+                plx_base::eventlog::detail::secs(end_ns),
+                raw.chars().count(),
+                plx_base::eventlog::detail::escape_text(&raw, plx_base::eventlog::detail::CUE_TEXT_CAP)
+            )
+        });
         // LENGTH, never the dialogue. This line used to carry 34 characters of what the viewer
         // was watching — the most sensitive thing the event log has ever held, in a file that gets
         // photographed into public issue threads. `len=` answers every question the text answered
@@ -1967,6 +1988,20 @@ pub fn push_subtitle_cue(
         ));
     }
     push_subtitle_text(track, start_ns, end_ns, text);
+}
+/// [`active_subtitle`]'s cue whole — `(track, start_ns, end_ns, text)` — for detailed logging's
+/// `sub: cue` line, which needs to know WHICH cue it is as well as what it says.
+pub fn active_subtitle_cue(now_ns: i64) -> Option<(i32, i64, i64, String)> {
+    let sel = SHARED.desired_sub_idx.load(Relaxed);
+    if sel < 0 {
+        return None;
+    }
+    let cues = SHARED.sub_cues.lock().unwrap();
+    let lookup_ns = subtitle_clock_ns(now_ns);
+    cues.iter()
+        .rev()
+        .find(|c| c.track == sel && lookup_ns >= c.start_ns && lookup_ns < c.end_ns)
+        .map(|c| (c.track, c.start_ns, c.end_ns, c.text.clone()))
 }
 /// the selected track's subtitle text active at `now_ns`, or None (also None when off).
 pub fn active_subtitle(now_ns: i64) -> Option<String> {

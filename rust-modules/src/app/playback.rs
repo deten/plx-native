@@ -76,6 +76,14 @@ pub(crate) fn seek_pending() -> i64 {
 pub(crate) fn request_seek(x: i64) {
     plx_media::player::request_seek(x)
 }
+/// Detailed logging's `seek:` line for a seek the loop itself requests, with why. The scrub bar's
+/// own commits say theirs in `screens::player`, where tap, hold and lost key-up are known.
+pub(crate) fn seek_detail(cause: &str, from_ns: i64, to_ns: i64) {
+    plx_base::eventlog::history::detail_with(|| {
+        use plx_base::eventlog::detail::secs;
+        format!("seek: cause={cause} from={} to={}", secs(from_ns), secs(to_ns))
+    });
+}
 /// Commit a scrub to `target` and clear the preview. If we were PAUSED, STAY logically paused: a
 /// dedicated seek-preroll feed override lets the synchronized native clock decode one landed frame
 /// without publishing a false viewer Resume. `resume_pend` asks the per-frame loop to close that
@@ -161,6 +169,7 @@ pub(crate) fn retry_failed_playback(
     let resume_ns = intended_pos(ps)
         .max(plx_media::route::unpresented_resume_ns(ps))
         .max(0);
+    seek_detail(if direct_play.is_some() { "reopen-play-automatically" } else { "retry" }, playpos(), resume_ns);
     plx_media::player::stop_bufferfeed(ps, pa);
     if plx_media::route::retry_current_play(ps, meta, resume_ns, direct_play) {
         plx_machine::idle::invalidate();
@@ -451,6 +460,9 @@ fn launch_resume_ns(resume_ns: i64, from: Origin) -> i64 {
                     resume_ns / 1_000_000,
                     rewound / 1_000_000
                 ));
+                seek_detail("rewind-on-resume", resume_ns, rewound);
+            } else if resume_ns > 0 {
+                seek_detail("resume", 0, resume_ns);
             }
             rewound
         }
@@ -630,6 +642,8 @@ pub(crate) fn player_requests(
                 }
             }
             PlayerReq::SeekTo(ns) => {
+                // the Chapters strip, the one sender of a resuming seek
+                seek_detail("chapter", intended_pos(ps), ns);
                 request_seek(ns);
                 resume_if_paused(pa);
             }
@@ -640,6 +654,7 @@ pub(crate) fn player_requests(
             PlayerReq::CommitTrack(commit) => {
                 // A viewer's own audio or subtitle pick is remembered for the episode's show.
                 use plx_appkit::track_menu::TrackCommit;
+                note_subtitle_pick(&commit, bridge.metadata_view());
                 let picked = match &commit {
                     TrackCommit::Audio(audio) => Some((plx_plex::plex::session::TrackKind::Audio, audio.sid)),
                     TrackCommit::Subtitle { stream_id, .. } => Some((plx_plex::plex::session::TrackKind::Subtitle, *stream_id)),
@@ -682,6 +697,31 @@ pub(crate) fn player_requests(
     }
 }
 
+/// Detailed logging's `sub:` line for a viewer's subtitle pick: which stream, drawn from where (the
+/// demuxer's track, a sidecar file, or Off), its codec as the server listed it, and the timing the
+/// pick starts under.
+fn note_subtitle_pick(commit: &plx_appkit::track_menu::TrackCommit, meta: plx_data::metadata::MetadataView<'_>) {
+    use plx_appkit::track_menu::TrackCommit;
+    let TrackCommit::Subtitle { render_ordinal, stream_id, sidecar_key, sidecar_codec, sidecar_can_auto_sync } = commit else {
+        return;
+    };
+    plx_base::eventlog::history::detail_with(|| {
+        let listed = meta.playing().and_then(|p| p.subs.iter().find(|s| s.id == *stream_id));
+        let source = match (sidecar_key.is_some(), *stream_id) {
+            (_, 0) => "off",
+            (true, _) => "sidecar",
+            (false, _) => "embedded",
+        };
+        let codec = if sidecar_key.is_some() { sidecar_codec.as_str() } else { listed.map_or("-", |s| s.codec.as_str()) };
+        format!(
+            "sub: pick stream={stream_id} source={source} ordinal={render_ordinal} codec={codec} auto-sync={}{} offset={}ms",
+            plx_media::player::subtitle_auto_sync() as u8,
+            if *sidecar_can_auto_sync { "/track-can" } else { "" },
+            plx_media::player::subtitle_offset_ms()
+        )
+    });
+}
+
 /// **Perform a Shield post-play card** (`screens::player::shield`): every arm is an existing start.
 ///
 /// - *Up Next* is the Next Episode button's own start (`play_up_next`), a press, so Passout
@@ -710,6 +750,7 @@ fn apply_post_play(
         PostPlayReq::Replay => {
             log_end_reason(ps, bridge.metadata_view(), "postplay-replay");
             if !plx_media::player::ended() {
+                seek_detail("post-play-replay", intended_pos(ps), 0);
                 request_seek(0);
                 resume_if_paused(pa);
             } else if plx_media::route::can_retry_current_play(ps) {
@@ -1038,6 +1079,12 @@ pub(crate) fn activate_ctrl_row(
                     // is usually still inside it, so without this the button comes straight back
                     // (see `metadata::mark_skipped`).
                     bridge.metadata_mut().run(plx_data::stores::metadata::MetadataCmd::MarkSkipped(pr.marker));
+                    let how = if matches!(advance, Advance::Pressed) { "manual" } else { "auto" };
+                    let what = match pr.kind {
+                        plx_data::metadata::MarkerKind::Intro => "skip-intro",
+                        plx_data::metadata::MarkerKind::Credits => "skip-credits",
+                    };
+                    seek_detail(&format!("{what}-{how}"), intended_pos(ps), ns);
                     request_seek(ns);
                     resume_if_paused(pa);
                     false
@@ -1085,6 +1132,7 @@ pub(crate) fn play_up_next(
         u.rk.clone(),
         plx_data::metadata::resume_ns(u.resume_ms, u.dur_ms),
     );
+    seek_detail("up-next", playpos(), resume);
     close_player_overlays(pages);
     plx_media::player::stop_bufferfeed(ps, pa);
     let ctx = plx_ui::fmt::episode_kicker(u.season, u.index, &u.ep_title);
@@ -1215,6 +1263,7 @@ fn apply_info_action(
 ) {
     match action {
         plx_appkit::info_panel::InfoAction::FromBeginning => {
+            seek_detail("from-beginning", intended_pos(ps), 0);
             request_seek(0);
             resume_if_paused(pa);
         }

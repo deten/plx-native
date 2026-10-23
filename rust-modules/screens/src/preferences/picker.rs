@@ -174,7 +174,7 @@ impl PickerPage {
         match value {
             Value::Quality(_) | Value::DirectPlay(_) | Value::NextEpisode(_) | Value::DeckPress(_) | Value::SkipInterval(_) | Value::SkipIntro(_) | Value::SkipCredits(_)
             | Value::SkipBack(_) | Value::ResumeRewind(_) | Value::PassoutProtection(_)
-            | Value::LibraryOpens(_) | Value::Layout(_) | Value::SubtitleSize(_) | Value::SubtitlePosition(_) => self.txn.save_local(&mut self.state.io, value, fx),
+            | Value::LibraryOpens(_) | Value::Layout(_) | Value::DetailedLogging(_) | Value::SubtitleSize(_) | Value::SubtitlePosition(_) => self.txn.save_local(&mut self.state.io, value, fx),
             value => {
                 let mut update = PreferenceUpdate::default();
                 match (self.state.field, value) {

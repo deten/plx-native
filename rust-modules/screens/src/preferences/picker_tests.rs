@@ -339,3 +339,31 @@ fn the_layout_picker_is_local_and_returns_to_the_root() {
     assert_eq!(saved, Some(LayoutMode::Standard));
     assert_eq!(field.parent(), SettingsPage::Root);
 }
+
+/// Detailed logging is a local, install-wide setting the Settings root lists itself (under System):
+/// no account load, BACK names Settings, it opens on the published choice and a pick submits the
+/// local write, which publishes to the kept history only once it is durable.
+#[test]
+fn the_detailed_logging_picker_is_local_and_returns_to_the_root() {
+    use plx_plex::plex::session::DetailedLogging;
+    let _serial = plx_base::testlock::serial();
+    let _session = plx_plex::plex::session::TempSession::new("pref-detailed-logging-picker");
+    let field = PickerKind::DetailedLogging;
+    plx_base::eventlog::history::restore_detailed(true);
+    let mut page = PickerPage::new(EntryId(0), field);
+    let mut emitted = drive(&mut page, ScreenEvent::Enter(Enter::Fresh { focus: FocusTarget::ContainerGroup(GroupId(0)) }), 0);
+    emitted.extend(drive(&mut page, tick(), 0));
+    assert_eq!(preference_commands(&emitted), 0, "no account load");
+    assert_eq!(field.kind(), None, "no field page lists it");
+    assert_eq!(field.crumb(), plx_platform::i18n::msg::settings_title(), "BACK returns to Settings");
+    assert_eq!(page.state.checked, 1, "the picker opens on the published choice (On)");
+    let emitted = drive(&mut page, ScreenEvent::Activate(0), 0);
+    assert!(plx_base::eventlog::history::preference(), "a pick is not published before its write is durable");
+    let saved = emitted.into_iter().find_map(|e| match e.fx {
+        Fx::App(AppFx::Preferences(PreferenceCmd::DetailedLogging { mode, .. })) => Some(mode),
+        _ => None,
+    });
+    plx_base::eventlog::history::restore_detailed(false);
+    assert_eq!(saved, Some(DetailedLogging::Off));
+    assert_eq!(field.parent(), SettingsPage::Root);
+}

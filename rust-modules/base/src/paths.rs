@@ -638,6 +638,28 @@ pub fn image_cache_candidates() -> Vec<PathBuf> {
     v
 }
 
+/// Where a debug-flavour install keeps its history log while **detailed logging** is on
+/// (`eventlog::history`), best first: the session file's search order, as DIRECTORIES, exactly
+/// like [`image_cache_candidates`] — `/media/developer` under the Developer Mode jail,
+/// `/media/internal` under the production one, and a steerable build's instance root first of
+/// all. Not the runtime root: the whole point is a log that survives the TV restart that clears
+/// `/tmp`. Not the app dir either, which a reinstall replaces wholesale.
+///
+/// Named for the install, so two flavours on one television never share a log, and outside the
+/// `plxnative-` trigger namespace like every other persistent path here.
+pub fn persistent_log_dir_candidates() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if ENV_STEERABLE {
+        v.push(in_runtime_dir("logs"));
+    }
+    let id = app_id();
+    v.extend([
+        PathBuf::from(format!("/media/developer/{id}-logs")),
+        PathBuf::from(format!("/media/internal/.{id}-logs")),
+    ]);
+    v
+}
+
 /// The spool, beside the decision that authorised it.
 ///
 /// **Same directories, same search order, different file** — and not merged into

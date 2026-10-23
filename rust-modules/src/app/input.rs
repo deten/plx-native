@@ -1244,12 +1244,17 @@ fn sweep_local_files(persistent: impl IntoIterator<Item = std::path::PathBuf>,
 
 pub(crate) fn delete_all_local_data(meta: &mut plx_data::stores::metadata::MetadataStore,
     mut failures: Vec<String>) -> Vec<String> {
+    // The Detailed logging choice went with the session: stop writing the persistent history
+    // before its files are swept, or the next line would start them again.
+    plx_base::eventlog::history::publish_detailed(false);
     failures.extend(sweep_local_files(
         plx_base::paths::obsolete_last_place_candidates()
             .into_iter()
             .chain(plx_base::paths::telemetry_candidates())
             .chain(plx_base::paths::telemetry_spool_candidates())
-            .chain(plx_base::paths::telemetry_crashmark_candidates()),
+            .chain(plx_base::paths::telemetry_crashmark_candidates())
+            // a test build's detailed history, which a TV restart does not clear
+            .chain(plx_base::eventlog::history::persistent_files()),
         plx_base::paths::runtime_dir(),
     ));
     meta.run(plx_data::stores::metadata::MetadataCmd::Clear);

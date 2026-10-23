@@ -122,6 +122,8 @@ pub enum PickerKind {
     PassoutProtection,
     /// Which layout the app wears, listed on the Settings root under Library opens on.
     Layout,
+    /// Whether a test build keeps the detailed log, listed on the Settings root under System.
+    DetailedLogging,
 }
 
 impl SettingsPage {
@@ -145,7 +147,7 @@ impl PickerKind {
             | PickerKind::SkipIntro | PickerKind::SkipCredits | PickerKind::SkipBack | PickerKind::ResumeRewind
             | PickerKind::PassoutProtection => SettingsPage::Playback,
             PickerKind::AudioLanguage | PickerKind::SubtitleMode | PickerKind::SubtitleLanguage | PickerKind::ForcedSubtitles => SettingsPage::AudioSubtitles,
-            PickerKind::LibraryOpens | PickerKind::Layout => SettingsPage::Root,
+            PickerKind::LibraryOpens | PickerKind::Layout | PickerKind::DetailedLogging => SettingsPage::Root,
         }
     }
 }

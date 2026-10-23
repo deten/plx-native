@@ -2840,6 +2840,7 @@ pub(crate) fn follow_auth_landing(pages: &mut Dispatcher<AppHost>, bridge: &mut 
         plx_media::route::restore_deck_press(saved.deck_press());
         plx_data::browse::restore_library_opens(saved.library_opens());
         plx_ui::layout::publish(saved.layout_mode().is_shield());
+        plx_base::eventlog::history::publish_detailed(saved.detailed_logging().is_on());
         plx_media::player::restore_subtitle_tone(saved.subtitle_tone());
         plx_media::player::restore_audio_enhancements(saved.audio_enhancements());
         plx_media::player::restore_subtitle_auto_sync(saved.subtitle_auto_sync());

@@ -210,6 +210,16 @@ pub(crate) struct Adapters {
     pub(crate) player: plx_media::player::adapter::PlayerAdapter,
 }
 
+/// **Detailed logging's running state** (Settings > Detailed logging, a test build's): the held
+/// key whose repeats are being counted, the last page/surface/layout logged and the playback-pace
+/// window. Only touched while `plx_base::eventlog::history::detailed()`.
+#[derive(Default)]
+pub(crate) struct DetailTrails {
+    pub(crate) keys: plx_base::eventlog::detail::KeyTrail,
+    pub(crate) nav: plx_base::eventlog::detail::NavTrail,
+    pub(crate) pace: plx_base::eventlog::detail::Pace,
+}
+
 /// The app core's state, gathered from `run_application`'s loop-locals (UI restructure spec v4
 /// §13, phase 1b-i: FIELDS ONLY — `run_application` keeps its shape and reads `app.<field>` where
 /// it read a local). Phase 1b-ii extracts the coordinator's functions over `&mut App`; the machines of §2.2
@@ -229,6 +239,7 @@ pub(crate) struct App {
     #[cfg(feature = "devtools")]
     fps_shown: i32,
     play_prev: Option<(i64, u32)>,
+    pub(crate) detail: DetailTrails,
     running: bool,
     window_activity: window_activity::WindowActivity,
     #[cfg(feature = "devtools")]

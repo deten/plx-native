@@ -163,8 +163,17 @@ fn select_inner(
         deselect();
         return;
     }
-    let auto_sync = auto_sync_applies(super::subtitle_auto_sync(), can_auto_sync, state().media_voice);
+    let media_voice = state().media_voice;
+    let auto_sync = auto_sync_applies(super::subtitle_auto_sync(), can_auto_sync, media_voice);
     let selection = Selection { server, stream_id, key, codec: codec.to_ascii_lowercase(), can_auto_sync, auto_sync };
+    plx_base::eventlog::history::detail_with(|| format!(
+        "sub: sidecar stream={stream_id} codec={} auto-sync={} (preference={} track={} voice={})",
+        selection.codec,
+        auto_sync as u8,
+        super::subtitle_auto_sync() as u8,
+        can_auto_sync as u8,
+        media_voice as u8
+    ));
     {
         let mut st = state();
         st.generation = st.generation.wrapping_add(1);
@@ -231,6 +240,9 @@ fn select_inner(
 /// turning the same one back on is instant. MAIN THREAD.
 pub fn deselect() {
     let mut st = state();
+    if st.want.is_some() {
+        plx_base::eventlog::history::detail("sub: sidecar off");
+    }
     st.generation = st.generation.wrapping_add(1);
     st.pending = None;
     st.want = None;
@@ -347,6 +359,16 @@ pub fn restore_server_selection(server: plx_plex::plex::ServerId, meta: plx_data
         return Some(s.id);
     }
     None
+}
+
+/// [`active`]'s cue itself, never a failure message — for detailed logging's `sub: cue` line.
+pub fn active_cue(now_ns: i64, burned: bool) -> Option<Cue> {
+    let st = state();
+    let want = st.want.as_ref().filter(|_| !burned)?;
+    match &st.loaded {
+        Some((source, Content::Plain(cues))) if source == want => cue_at(cues, now_ns).cloned(),
+        _ => None,
+    }
 }
 
 /// The line to draw at `now_ns`, if a sidecar is selected and the server is not burning it.

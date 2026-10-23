@@ -816,6 +816,7 @@ impl PlayerScreen {
         self.scrub.drag = false;
         if self.scrub.ns >= 0 {
             plx_base::eventlog::log(&format!("scrub: pointer commit ns={}", self.scrub.ns));
+            scrub_seek_detail("scrub-pointer", self.scrub.ns, &self.scrub);
             Self::ask(fx, PlayerReq::CommitSeek(self.scrub.ns));
             self.scrub.ns = -1;
         }
@@ -973,6 +974,12 @@ impl PlayerScreen {
             }
         }
         if self.hud.nav.focus != 0 || hide {
+            if self.scrub.dir != 0 && self.scrub.ns >= 0 {
+                plx_base::eventlog::history::detail_with(|| format!(
+                    "scrub: preview at {} dropped by {key:?}, nothing committed",
+                    plx_base::eventlog::detail::secs(self.scrub.ns)
+                ));
+            }
             self.scrub.ns = -1;
             self.scrub.disengage();
         }
@@ -1011,6 +1018,11 @@ impl PlayerScreen {
                     self.scrub.begin(now, fwd);
                     self.scrub.reveal = true;
                     self.scrub.ns = plx_media::player::intended_pos_ns(ps);
+                    plx_base::eventlog::history::detail_with(|| format!(
+                        "scrub: reveal {} seed={} (a tap moves nothing; a hold scrubs)",
+                        if fwd { "fwd" } else { "back" },
+                        plx_base::eventlog::detail::secs(self.scrub.ns)
+                    ));
                 }
             }
             input::ScrubPress::Row => {
@@ -1059,6 +1071,15 @@ impl PlayerScreen {
                     self.scrub.ns = Scrub::clamp_target(self.scrub.ns.max(0) + step, dur);
                 }
                 self.scrub.dir = if fwd { 1 } else { -1 };
+                plx_base::eventlog::history::detail_with(|| format!(
+                    "scrub: press {} taps={} burst={} hold={} target={} playhead={}",
+                    if fwd { "fwd" } else { "back" },
+                    self.scrub.taps,
+                    burst as u8,
+                    self.scrub.hold as u8,
+                    plx_base::eventlog::detail::secs(self.scrub.ns),
+                    plx_base::eventlog::detail::secs(plx_media::player::intended_pos_ns(ps))
+                ));
             }
             input::ScrubPress::Nothing => {}
         }
@@ -1109,15 +1130,28 @@ impl PlayerScreen {
             return;
         }
         if self.scrub.reveal {
+            plx_base::eventlog::history::detail("scrub: released a reveal, preview discarded");
             self.scrub.ns = -1;
             self.scrub.disengage();
         } else if self.scrub.hold {
             // the preview holds still meanwhile (`step_scrub_hold`), and `step_tap_commit` commits
             self.scrub.resumed_at = 0;
             self.scrub.commit_at = now.wrapping_add(input::HOLD_RELEASE_GRACE_MS).max(1);
+            plx_base::eventlog::history::detail_with(|| format!(
+                "scrub: hold released after {:.1}s target={} commit in {}ms unless pressed again (grace)",
+                now.wrapping_sub(self.scrub.hold_since) as f64 / 1000.0,
+                plx_base::eventlog::detail::secs(self.scrub.ns),
+                input::HOLD_RELEASE_GRACE_MS
+            ));
         } else {
             // a tap → commit on a short debounce so quick taps accumulate first
             self.scrub.commit_at = now.wrapping_add(input::TAP_COMMIT_MS).max(1);
+            plx_base::eventlog::history::detail_with(|| format!(
+                "scrub: tap released taps={} target={} commit in {}ms unless tapped again",
+                self.scrub.taps,
+                plx_base::eventlog::detail::secs(self.scrub.ns),
+                input::TAP_COMMIT_MS
+            ));
         }
     }
 
@@ -1127,10 +1161,11 @@ impl PlayerScreen {
     /// is moved, and the loop's arm for it holds that pause across the seek. Clearing `ns` here
     /// rather than in the loop is the §2.3 half of the same change — `app::playback::commit_seek`
     /// used to reach into this gesture and blank it, which is a write to another owner's state.
-    fn commit_scrub<H: AppLike>(&mut self, fx: &mut Effects<'_, H>) {
+    fn commit_scrub<H: AppLike>(&mut self, fx: &mut Effects<'_, H>, cause: &str) {
         if self.scrub.ns < 0 {
             return;
         }
+        scrub_seek_detail(cause, self.scrub.ns, &self.scrub);
         Self::ask(fx, PlayerReq::CommitSeek(self.scrub.ns));
         self.scrub.ns = -1;
     }
@@ -1152,7 +1187,7 @@ impl PlayerScreen {
                 if self.scrub.hold { "keyup (held)" } else { "tap" },
                 self.scrub.ns / 1_000_000_000
             ));
-            self.commit_scrub(fx);
+            self.commit_scrub(fx, if self.scrub.hold { "scrub-hold" } else { "scrub-tap" });
         }
         self.scrub.ns = -1;
         self.scrub.disengage();
@@ -1184,7 +1219,7 @@ impl PlayerScreen {
         if self.scrub.resumed_at != 0 {
             if now.wrapping_sub(self.scrub.resumed_at) > input::HOLD_RESUME_WAIT_MS {
                 plx_base::eventlog::log(&format!("scrub: lost keyup commit {}s", self.scrub.ns / 1_000_000_000));
-                self.commit_scrub(fx);
+                self.commit_scrub(fx, "scrub-lost-keyup-after-resume");
                 self.scrub.disengage();
             }
             return;
@@ -1212,10 +1247,26 @@ impl PlayerScreen {
         self.scrub.t = now;
         if now.wrapping_sub(self.scrub.alive) > input::SCRUB_LOST_MS {
             plx_base::eventlog::log(&format!("scrub: lost keyup commit {}s", s / 1_000_000_000));
-            self.commit_scrub(fx);
+            self.commit_scrub(fx, "scrub-lost-keyup");
             self.scrub.disengage();
         }
     }
+}
+
+/// Detailed logging's `seek:` line for a scrub commit: why it committed (a tap's debounce, a held
+/// key's release, a lost key-up, the pointer), from the playhead to the preview, with the gesture's
+/// tap count and whether it was a hold.
+fn scrub_seek_detail(cause: &str, to_ns: i64, scrub: &Scrub) {
+    plx_base::eventlog::history::detail_with(|| {
+        use plx_base::eventlog::detail::secs;
+        format!(
+            "seek: cause={cause} from={} to={} taps={} hold={}",
+            secs(plx_media::player::playpos_ns()),
+            secs(to_ns),
+            scrub.taps,
+            scrub.hold as u8
+        )
+    });
 }
 
 /// **The four registered regions, as real `Focusable` groups** (restructure phase 12, D2): the

@@ -1015,6 +1015,10 @@ pub(crate) unsafe fn construct(
     }
     // The clock pill's zone, loaded once here rather than on the frame that first draws it.
     plx_platform::tv::clock::prime();
+    // A test build's kept history: the Detailed logging choice, restored quietly, then the one
+    // startup line saying where this launch's history goes (nothing at all while it is off).
+    plx_base::eventlog::history::restore_detailed(session.detailed_logging().is_on());
+    plx_base::eventlog::history::announce();
     // The subtitle tone rides the same file and the same moment: a preference, restored once.
     plx_media::player::restore_subtitle_tone(session.subtitle_tone());
     plx_media::player::restore_audio_enhancements(session.audio_enhancements());
@@ -1561,6 +1565,7 @@ pub(crate) unsafe fn construct(
         #[cfg(feature = "devtools")]
         fps_shown,
         play_prev,
+        detail: Default::default(),
         running,
         window_activity: super::window_activity::WindowActivity::new(),
         #[cfg(feature = "devtools")]

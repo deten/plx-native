@@ -970,6 +970,11 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
         // ones that forward them to a screen's own `move_focus`/`key`, and the modal
         // panels and the CH▲/CH▼ pager, which still spell their own key tests.
         let key = classify(sym, wcode);
+        // Detailed logging's `key:` line, above every early return below: every key the loop
+        // receives, whoever ends up answering it.
+        if plx_base::eventlog::history::detailed() {
+            note_key_detail(app, key, sym, wcode, state);
+        }
         if app.boot_initial.is_some() {
             let event = super::bridge::key_input(sym, wcode, state,
                 plx_machine::machine::Tick { ms: clock::now(), dt_us: 0 }, plx_machine::machine::Source::Sdl);
@@ -2738,6 +2743,21 @@ pub(crate) unsafe fn report(app: &mut App, fr: &mut Frame) {
         // tester was on would be worse than one that omitted the field. Compiles away in every
         // build that is not a lab build.
         crate::lab::note_route(fr.rn);
+        // Detailed logging's `nav:` line: each page pushed or popped, surface presented or
+        // dismissed, and layout change, on the frame it shows.
+        if plx_base::eventlog::history::detailed() {
+            let route = app.route();
+            let spot = plx_base::eventlog::detail::NavSpot {
+                route: fr.rn,
+                overlay: super::words::overlay_word(&app.pages, &route).unwrap_or(""),
+                pages: app.pages.nav.tabs.stack.depth(),
+                surfaces: app.pages.nav.modals.surfaces.len(),
+                layout: if plx_ui::layout::shield() { "shield" } else { "standard" },
+            };
+            if let Some(line) = app.detail.nav.note(spot) {
+                plx_base::eventlog::history::detail(&line);
+            }
+        }
         // dev: the FOCUS FINGERPRINT (`/tmp/plxnative-focus`, see `crate::focusprobe`). One
         // ordered line naming everything the key ladder above can move, logged only when it
         // changes, so a (route x key) characterization run can read what a press did out of the
@@ -2924,6 +2944,60 @@ pub(crate) unsafe fn report(app: &mut App, fr: &mut Frame) {
         }
 }
 
+/// **Detailed logging's `key:` line** for one key event, classified exactly as the code below it
+/// will: a release, a repeat of the key we watched go down, or a fresh press — `phantom` when the
+/// driver called that press a repeat (`App::down_sym`'s doc). Repeats are coalesced per hold.
+fn note_key_detail(app: &mut App, key: plx_ui::consts::Key, sym: u32, wcode: u32, state: u32) {
+    use plx_base::eventlog::detail::{KeyEdge, KeyEvent};
+    let flagged = state & 0x100 != 0;
+    let edge = if (state & 0xff) != 1 {
+        KeyEdge::Up
+    } else if flagged && sym == app.down_sym {
+        KeyEdge::Repeat
+    } else {
+        KeyEdge::Down
+    };
+    let route = app.route();
+    let route = format!("{}{}", super::words::route_word(&route), super::words::overlay_suffix(&app.pages, &route));
+    let focus = app.pages.focus().map_or_else(|| "-".to_string(), |f| format!("{}/{}", f.entry.0, f.elem));
+    let ev = KeyEvent {
+        name: key_name(key),
+        sym,
+        wcode,
+        edge,
+        phantom: edge == KeyEdge::Down && flagged,
+        route: &route,
+        focus: &focus,
+        now_ms: clock::now(),
+    };
+    for line in app.detail.keys.note(&ev) {
+        plx_base::eventlog::history::detail(&line);
+    }
+}
+
+/// A key's name in the `key:` lines: the D-pad's alternate transport spellings (`classify`'s
+/// `alt`) say so, because a REWIND/FAST-FORWARD key that scrubs is a different press to look for.
+fn key_name(key: plx_ui::consts::Key) -> &'static str {
+    use plx_ui::consts::Key;
+    match key {
+        Key::Up => "UP",
+        Key::Down => "DOWN",
+        Key::Left { alt: false } => "LEFT",
+        Key::Left { alt: true } => "LEFT/REW",
+        Key::Right { alt: false } => "RIGHT",
+        Key::Right { alt: true } => "RIGHT/FF",
+        Key::Ok => "OK",
+        Key::Back => "BACK",
+        Key::Play => "PLAY",
+        Key::Pause => "PAUSE",
+        Key::PlayPause => "PLAYPAUSE",
+        Key::Stop => "STOP",
+        Key::Exit => "EXIT",
+        Key::PointerHidden => "POINTER-HIDDEN",
+        Key::Other => "OTHER",
+    }
+}
+
 /// The once/sec heartbeat line and its counters.
 pub(crate) unsafe fn heartbeat(app: &mut App, fr: &mut Frame) {
     let rn = fr.rn;
@@ -2997,6 +3071,15 @@ pub(crate) unsafe fn heartbeat(app: &mut App, fr: &mut Frame) {
             } else {
                 String::new()
             };
+            // Detailed logging's `player: pace`: the same playhead against the wall clock, over each
+            // 10 s of plain playback (anything else — paused, buffering, seeking — restarts the
+            // window), so a pipeline catching up — "playing fast" — reads as a drift.
+            if plx_base::eventlog::history::detailed() {
+                let running = playing && !plx_media::player::lifecycle::paused();
+                if let Some(line) = app.detail.pace.sample(running, pos_ns, fr.now, &vp) {
+                    plx_base::eventlog::history::detail(&line);
+                }
+            }
             // `fps=<n>` — frames actually SWAPPED this second, which is what `plx_machine::idle` moves,
             // and the only field here that is a frame rate. `loop=` counts LOOP iterations: it
             // is the app's liveness signal and `pos=` is anchored to it, so it must not read 0
@@ -3217,6 +3300,7 @@ mod lifecycle_regression_tests {
             #[cfg(feature = "devtools")]
             fps_shown: Default::default(),
             play_prev: None,
+            detail: Default::default(),
             running: Default::default(),
             window_activity: crate::app::window_activity::WindowActivity::new(),
             #[cfg(feature = "devtools")]

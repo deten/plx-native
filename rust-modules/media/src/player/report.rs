@@ -638,6 +638,27 @@ fn transition(
     }
 }
 
+/// Detailed logging's buffering lines: when the pipeline went into Buffering (an underrun, or a
+/// start not yet presenting) and how long it stayed, beside the `playstate:` edge that names it.
+fn stall_detail(prev: super::shared::PlaybackState, now: super::shared::PlaybackState) {
+    use super::shared::PlaybackState as S;
+    static SINCE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    if !plx_base::eventlog::history::detailed() || !(prev == S::Buffering || now == S::Buffering) {
+        return;
+    }
+    let mut since = SINCE.lock().unwrap_or_else(|e| e.into_inner());
+    let pos = plx_base::eventlog::detail::secs(super::playpos_ns());
+    let lower = |s: S| format!("{s:?}").to_ascii_lowercase();
+    let line = if now == S::Buffering {
+        *since = Some(std::time::Instant::now());
+        format!("player: buffering from={} pos={pos}", lower(prev))
+    } else {
+        let held = since.take().map_or_else(|| "?".to_string(), |t| format!("{:.1}s", t.elapsed().as_secs_f64()));
+        format!("player: buffering ended after {held} to={} pos={pos}", lower(now))
+    };
+    plx_base::eventlog::history::detail(&line);
+}
+
 /// **Observe the state the HUD is rendering.** Called once a frame from the main loop.
 pub fn tick(ps: &crate::route::PlaybackSession) {
     let now = super::state(ps);
@@ -651,6 +672,9 @@ pub fn tick(ps: &crate::route::PlaybackSession) {
             format!("{now:?}").to_ascii_lowercase(),
             super::end_facts(ps)
         ));
+    }
+    if prev != now {
+        stall_detail(prev, now);
     }
     // A claim's presentation hold answers Buffering on purpose (`state()`), so its
     // Playing -> Buffering edge is the viewer's own pick working, not a stall.
