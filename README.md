@@ -197,6 +197,11 @@ Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
   captioned grids grouped into films, shows, episodes, people and collections. OK on the search
   field still brings up the TV keyboard.
 - **Watchlist:** a captioned grid of your Watchlist titles.
+- **Player:** the title and its details sit at the top left with a clock opposite, above a thin
+  amber bar with round Subtitles and Settings buttons. Subtitles, Audio, Quality and Playback
+  Options open as panels from the right edge. Skip Intro and Skip Credits appear as a white pill in
+  the corner, subtitles are drawn as white text with a soft shadow, and an episode ends on a page
+  showing what you just watched, the next episode with its countdown, and your On Deck titles.
 
 Code: branch [`shield-layout`](../../tree/shield-layout), built on `resume-seek`.
 
@@ -233,7 +238,7 @@ app. To remove the repository, select its address under **Settings** in Homebrew
 You can also install by hand: download the `.ipk` from a [release](../../releases) and install it
 with `ares-install` from LG's webOS developer tools.
 
-The newest test build, [Test 14](../../releases/tag/test-14), carries every feature above. Test
+The newest test build, [Test 15](../../releases/tag/test-15), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
