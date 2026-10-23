@@ -215,6 +215,31 @@ impl RowStyle {
         scroll: RowScroll::Reveal,
         ..Self::SHIELD_POSTER
     };
+    /// **The Shield detail page's poster rows** (SHIELD-LAYOUT-SPEC §5.5, §7.2): Seasons, Related
+    /// and the collection — [`Self::SHIELD_POSTER`] from the detail column's x 128, every card
+    /// captioned under it by the page.
+    pub const SHIELD_DETAIL_POSTER: RowStyle = RowStyle {
+        margin_x: crate::shield_detail::X,
+        ..Self::SHIELD_POSTER
+    };
+    /// **The Shield detail page's Cast & Crew** (§5.4): 240 circles on the poster rows' 272 pitch,
+    /// popped like a poster and ringed on their own curve, named under each by the page.
+    pub const SHIELD_CAST: RowStyle = RowStyle {
+        w: crate::shield_detail::CAST_D,
+        h: crate::shield_detail::CAST_D,
+        radius: crate::shield_detail::CAST_D * 0.5,
+        circular: true,
+        ..Self::SHIELD_DETAIL_POSTER
+    };
+    /// **The Shield detail page's landscape row** (§5.3): 512x288 stills on a 544 pitch, popped to
+    /// ~528 across — the Extras shelf.
+    pub const SHIELD_LANDSCAPE: RowStyle = RowStyle {
+        w: crate::shield_detail::EP_W,
+        h: crate::shield_detail::EP_H,
+        gap: crate::shield_detail::EP_GAP,
+        focus_scale: crate::shield_detail::EP_FOCUS_SCALE,
+        ..Self::SHIELD_DETAIL_POSTER
+    };
     /// ring focus scalar denominator — `(s-1)/ring_denom` maps scale∈[1, focus_scale] to [0, 1].
     #[inline]
     pub(crate) fn ring_denom(&self) -> f32 {

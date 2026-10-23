@@ -149,6 +149,46 @@
     "value": "Cast & Crew",
     "description": "browse detail cast"
   },
+  "browse.detail.tab.show": {
+    "value": "Show",
+    "description": "A show page's first tab in the Shield layout (before one tab per season): the show itself, its seasons as posters"
+  },
+  "browse.detail.watch_episode": {
+    "value": "Watch {episode}",
+    "args": {
+      "episode": "str"
+    },
+    "description": "The Shield layout's primary button on a show page: play the next episode, named by its season and number, e.g. 'Watch S2 · E1'"
+  },
+  "browse.detail.resume_left": {
+    "value": "Resume • {left}",
+    "args": {
+      "left": "str"
+    },
+    "description": "The Shield layout's primary button on a part-watched item: resume it, with the time still to watch, e.g. 'Resume • 36 min left'"
+  },
+  "browse.detail.more_actions": {
+    "value": "More Actions",
+    "description": "Title of the Shield layout's panel of further actions on a movie, show or episode page (opened by its round 'more' button)"
+  },
+  "browse.detail.track_info": {
+    "value": "Track information",
+    "description": "A row of the Shield layout's More Actions panel: the item's file, video, audio and subtitle tracks"
+  },
+  "browse.detail.seasons_heading": {
+    "value": {
+      "one": "{count} Season",
+      "other": "{count} Seasons"
+    },
+    "args": {
+      "count": "i64"
+    },
+    "description": "The heading over a show's season posters on its Show tab in the Shield layout, e.g. '2 Seasons'"
+  },
+  "browse.detail.subtitles_off": {
+    "value": "Off",
+    "description": "The Shield layout's subtitle chip on a detail page when no subtitle track is selected"
+  },
   "browse.detail.also_available": {
     "value": "Also available",
     "description": "browse detail also_available"

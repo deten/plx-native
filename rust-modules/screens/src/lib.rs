@@ -21,6 +21,7 @@ pub mod collection;
 #[cfg(test)]
 mod cards_conformance_tests; // shared-card-sections Tier 2: every card screen through one black-box suite
 pub mod detail;
+pub mod detail_more;
 pub mod person;
 pub mod person_bio;
 pub mod filmography;

@@ -1425,6 +1425,15 @@ impl Bridge {
         use plx_ui::screen::ScreenArg;
         arg.chrome() == plx_machine::machine::Chrome::TabBar
     }
+
+    /// **A detail page in the Shield layout**: the rail stands beside it (SHIELD-LAYOUT-SPEC §2.1:
+    /// on every page but the full-screen player) and LEFT off its left-most content opens the side
+    /// panel, as on a bar-wearing page. Not while a trailer has the screen.
+    fn shield_detail(arg: &AppArg) -> bool {
+        plx_ui::layout::shield()
+            && matches!(arg, AppArg::Content(plx_screens::registry::ContentArg::Detail { .. }))
+            && !plx_media::player::preview::view().picture
+    }
 }
 
 impl Bridge {
@@ -1453,10 +1462,18 @@ impl Bridge {
 }
 
 impl Rig<AppHost> for Bridge {
+    fn wears_chrome(&self, arg: &AppArg) -> bool {
+        Self::draws_chrome_for(arg) || Self::shield_detail(arg)
+    }
     fn draw_chrome(&mut self, arg: &AppArg, _parts: &CxParts<u32>,
         nav: plx_ui::screen::NavPresentation,
         glass: Option<&mut plx_ui::frame::glass::GlassPlan>) {
-        if !Self::draws_chrome_for(arg) { return; }
+        if !Self::draws_chrome_for(arg) && !Self::shield_detail(arg) { return; }
+        if Self::shield_detail(arg) {
+            // the rail alone: a detail page carries no clock (spec §3.3)
+            plx_ui::side_nav::draw_rail(plx_ui::Painter::root().alpha(nav.chrome_alpha), self.chrome.profile());
+            return;
+        }
         let Some(glass) = glass else { return };
         let p = plx_ui::Painter::root().alpha(nav.chrome_alpha);
         if plx_ui::layout::shield() {
@@ -1482,11 +1499,13 @@ impl Rig<AppHost> for Bridge {
     fn scrim_chrome_read(&self) -> Option<plx_ui::widgets::ChromeRead<'_>> {
         Some(self.chrome.read(self.strip.chip_expand_pos()))
     }
-    /// **The Shield layout's side panel**: LEFT off the left-most content of a bar-wearing page
-    /// presents it, opened on that page's row. Nothing else, and nothing at all in the Standard
-    /// layout, where the press stays inert as it always was.
+    /// **The Shield layout's side panel**: LEFT off the left-most content of a bar-wearing page —
+    /// or of a detail page, which wears that layout's rail too — presents it, opened on that page's
+    /// row (Home's, for a detail page, which has none of its own). Nothing else, and nothing at all
+    /// in the Standard layout, where the press stays inert as it always was.
     fn edge_surface(&mut self, arg: &AppArg, dir: plx_ui::screen::Dir) -> Option<(AppArg, Style)> {
-        if dir != plx_ui::screen::Dir::Left || !plx_ui::layout::shield() || !Self::draws_chrome_for(arg) {
+        if dir != plx_ui::screen::Dir::Left || !plx_ui::layout::shield()
+            || !(Self::draws_chrome_for(arg) || Self::shield_detail(arg)) {
             return None;
         }
         Some((AppArg::Sidebar(self.sidebar_arg(arg)), Style::Sheet))

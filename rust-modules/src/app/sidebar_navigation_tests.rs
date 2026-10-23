@@ -163,8 +163,8 @@ fn left_at_a_rows_first_card_opens_the_side_panel_and_nowhere_else() {
     });
 }
 
-/// The Rig's answer: only LEFT, only Shield, only a bar-wearing page — and the argument names
-/// that page's row.
+/// The Rig's answer: only LEFT, only Shield, only a bar-wearing page or a detail page (which wears
+/// the Shield rail too) — and the argument names that page's row, Home's for a detail page.
 #[test]
 fn only_left_off_a_bar_wearing_page_in_shield_presents_the_panel() {
     use plx_screens::sidebar::Current;
@@ -186,10 +186,15 @@ fn only_left_off_a_bar_wearing_page_in_shield_presents_the_panel() {
         assert!(matches!(rig.edge_surface(&AppArg::Library, plx_ui::screen::Dir::Left),
             Some((AppArg::Sidebar(s), _)) if matches!(s.current, Current::Library { .. })),
             "inside a library the panel opens on that library");
-        for arg in [AppArg::Player, detail_arg("1"), AppArg::Settings(SettingsPage::Root)] {
+        assert!(matches!(rig.edge_surface(&detail_arg("1"), plx_ui::screen::Dir::Left),
+            Some((AppArg::Sidebar(s), Style::Sheet)) if s.current == Current::Home),
+            "a detail page opens the panel too, on Home's row");
+        assert!(rig.edge_surface(&detail_arg("1"), plx_ui::screen::Dir::Right).is_none());
+        for arg in [AppArg::Player, AppArg::Settings(SettingsPage::Root)] {
             assert!(rig.edge_surface(&arg, plx_ui::screen::Dir::Left).is_none(), "a page with no bar has no panel");
         }
     });
+    assert!(rig.edge_surface(&detail_arg("1"), plx_ui::screen::Dir::Left).is_none(), "nor in Standard");
 }
 
 /// BACK to Home from a top-level page seats the hero in Shield (there is no strip pill to land on)

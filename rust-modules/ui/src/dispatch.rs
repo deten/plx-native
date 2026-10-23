@@ -228,6 +228,12 @@ pub trait Rig<H: Host> {
     fn navigation_presentation(&self) -> super::screen::NavPresentation {
         super::screen::NavPresentation { page_alpha: self.page_alpha(), ..Default::default() }
     }
+    /// Does the page `arg` wear the shared chrome? Every bar-wearing page (`Chrome::TabBar`); an
+    /// application may answer for more — the Shield layout's rail stands beside its detail pages
+    /// too, which wear no bar.
+    fn wears_chrome(&self, arg: &H::Arg) -> bool {
+        arg.chrome() == plx_machine::machine::Chrome::TabBar
+    }
     /// Shared chrome draws after its page and before surfaces, using a captured vocabulary.
     fn draw_chrome(&mut self, _arg: &H::Arg, _parts: &CxParts<H::Elem>,
         _nav: super::screen::NavPresentation, _glass: Option<&mut super::frame::glass::GlassPlan>) {}
@@ -1480,6 +1486,7 @@ where
                 let page_z = Z::page(index);
                 if page_z >= ceiling { break; }
                 let _page_layer = backdrop::layer(page_z, false);
+                let wears_chrome = rig.wears_chrome(&e.arg);
                 if let Some(inst) = e.inst.as_mut() {
                     let Split { views, measure, .. } = rig.split();
                     let mut page_cx = parts.cx::<H>(views, measure);
@@ -1541,7 +1548,7 @@ where
                     }
                     set.pages += 1;
                     set.bytes += inst.screen.render_report().bytes;
-                    if Z::CHROME < ceiling && top_entry == Some(e.id) && e.arg.chrome() == plx_machine::machine::Chrome::TabBar
+                    if Z::CHROME < ceiling && top_entry == Some(e.id) && wears_chrome
                         && inst.screen.focus_source() == FocusSource::Engine {
                         let mut chrome_parts = parts.clone();
                         chrome_parts.owner = InputOwner::Entry(e.id);

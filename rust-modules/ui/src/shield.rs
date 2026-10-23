@@ -1,8 +1,8 @@
 //! **The Shield layout's content geometry and paint** (`layout::shield()`): the focused-item header
 //! a Home-like page wears above its rows, the ground keyed from that item's artwork, and the poster
 //! rows' card treatment. `side_nav` is the same layout's chrome; this is what stands inside it,
-//! with `shield_browse` (the library pages' tabs, chips, grid, rail and tiles) and `shield_panel`
-//! (the right-side panel).
+//! with `shield_browse` (the library pages' tabs, chips, grid, rail and tiles), `shield_detail`
+//! (the detail pages) and `shield_panel` (the right-side panel).
 //!
 //! Every number is measured off the Plex app on Android TV at 1920x1080 (SHIELD-LAYOUT-SPEC §1,
 //! §4.1, §4.4, §5), the logical space this app draws in, so they transfer 1:1 and are pinned by
@@ -19,7 +19,8 @@
 //!   dark plate with a check ([`badge_rect`]). No shadow, glow or label.
 //! - **The header** ([`draw_hero`]): the item's clearLogo in [`LOGO_BOX`] (a shorter box and a
 //!   subtitle line for an episode or a season), a facts row with a content-rating plate, a
-//!   two-line summary and a dimmer cast line. No buttons, no pager.
+//!   two-line summary and a dimmer cast line. No buttons, no pager. Its title block
+//!   ([`draw_title_block`]) is the detail pages' too (`shield_detail`), one column to the right.
 //! - **The ground** ([`HeroGround`]): the item's UltraBlur corners as a four-corner wash
 //!   ([`ground_target`]), its backdrop at [`ART`] fading into that wash to the left and below, both
 //!   cross-fading when the subject changes.
@@ -288,20 +289,43 @@ pub fn summary_cap_top(measure: &dyn Measure) -> f32 {
 /// **The header**, through `p` (its alpha is the subject cross-fade). Every run is server text and
 /// elides; the facts row drops what no longer fits the summary's width.
 pub fn draw_hero(p: Painter, facts: &HeroFacts<'_>, measure: &dyn Measure) {
+    draw_title_block(p, facts, CONTENT_X, measure);
+    if !facts.summary.is_empty() {
+        TextView::new(facts.summary, SUMMARY_SIZE, theme::SHIELD_HERO_TEXT)
+            .with_measure(measure)
+            .leading(SUMMARY_LINE)
+            .max_lines(SUMMARY_LINES)
+            .draw(p, Rect::new(CONTENT_X, summary_cap_top(measure), SUMMARY_W, 0.0));
+    }
+    if !facts.cast.is_empty() {
+        let line = plx_gfx::text::elide_by(facts.cast, CAST_W, false, |t| measure.width_str(t, CAST_SIZE, false));
+        if let Ok(c) = CString::new(line) {
+            Label::new(c.as_ptr(), CAST_SIZE, theme::SHIELD_HERO_CAST).v(VAlign::Middle)
+                .draw(p, Rect::new(CONTENT_X, CAST_Y, CAST_W, CAST_H));
+        }
+    }
+}
+
+/// **The header's title block** with its left edge at `x`: the logo (or title) in its box, an
+/// episode's or a season's own name under the short one, and the facts row with its
+/// content-rating plate. Home's header stands it at [`CONTENT_X`]; the detail pages at
+/// `shield_detail::X`, where their own ratings, summary and buttons follow it.
+pub fn draw_title_block(p: Painter, facts: &HeroFacts<'_>, x: f32, measure: &dyn Measure) {
     let short = !facts.subtitle.is_empty();
     let size = if short { LOGO_TEXT_SIZE_SHORT } else { LOGO_TEXT_SIZE };
+    let bx = logo_box(facts);
     HeroLogo::new(facts.sid, facts.logo_rk, facts.title, crate::hero_logo::LogoRung::Hero)
-        .draw_boxed(p, logo_box(facts), size, measure);
+        .draw_boxed(p, Rect::new(x, bx.y, bx.w, bx.h), size, measure);
     if short {
         let line = plx_gfx::text::elide_by(facts.subtitle, LOGO_BOX.w, false,
             |t| measure.width_str(t, SUBTITLE_SIZE, true));
         if let Ok(c) = CString::new(line) {
             Label::new(c.as_ptr(), SUBTITLE_SIZE, theme::SHIELD_HERO_SUBTITLE).bold()
-                .draw(p, Rect::new(CONTENT_X, SUBTITLE_Y, LOGO_BOX.w, SUBTITLE_H));
+                .draw(p, Rect::new(x, SUBTITLE_Y, LOGO_BOX.w, SUBTITLE_H));
         }
     }
-    let mut x = CONTENT_X;
-    let right = CONTENT_X + SUMMARY_W;
+    let mut x = x;
+    let right = x + SUMMARY_W;
     for fact in facts.facts.iter().filter(|f| !f.is_empty()) {
         let w = measure.width_str(fact, META_SIZE, false);
         if x + w > right {
@@ -322,20 +346,6 @@ pub fn draw_hero(p: Painter, facts: &HeroFacts<'_>, measure: &dyn Measure) {
                 Label::new(c.as_ptr(), META_SIZE, theme::SHIELD_RATING_INK)
                     .h(crate::label::HAlign::Center).draw(p, plate);
             }
-        }
-    }
-    if !facts.summary.is_empty() {
-        TextView::new(facts.summary, SUMMARY_SIZE, theme::SHIELD_HERO_TEXT)
-            .with_measure(measure)
-            .leading(SUMMARY_LINE)
-            .max_lines(SUMMARY_LINES)
-            .draw(p, Rect::new(CONTENT_X, summary_cap_top(measure), SUMMARY_W, 0.0));
-    }
-    if !facts.cast.is_empty() {
-        let line = plx_gfx::text::elide_by(facts.cast, CAST_W, false, |t| measure.width_str(t, CAST_SIZE, false));
-        if let Ok(c) = CString::new(line) {
-            Label::new(c.as_ptr(), CAST_SIZE, theme::SHIELD_HERO_CAST).v(VAlign::Middle)
-                .draw(p, Rect::new(CONTENT_X, CAST_Y, CAST_W, CAST_H));
         }
     }
 }
@@ -441,11 +451,18 @@ impl HeroGround {
     /// Paint the ground over the whole screen: the wash with the subject's backdrop in one pass,
     /// the outgoing backdrop over it, then the two dissolves of the art's edges into the wash.
     pub fn draw(&self, p: Painter) {
+        self.draw_faded(p, 1.0);
+    }
+
+    /// [`draw`](Self::draw) with the art at `presence` of itself (the wash stays whole): a detail
+    /// page whose header has scrolled away lets its backdrop go with it (e03).
+    pub fn draw_faded(&self, p: Painter, presence: f32) {
+        let presence = presence.clamp(0.0, 1.0);
         let cur = resolve(self.art.as_ref());
-        if let Some((_, path)) = self.art.as_ref().filter(|_| cur.0 == 0) {
+        if let Some((_, path)) = self.art.as_ref().filter(|_| cur.0 == 0 && presence > 0.01) {
             crate::placeholder::note(p, crate::placeholder::Reason::HomeBackdrop, path);
         }
-        let a = if cur.0 != 0 { self.art_a.pos } else { 0.0 };
+        let a = if cur.0 != 0 { self.art_a.pos * presence } else { 0.0 };
         let art = (a > 0.01).then(|| WashArt {
             tex: cur.0,
             rect: ART,
@@ -454,7 +471,7 @@ impl HeroGround {
         });
         self.wash.draw_ground(p, Rect::FULL, art, None);
         let prev = resolve(self.prev.as_ref());
-        let pa = if prev.0 != 0 { self.prev_a.pos } else { 0.0 };
+        let pa = if prev.0 != 0 { self.prev_a.pos * presence } else { 0.0 };
         if pa > 0.01 {
             p.tex_uv(prev.0, ART.cover_uv(prev.1, prev.2, crate::Crop::Centre), ART, 0.0,
                 theme::with_a(theme::TINT_WHITE, pa));

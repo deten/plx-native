@@ -42,12 +42,20 @@ pub const ELEM_MARK_UNWATCHED: u32 = 4;
 pub const ELEM_TRAILER: u32 = 5;
 pub const ELEM_WATCHLIST_ADD: u32 = 6;
 pub const ELEM_WATCHLIST_REMOVE: u32 = 7;
+/// The Shield layout's row only (`super::shield`): its More circle, its Shuffle circle and the
+/// three media chips at the row's right end.
+pub const ELEM_MORE: u32 = 8;
+pub const ELEM_SHUFFLE: u32 = 9;
+pub const ELEM_CHIP_VIDEO: u32 = 10;
+pub const ELEM_CHIP_AUDIO: u32 = 11;
+pub const ELEM_CHIP_SUBS: u32 = 12;
 
 /// How many discs the row can carry, in [`disc_verb`]'s slot order: Restart, Trailer, the watched
 /// toggle and the Watchlist toggle.
 pub const DISCS: usize = 4;
-/// The most controls the row ever holds: Play, the four discs and *Also available*.
-pub const MAX_CTLS: usize = 6;
+/// The most controls the row ever holds: the Shield layout's Play, Restart, Trailer, the two
+/// toggles, Shuffle, More and three media chips.
+pub const MAX_CTLS: usize = 10;
 
 /// The hero's one focus group. Local to this screen — nothing outside `screens::detail` ever names
 /// it — so, like `screens::profiles`'s `ROSTER_GROUP`/`FOOTER_GROUP`, any small integer would do;
@@ -116,6 +124,16 @@ pub enum HeroCtl {
     WatchlistAdd,
     /// the filled-bookmark face of that toggle, worn once the title IS on the Watchlist
     WatchlistRemove,
+    /// the Shield layout's "⋮" circle: the More Actions panel (`screens::detail_more`)
+    More,
+    /// the Shield layout's Shuffle circle on a show page: the show (the season, on its tab) in an
+    /// order the server shuffles
+    Shuffle,
+    /// the Shield layout's media chips — the version, the audio track, the subtitle track — each
+    /// opening *Track information*
+    ChipVideo,
+    ChipAudio,
+    ChipSubs,
 }
 
 impl HeroCtl {
@@ -130,6 +148,11 @@ impl HeroCtl {
             HeroCtl::MarkUnwatched => ELEM_MARK_UNWATCHED,
             HeroCtl::WatchlistAdd => ELEM_WATCHLIST_ADD,
             HeroCtl::WatchlistRemove => ELEM_WATCHLIST_REMOVE,
+            HeroCtl::More => ELEM_MORE,
+            HeroCtl::Shuffle => ELEM_SHUFFLE,
+            HeroCtl::ChipVideo => ELEM_CHIP_VIDEO,
+            HeroCtl::ChipAudio => ELEM_CHIP_AUDIO,
+            HeroCtl::ChipSubs => ELEM_CHIP_SUBS,
         }
     }
     /// The inverse of [`elem`](Self::elem) — `None` for any `u32` outside the six identities
@@ -145,8 +168,17 @@ impl HeroCtl {
             ELEM_MARK_UNWATCHED => Some(HeroCtl::MarkUnwatched),
             ELEM_WATCHLIST_ADD => Some(HeroCtl::WatchlistAdd),
             ELEM_WATCHLIST_REMOVE => Some(HeroCtl::WatchlistRemove),
+            ELEM_MORE => Some(HeroCtl::More),
+            ELEM_SHUFFLE => Some(HeroCtl::Shuffle),
+            ELEM_CHIP_VIDEO => Some(HeroCtl::ChipVideo),
+            ELEM_CHIP_AUDIO => Some(HeroCtl::ChipAudio),
+            ELEM_CHIP_SUBS => Some(HeroCtl::ChipSubs),
             _ => None,
         }
+    }
+    /// Is `self` one of the Shield row's media chips?
+    pub fn is_chip(self) -> bool {
+        matches!(self, HeroCtl::ChipVideo | HeroCtl::ChipAudio | HeroCtl::ChipSubs)
     }
     /// Is `self` the watched toggle, wearing either face?
     pub fn is_watch(self) -> bool {
@@ -171,12 +203,23 @@ pub struct HeroSet {
     /// (not loaded, a profile without one, a title it cannot hold), and then the row carries no
     /// Watchlist control at all.
     pub watchlist: Option<bool>,
+    /// **The Shield layout's row** (`super::shield`): the order and the members differ — the
+    /// toggles before Shuffle and More, *Also available* moved into the More panel, the media
+    /// chips at the end. False for every Standard row, which is what keeps that row unchanged.
+    pub shield: bool,
+    /// The Shield row offers Shuffle (a show page).
+    pub shuffle: bool,
+    /// The Shield row's media chips: bit 0 the version, 1 the audio track, 2 the subtitle track.
+    pub chips: u8,
 }
 
 /// The row's controls, in drawn order, for a given set. A fixed 5-slot array (Play + Restart +
 /// Trailer + Alt + one watch face is the widest the row ever gets) plus a live count, so no
 /// per-frame allocation.
 pub fn hero_ctls(set: HeroSet) -> ([HeroCtl; MAX_CTLS], usize) {
+    if set.shield {
+        return shield_ctls(set);
+    }
     let mut v = [HeroCtl::Play; MAX_CTLS];
     let mut n = 1;
     if set.restart {
@@ -202,6 +245,39 @@ pub fn hero_ctls(set: HeroSet) -> ([HeroCtl; MAX_CTLS], usize) {
     if let Some(on) = set.watchlist {
         v[n] = if on { HeroCtl::WatchlistRemove } else { HeroCtl::WatchlistAdd };
         n += 1;
+    }
+    (v, n)
+}
+
+/// **The Shield layout's row** (SHIELD-LAYOUT-SPEC §7.1): the primary pill, then the circles in the
+/// measured order — play from start, the Trailer, the Watchlist toggle, the watched toggle — then
+/// Shuffle and More, and the media chips at the right end. *Also available* is a row of the More
+/// panel there, not a pill.
+fn shield_ctls(set: HeroSet) -> ([HeroCtl; MAX_CTLS], usize) {
+    let mut v = [HeroCtl::Play; MAX_CTLS];
+    let mut n = 1;
+    let mut push = |c: HeroCtl| {
+        v[n] = c;
+        n += 1;
+    };
+    if set.restart {
+        push(HeroCtl::Restart);
+    }
+    if set.trailer {
+        push(HeroCtl::Trailer);
+    }
+    if let Some(on) = set.watchlist {
+        push(if on { HeroCtl::WatchlistRemove } else { HeroCtl::WatchlistAdd });
+    }
+    push(if set.mark == PosterMark::Watched { HeroCtl::MarkUnwatched } else { HeroCtl::MarkWatched });
+    if set.shuffle {
+        push(HeroCtl::Shuffle);
+    }
+    push(HeroCtl::More);
+    for (bit, chip) in [HeroCtl::ChipVideo, HeroCtl::ChipAudio, HeroCtl::ChipSubs].into_iter().enumerate() {
+        if set.chips & (1 << bit) != 0 {
+            push(chip);
+        }
     }
     (v, n)
 }
@@ -429,6 +505,8 @@ pub fn hero_btn_rect_at(set: HeroSet, i: usize, y: f32, cw: HeroWidths) -> Rect 
             HeroCtl::Trailer => cw.disc[1],
             HeroCtl::MarkWatched | HeroCtl::MarkUnwatched => cw.disc[2],
             HeroCtl::WatchlistAdd | HeroCtl::WatchlistRemove => cw.disc[3],
+            // the Shield row's own controls never stand in a Standard row (`shield_ctls`)
+            HeroCtl::More | HeroCtl::Shuffle | HeroCtl::ChipVideo | HeroCtl::ChipAudio | HeroCtl::ChipSubs => CD,
         };
         if k >= i {
             break;
@@ -890,6 +968,7 @@ mod tests {
             alt,
             mark,
             watchlist: None,
+            ..Default::default()
         }
     }
 
@@ -1302,6 +1381,7 @@ mod tests {
             alt: false,
             mark: PosterMark::Watched,
             watchlist: None,
+            ..Default::default()
         };
         let (controls, n) = hero_ctls(set);
         assert_eq!(
@@ -1318,6 +1398,7 @@ mod tests {
             alt: false,
             mark: PosterMark::None,
             watchlist: None,
+            ..Default::default()
         };
         let with = HeroSet {
             alt: true,
@@ -1337,6 +1418,7 @@ mod tests {
                     alt,
                     mark: PosterMark::InProgress,
                     watchlist: None,
+                    ..Default::default()
                 };
                 let (controls, n) = hero_ctls(set);
                 assert!(controls[..n].iter().all(|ctl| matches!(
@@ -1458,6 +1540,7 @@ mod tests {
             alt: false,
             mark: PosterMark::None,
             watchlist: None,
+            ..Default::default()
         };
         let wide = HeroSet {
             restart: true,
@@ -1465,6 +1548,7 @@ mod tests {
             alt: true,
             mark: PosterMark::None,
             watchlist: None,
+            ..Default::default()
         };
         assert_eq!(ctl_at(compact, 1), Some(HeroCtl::MarkWatched));
         assert_eq!(ctl_at(wide, 1), Some(HeroCtl::Restart));
@@ -1479,6 +1563,7 @@ mod tests {
             alt: true,
             mark: PosterMark::None,
             watchlist: Some(false),
+            ..Default::default()
         };
         let widths = HeroWidths {
             pill: 210.0,
@@ -1559,6 +1644,7 @@ mod tests {
             alt: true,
             mark: PosterMark::Watched,
             watchlist: Some(true),
+            ..Default::default()
         };
         let caps = disc_caps(&measure, wide, [1.0; DISCS], true);
         let (_, n) = hero_ctls(wide);
@@ -1583,6 +1669,7 @@ mod tests {
             alt: false,
             mark: PosterMark::Watched,
             watchlist: None,
+            ..Default::default()
         };
         let caps = disc_caps(&measure, roomy, [1.0; DISCS], false);
         assert!(caps[1] > CD, "Trailer unfurls when the row has room");
@@ -1590,7 +1677,7 @@ mod tests {
 
         // The common movie row with the Watchlist toggle, Play, the watched toggle, the
         // Watchlist toggle, still has room for either verb.
-        let movie = HeroSet { restart: false, trailer: false, alt: false, mark: PosterMark::None, watchlist: Some(true) };
+        let movie = HeroSet { restart: false, trailer: false, alt: false, mark: PosterMark::None, watchlist: Some(true), ..Default::default() };
         let caps = disc_caps(&measure, movie, [1.0; DISCS], false);
         assert!(caps[2] > CD && caps[3] > CD, "both toggles unfurl on a plain movie row");
     }
@@ -1616,6 +1703,7 @@ mod tests {
             alt: true,
             mark: PosterMark::Watched,
             watchlist: None,
+            ..Default::default()
         };
         assert_eq!(disc_caps(&HugeMeasure, set, [1.0; DISCS], true), [CD; DISCS]);
     }
@@ -1648,6 +1736,10 @@ mod tests {
         );
     }
 
+    /// The Standard row's widest: Play, the four discs and *Also available* ([`MAX_CTLS`] is the
+    /// Shield row's).
+    const STANDARD_MAX_CTLS: usize = 6;
+
     #[test]
     fn the_widest_action_row_clears_the_people_column() {
         let set = HeroSet {
@@ -1656,9 +1748,10 @@ mod tests {
             alt: true,
             mark: PosterMark::InProgress,
             watchlist: Some(false),
+            ..Default::default()
         };
         let (_, n) = hero_ctls(set);
-        assert_eq!(n, MAX_CTLS, "the widest row there is");
+        assert_eq!(n, STANDARD_MAX_CTLS, "the widest row there is");
         let last = hero_btn_rect_at(
             set,
             n - 1,

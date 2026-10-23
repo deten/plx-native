@@ -18,6 +18,18 @@
   "browse.person.filmography": "Фільмаграфія",
   "browse.person.empty": "У вашых бібліятэках няма прац гэтай асобы",
   "browse.detail.about": "Звесткі",
+  "browse.detail.tab.show": "Серыял",
+  "browse.detail.watch_episode": "Глядзець {episode}",
+  "browse.detail.resume_left": "Працягнуць • {left}",
+  "browse.detail.more_actions": "Іншыя дзеянні",
+  "browse.detail.track_info": "Звесткі пра дарожкі",
+  "browse.detail.subtitles_off": "Няма",
+  "browse.detail.seasons_heading": {
+    "one": "{count} сезон",
+    "few": "{count} сезоны",
+    "many": "{count} сезонаў",
+    "other": "{count} сезона"
+  },
   "browse.detail.about_heading": "ЗВЕСТКІ",
   "browse.detail.released": "Дата выхаду",
   "browse.detail.runtime": "Працягласць",

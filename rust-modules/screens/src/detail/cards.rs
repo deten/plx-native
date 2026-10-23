@@ -2,6 +2,11 @@
 //! Cast), as content for `plx_ui::cards::Shelf`: each shelf's cards read over the published
 //! [`Detail`] and the page's element interning. The screen keeps what is not a card — the
 //! headings, the vertical flow, the focus groups and the press actions.
+//!
+//! In the Shield layout (`super::shield`) the same shelves wear that layout's ring styles
+//! ([`Which::shield_style`]) and caption every card under it — a title over a quiet line, a cast
+//! credit's name over its role (`shield_browse::draw_caption`) — and a fifth shelf joins them: the
+//! show's seasons as posters, over the catalog rows the page builds for them.
 use std::collections::HashMap;
 
 use plx_data::metadata::Detail;
@@ -12,7 +17,7 @@ use plx_ui::cards::{CardSource, Tile};
 use plx_ui::widgets::Art;
 use plx_ui::Painter;
 
-use super::{cast, collection, extras, related};
+use super::{cast, collection, extras, related, season};
 use crate::registry::tile_facts;
 
 /// Which of the page's shelves a [`Cards`] reads.
@@ -22,6 +27,8 @@ pub(super) enum Which {
     Collection,
     Extras,
     Cast,
+    /// The Shield layout's Show tab: the show's seasons as posters.
+    Seasons,
 }
 
 impl Which {
@@ -31,7 +38,24 @@ impl Which {
             Which::Related | Which::Collection => &RowStyle::HOME,
             Which::Extras => &RowStyle::EPISODE,
             Which::Cast => &RowStyle::CAST,
+            // the Shield layout's alone: Standard shows the seasons as tabs (`super::season`)
+            Which::Seasons => &RowStyle::SHIELD_DETAIL_POSTER,
         }
+    }
+
+    /// The shelf's style in the Shield layout (SHIELD-LAYOUT-SPEC §5.3–§5.5): posters, Extras as
+    /// 512x288 stills, Cast & Crew as 240 circles, every row held at its first slot.
+    pub(super) const fn shield_style(self) -> &'static RowStyle {
+        match self {
+            Which::Related | Which::Collection | Which::Seasons => &RowStyle::SHIELD_DETAIL_POSTER,
+            Which::Extras => &RowStyle::SHIELD_LANDSCAPE,
+            Which::Cast => &RowStyle::SHIELD_CAST,
+        }
+    }
+
+    /// [`Self::style`] or [`Self::shield_style`], by the layout the page wears.
+    pub(super) const fn style_for(self, shield: bool) -> &'static RowStyle {
+        if shield { self.shield_style() } else { self.style() }
     }
 }
 
@@ -48,6 +72,10 @@ pub(super) struct Cards<'a> {
     row_y: f32,
     entry: EntryId,
     press: PressRead<u32>,
+    /// The season posters' catalog rows (the Shield layout's [`Which::Seasons`]).
+    seasons: &'a [PmsMovie],
+    /// The page wears the Shield layout: every card is captioned under it.
+    shield: bool,
 }
 
 impl<'a> Cards<'a> {
@@ -56,13 +84,17 @@ impl<'a> Cards<'a> {
         d: &'a Detail,
         key_by_local: &'a HashMap<u32, u32>,
         local_by_key: &'a HashMap<u32, u32>,
+        seasons: &'a [PmsMovie],
+        shield: bool,
     ) -> Self {
-        let mut cards = Self { which, d, key_by_local, local_by_key, len: 0, row_y: 0.0, entry: EntryId(0), press: PressRead::default() };
+        let mut cards = Self { which, d, key_by_local, local_by_key, len: 0, row_y: 0.0, entry: EntryId(0),
+            press: PressRead::default(), seasons, shield };
         let n = match which {
             Which::Related => d.related.len().min(512),
             Which::Collection => collection::len(d),
             Which::Extras => extras::len(d),
             Which::Cast => d.credits_len().min(512),
+            Which::Seasons => seasons.len().min(64),
         };
         // The projections are rebuilt on every landing (`StoreChanged` -> `sync_keys`), but the app
         // pumps the Metadata store and then draws in the same loop turn, one frame before that
@@ -89,6 +121,7 @@ impl<'a> Cards<'a> {
             Which::Collection => collection::elem(i),
             Which::Extras => extras::elem(i),
             Which::Cast => cast::elem(i),
+            Which::Seasons => season::elem(i),
         }
     }
 
@@ -98,6 +131,7 @@ impl<'a> Cards<'a> {
             Which::Collection => collection::locate(local),
             Which::Extras => extras::locate(local),
             Which::Cast => cast::locate(local),
+            Which::Seasons => season::locate(local),
         }
     }
 
@@ -105,7 +139,26 @@ impl<'a> Cards<'a> {
         match self.which {
             Which::Related => &self.d.related,
             Which::Collection => collection::members(self.d),
+            Which::Seasons => self.seasons,
             Which::Extras | Which::Cast => &[],
+        }
+    }
+
+    /// The caption under card `i` in the Shield layout: a poster's title over its year (a season's
+    /// over its episode count), an extra's own label, a credit's name over its role.
+    fn shield_caption(&self, i: usize) -> TileLabel {
+        match self.which {
+            Which::Related | Which::Collection => self.movies().get(i).map_or_else(TileLabel::default, |m| {
+                TileLabel::titled(&m.title, &if m.year > 0 { m.year.to_string() } else { String::new() })
+            }),
+            Which::Seasons => self.movies().get(i).map_or_else(TileLabel::default, |m| {
+                let count = if m.child_count > 0 { plx_platform::i18n::msg::browse_detail_episodes(m.child_count) } else { String::new() };
+                TileLabel::titled(&m.title, &count)
+            }),
+            Which::Extras => extras::label(self.d, i),
+            Which::Cast => self.d.credit(i).map_or_else(TileLabel::default, |c| {
+                TileLabel::titled(&c.tag, self.d.credit_role(i).unwrap_or_default())
+            }),
         }
     }
 }
@@ -127,7 +180,7 @@ impl<H: Host<Elem = u32>> CardSource<H> for Cards<'_> {
 
     fn art(&self, i: usize) -> Art<'_> {
         match self.which {
-            Which::Related | Which::Collection => Art::Poster(self.movies().get(i).map(tile_facts::of)),
+            Which::Related | Which::Collection | Which::Seasons => Art::Poster(self.movies().get(i).map(tile_facts::of)),
             Which::Extras => extras::art(self.d, i),
             Which::Cast => cast::art(self.d, i),
         }
@@ -135,7 +188,7 @@ impl<H: Host<Elem = u32>> CardSource<H> for Cards<'_> {
 
     fn label(&self, i: usize) -> TileLabel {
         match self.which {
-            Which::Related | Which::Collection => TileLabel::title(&self.movies()[i].title),
+            Which::Related | Which::Collection | Which::Seasons => TileLabel::title(&self.movies()[i].title),
             Which::Extras => extras::label(self.d, i),
             // the names are drawn under every headshot (`overlay`), not as the focused block
             Which::Cast => TileLabel::default(),
@@ -145,11 +198,17 @@ impl<H: Host<Elem = u32>> CardSource<H> for Cards<'_> {
     fn progress(&self, i: usize) -> Option<f32> {
         match self.which {
             Which::Related | Which::Collection => self.movies().get(i).and_then(|m| m.resume_frac()),
-            Which::Extras | Which::Cast => None,
+            Which::Extras | Which::Cast | Which::Seasons => None,
         }
     }
 
     fn overlay(&self, p: Painter, i: usize, tile: &Tile, measure: &dyn Measure) {
+        if self.shield {
+            // every card is captioned under its RESTING rect, dropped with its pop when focused
+            let rest = tile.rect.scaled(1.0 / tile.scale.max(0.01));
+            plx_ui::shield_browse::draw_caption(p, rest, &self.shield_caption(i), tile.scale, tile.focused, measure);
+            return;
+        }
         if self.which != Which::Cast {
             return;
         }

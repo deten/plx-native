@@ -62,6 +62,10 @@ pub(super) fn test_store() -> &'static mut plx_data::stores::metadata::MetadataS
     TEST_METADATA.with(|cell| unsafe { &mut *cell.get() })
 }
 
+/// The Shield layout's page (`super::shield`), on this file's host and fixtures.
+#[path = "shield_tests.rs"]
+mod shield_tests;
+
 thread_local! {
     // TEST ONLY, `TEST_METADATA`'s twin: the Watchlist this file's host answers with. Empty (no
     // list landed) unless a test installs one, so every other test sees the row it always saw.
@@ -152,10 +156,11 @@ pub(super) fn bare_held(sid: ServerId, rk: &str) -> DetailScreen {
         episode_text_lift: [plx_ui::text_lift::TextLift::new(); EP_SCALE_MAX],
         about_card_lift: plx_ui::text_lift::TextLift::new(),
         about_lang_lift: plx_ui::text_lift::TextLift::new(),
-        related: plx_ui::cards::Shelf::new(EntryId(7), &plx_ui::cards::RowStyle::HOME),
-        collection: plx_ui::cards::Shelf::new(EntryId(7), &plx_ui::cards::RowStyle::HOME),
-        extras: plx_ui::cards::Shelf::new(EntryId(7), &plx_ui::cards::RowStyle::EPISODE),
-        cast: plx_ui::cards::Shelf::new(EntryId(7), &plx_ui::cards::RowStyle::CAST),
+        // the layout this thread wears (`plx_ui::layout::with_shield` for a Shield test), as `new`
+        related: plx_ui::cards::Shelf::new(EntryId(7), cards::Which::Related.style_for(plx_ui::layout::shield())),
+        collection: plx_ui::cards::Shelf::new(EntryId(7), cards::Which::Collection.style_for(plx_ui::layout::shield())),
+        extras: plx_ui::cards::Shelf::new(EntryId(7), cards::Which::Extras.style_for(plx_ui::layout::shield())),
+        cast: plx_ui::cards::Shelf::new(EntryId(7), cards::Which::Cast.style_for(plx_ui::layout::shield())),
         tabs: TabStrip::new(),
         season_pop: CtlPop::new(),
         ctl_pop: CtlPop::new(),
@@ -176,6 +181,7 @@ pub(super) fn bare_held(sid: ServerId, rk: &str) -> DetailScreen {
         layout_pinned: std::cell::Cell::new(false),
         spot_facts: SpotFacts::default(),
         hold_hint: plx_ui::hold_hint::HoldHint::once_per_run(plx_ui::hold_hint::Kind::Detail),
+        shield: super::shield::Shield::new(EntryId(7)),
     };
     screen.sync_keys(test_store().view());
     screen
@@ -999,6 +1005,7 @@ fn hero_focus_survives_a_control_appearing_in_the_middle_of_the_row() {
         alt: false,
         mark: PosterMark::None,
         watchlist: None,
+        ..Default::default()
     };
     let after = hero::HeroSet {
         alt: true,
@@ -1162,6 +1169,7 @@ fn a_pointer_lands_on_the_capsule_the_unfurl_drew() {
         alt: false,
         mark: PosterMark::InProgress,
         watchlist: None,
+        ..Default::default()
     };
     let index = hero::watch_index(set).unwrap();
     assert_eq!(hero::ctl_at(set, index - 1), Some(hero::HeroCtl::Restart));
@@ -2164,7 +2172,8 @@ fn the_watchlist_toggle_follows_the_store_and_its_press_is_an_optimistic_edit() 
     let guid = "plex://movie/demo-watchlisted";
     plx_data::metadata::set_current_for_test(test_store().state_mut(), Some(Detail {
         sid, rk: "wl".into(), kind: "movie".into(), guid: guid.into(), title: "Listed".into(), year: 2019,
-        thumb: "/library/metadata/wl/thumb".into(), ..Default::default()
+        thumb: "/library/metadata/wl/thumb".into(),
+        ..Default::default()
     }));
     *test_watchlist() = plx_data::stores::watchlist::WatchlistStore::default();
     let mut screen = bare(&_guard, sid, "wl");
@@ -2211,7 +2220,8 @@ fn the_watchlist_toggle_follows_the_store_and_its_press_is_an_optimistic_edit() 
 
     // An episode is never watchlisted: no control, whatever the list says.
     plx_data::metadata::set_current_for_test(test_store().state_mut(), Some(Detail {
-        sid, rk: "ep".into(), kind: "episode".into(), guid: "plex://episode/demo".into(), ..Default::default()
+        sid, rk: "ep".into(), kind: "episode".into(), guid: "plex://episode/demo".into(),
+        ..Default::default()
     }));
     let mut episode = bare(&_guard, sid, "ep");
     step(&mut episode, &ScreenEvent::Tick(plx_machine::machine::Tick { ms: 16, dt_us: 16_667 }), None);
@@ -2228,7 +2238,8 @@ fn a_profile_without_a_watchlist_gets_no_toggle() {
     let _guard = plx_base::testlock::serial();
     let sid = ServerId::UNSET;
     plx_data::metadata::set_current_for_test(test_store().state_mut(), Some(Detail {
-        sid, rk: "m".into(), kind: "movie".into(), guid: "plex://movie/x".into(), ..Default::default()
+        sid, rk: "m".into(), kind: "movie".into(), guid: "plex://movie/x".into(),
+        ..Default::default()
     }));
     *test_watchlist() = plx_data::stores::watchlist::WatchlistStore::default();
     test_watchlist().install_for_test(Vec::new());

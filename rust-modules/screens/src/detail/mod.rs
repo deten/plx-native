@@ -4,6 +4,10 @@
 //! remembered group cursors belong exclusively to the input engine. This instance stores only
 //! content decisions (season debounce/restoration and server reconciliation) and render state
 //! (springs, metrics and caches). User input cancels restoration, never the reconciliation owed.
+//!
+//! In the Shield layout (`plx_ui::layout::shield()`) the page wears [`shield`]'s presentation —
+//! the same item, groups, identities and press paths in the Plex Android TV app's arrangement —
+//! and each `Focusable`/`Screen` answer below hands over to it at its head while the layout is on.
 
 mod about;
 mod cards;
@@ -15,6 +19,7 @@ mod hero;
 mod related;
 mod season;
 mod section;
+mod shield;
 mod trailer;
 #[cfg(test)]
 mod tests;
@@ -275,6 +280,10 @@ pub struct DetailScreen {
     /// (`plx_ui::hold_hint`, the rarer cadence of a non-Home card screen). Paint-only: not hashed,
     /// not in [`SHAPE`].
     hold_hint: plx_ui::hold_hint::HoldHint,
+    /// The Shield layout's half ([`shield::Shield`]): the latch, the season page, its subject and
+    /// the paint the layout adds. Hashed only while the layout is on, so a Standard page's
+    /// recorded state is the one it always was.
+    shield: shield::Shield,
 }
 
 /// Snapshot of every metadata-dependent read [`DetailScreen::spot`] needs, taken while a real
@@ -310,6 +319,8 @@ struct LayoutCache {
     block: [f32; section::SLOTS],
     seen: u8,
     end: f32,
+    /// The Shield layout's plan, measured with the rest while that layout is on.
+    shield: Option<shield::Plan>,
 }
 
 // How many episodes [`LayoutStamp::of`] has hashed on this thread: the per-walk cost a test
@@ -419,6 +430,7 @@ pub fn is_hero_elem(elem: u32) -> bool {
 impl DetailScreen {
     pub fn new(entry: EntryId, sid: ServerId, rk: String, hubs: plx_data::pms::HubsView<'_>) -> Self {
         let selected = hubs.find(sid, &rk).cloned();
+        let shield = shield::Shield::new(entry);
         let mut ground = AmbientWash::flat(theme::SURFACE_APP);
         if let Some(m) = selected.as_ref().filter(|m| m.has_blur) {
             ground.jump(AmbientWash::keyed(m.blur, [AmbientWash::GROUND_W; 4]));
@@ -461,10 +473,10 @@ impl DetailScreen {
             episode_text_lift: [TextLift::new(); EP_SCALE_MAX],
             about_card_lift: TextLift::new(),
             about_lang_lift: TextLift::new(),
-            related: Shelf::new(entry, cards::Which::Related.style()),
-            collection: Shelf::new(entry, cards::Which::Collection.style()),
-            extras: Shelf::new(entry, cards::Which::Extras.style()),
-            cast: Shelf::new(entry, cards::Which::Cast.style()),
+            related: Shelf::new(entry, cards::Which::Related.style_for(shield.on)),
+            collection: Shelf::new(entry, cards::Which::Collection.style_for(shield.on)),
+            extras: Shelf::new(entry, cards::Which::Extras.style_for(shield.on)),
+            cast: Shelf::new(entry, cards::Which::Cast.style_for(shield.on)),
             tabs: TabStrip::new(),
             season_pop: CtlPop::new(),
             ctl_pop: CtlPop::new(),
@@ -480,6 +492,7 @@ impl DetailScreen {
             layout_pinned: Cell::new(false),
             spot_facts: SpotFacts::default(),
             hold_hint: plx_ui::hold_hint::HoldHint::once_per_run(plx_ui::hold_hint::Kind::Detail),
+            shield,
         }
     }
 
@@ -515,6 +528,7 @@ impl DetailScreen {
         if local < season::SEASON_ELEM_RANGE_START
             || local >= about::ABOUT_ELEM_RANGE_START && local < about::ABOUT_ELEM_RANGE_END
             || local == collection::HEADING_ELEM
+            || shield::tab_locate(local).is_some()
         {
             Some(local)
         } else {
@@ -592,6 +606,9 @@ impl DetailScreen {
         }
         let present = &self.local_by_key;
         self.gone.retain(|elem, _| !present.contains_key(elem));
+        self.shield.season_rows = self.detail(meta)
+            .map(|d| d.seasons.iter().take(64).map(|s| shield::season_row(d, s)).collect())
+            .unwrap_or_default();
         if let Some(key) = pending_key {
             self.pending_season = self.local_by_key.get(&key).and_then(|local| season::locate(*local));
         }
@@ -628,6 +645,11 @@ impl DetailScreen {
     pub fn restore_episode(&mut self, spot: &Spot, episode: Option<&str>, meta: plx_data::metadata::MetadataView<'_>) {
         self.sync_keys(meta);
         self.return_pending = false;
+        if self.shield.on {
+            // an episode is on the season page in the Shield layout: return to it there
+            self.shield.season_view = spot.section == section::SectionId::Episode.raw();
+            self.layout.set(None);
+        }
         self.restore_intent = Some(RestoreIntent {
             spot: spot.clone(),
             episode: episode.map(str::to_owned),
@@ -643,6 +665,8 @@ impl DetailScreen {
             .map(|l| {
                 let col = match l {
                     Located::Hero(control) => hero::index_of(facts.hero, control).unwrap_or(0) as i32,
+                    // a Shield tab restores to the head of the page, where the tabs stand
+                    Located::Tab(_) => 0,
                     // The heading shares its section with the cards; -1 is the slot no card has.
                     Located::CollectionHeading => -1,
                     _ => l.index() as i32,
@@ -725,6 +749,9 @@ impl DetailScreen {
         f: &mut DrawFrame<'_, '_, H>,
         focus: Option<FocusKey<u32>>,
     ) {
+        if self.shield.on {
+            return self.shield_redraw_focused(f, focus);
+        }
         let meta = H::metadata(f.cx);
         let measure = f.cx.measure;
         let Some(d) = self.detail(meta) else { return };
@@ -778,7 +805,7 @@ impl DetailScreen {
 
     /// Shelf `which`'s cards over the published item `d` and the page's key projections.
     fn cards<'a>(&'a self, which: cards::Which, d: &'a Detail) -> cards::Cards<'a> {
-        Self::cards_of(&self.key_by_local, &self.local_by_key, which, d)
+        Self::cards_of(&self.key_by_local, &self.local_by_key, which, d, &self.shield.season_rows, self.shield.on)
     }
 
     /// [`cards`](Self::cards) without borrowing the whole screen, for a call that also borrows a
@@ -788,8 +815,10 @@ impl DetailScreen {
         local_by_key: &'a std::collections::HashMap<u32, u32>,
         which: cards::Which,
         d: &'a Detail,
+        seasons: &'a [plx_data::pms::PmsMovie],
+        shield: bool,
     ) -> cards::Cards<'a> {
-        cards::Cards::new(which, d, key_by_local, local_by_key)
+        cards::Cards::new(which, d, key_by_local, local_by_key, seasons, shield)
     }
 
     fn detail<'a>(&self, meta: plx_data::metadata::MetadataView<'a>) -> Option<&'a Detail> {
@@ -954,6 +983,7 @@ impl DetailScreen {
             block,
             seen,
             end: y,
+            shield: self.shield.on.then(|| self.shield_plan(d, measure)),
         }
     }
 
@@ -1094,6 +1124,9 @@ impl DetailScreen {
         if let Some(i) = cast::locate(elem) {
             return Some(Located::Cast(i));
         }
+        if let Some(i) = shield::tab_locate(elem) {
+            return Some(Located::Tab(i));
+        }
         about::locate(elem, tracks).map(Located::About)
     }
 
@@ -1181,6 +1214,9 @@ impl DetailScreen {
 
 impl<H: ContentLike + crate::registry::MetadataLike> Focusable<H> for DetailScreen {
     fn groups(&self, cx: &Cx<'_, H>, out: &mut Vec<GroupSpec>) {
+        if self.shield.on {
+            return self.shield_groups(cx, out);
+        }
         let meta = H::metadata(cx);
         let measure = cx.measure;
         let set = self.hero_set(meta);
@@ -1376,10 +1412,23 @@ impl<H: ContentLike + crate::registry::MetadataLike> Focusable<H> for DetailScre
                     _ => None,
                 }
             }
+            Located::Tab(i) => {
+                row_move(i, self.detail(meta).map_or(0, |d| d.seasons.len().min(shield::MAX_TABS - 1) + 1), dir)
+                    .and_then(shield::tab_elem)
+            }
+            Located::Season(_) if self.shield.on => return self.detail(meta).map_or(Step::Edge, |d| {
+                self.shield.seasons.neighbour::<H, _>(&self.cards(cards::Which::Seasons, d), key, dir)
+            }),
             Located::Season(i) => {
                 row_move(i, self.detail(meta).map(|d| d.seasons.len()).unwrap_or(0), dir)
                     .and_then(season::elem)
             }
+            // the Shield strip is stills alone: LEFT and RIGHT along it, the rest the groups' edges
+            Located::Episode(i, row) if self.shield.on => match dir {
+                Dir::Left | Dir::Right => row_move(i, self.detail(meta).map_or(0, |d| d.episodes.len()), dir)
+                    .and_then(|j| episodes::elem(j, row)),
+                _ => None,
+            },
             Located::Episode(i, row) => match dir {
                 Dir::Left if i > 0 => episodes::elem(i - 1, row),
                 Dir::Right if self.detail(meta).is_some_and(|d| i + 1 < d.episodes.len()) => {
@@ -1424,6 +1473,9 @@ impl<H: ContentLike + crate::registry::MetadataLike> Focusable<H> for DetailScre
         let meta = H::metadata(cx);
         let measure = cx.measure;
         let located = self.locate(*key, meta).filter(|l| self.valid(*l, meta))?;
+        if self.shield.on {
+            return self.shield_place(key, located, cx, at);
+        }
         let d = self.detail(meta);
         let vertical = if at == At::Drawn {
             self.scroll.pos
@@ -1528,6 +1580,8 @@ impl<H: ContentLike + crate::registry::MetadataLike> Focusable<H> for DetailScre
                 };
                 (base, base, Some(i as u32))
             }
+            // the Shield layout's alone (`shield_place`)
+            Located::Tab(_) => return None,
         };
         Some(Placed {
             rect,
@@ -1539,6 +1593,11 @@ impl<H: ContentLike + crate::registry::MetadataLike> Focusable<H> for DetailScre
 
     fn reconcile(&self, want: FocusKey<u32>, cx: &Cx<'_, H>) -> FocusKey<u32> {
         let meta = H::metadata(cx);
+        if self.shield.on {
+            if let Some(key) = self.shield_reconcile(want, meta) {
+                return key;
+            }
+        }
         // Full-trailer mode narrows the hero row to its Play anchor, and this must be the
         // FIRST check in the function: the return_pending/restore_intent short-circuit below and
         // restore_focus() can each hand back a hero elem without knowing about full-trailer mode,
@@ -1629,6 +1688,11 @@ impl<H: ContentLike + crate::registry::MetadataLike> Focusable<H> for DetailScre
     }
 
     fn seat(&self, group: GroupId, from: Placed, cx: &Cx<'_, H>) -> FocusKey<u32> {
+        if self.shield.on {
+            if let Some(key) = self.shield_seat(group, from, cx) {
+                return key;
+            }
+        }
         let measure = cx.measure;
         let meta = H::metadata(cx);
         let d = self.detail(meta);
@@ -1709,15 +1773,24 @@ impl DetailScreen {
             Located::Hero(c) => {
                 hero::focusable(c, self.full_trailer()) && hero::index_of(self.hero_set(meta), c).is_some()
             }
-            Located::Season(i) => d.is_some_and(|d| i < d.seasons.len().min(64)),
-            Located::Episode(i, _) => {
-                d.is_some_and(|d| i < d.episodes.len().min(episodes::MAX_ITEMS))
+            // The Shield layout's: a show's tabs, *Show* and one per season.
+            Located::Tab(i) => self.shield.on && d.is_some_and(|d| d.is_show && !d.seasons.is_empty()
+                && i <= d.seasons.len().min(shield::MAX_TABS - 1)),
+            // In Shield the seasons are the Show tab's posters, and the strip is the season page's
+            // stills alone.
+            Located::Season(i) => d.is_some_and(|d| i < d.seasons.len().min(64)
+                && !(self.shield.on && self.season_page(d))),
+            Located::Episode(i, row) => {
+                d.is_some_and(|d| i < d.episodes.len().min(episodes::MAX_ITEMS)
+                    && (!self.shield.on || self.season_page(d) && row == episodes::Row::Still))
             }
             Located::Related(i) => d.is_some_and(|d| i < d.related.len().min(512)),
             Located::Extras(i) => d.is_some_and(|d| i < extras::len(d)),
             Located::Collection(i) => d.is_some_and(|d| i < collection::len(d)),
             Located::CollectionHeading => d.is_some_and(|d| collection::len(d) > 0),
             Located::Cast(i) => d.is_some_and(|d| i < d.credits_len().min(512)),
+            // The About footer is not drawn in Shield: its sheets are rows of the More panel.
+            Located::About(_) if self.shield.on => false,
             Located::About(0) => d.is_some(),
             Located::About(1) => d.is_some() && self.tracks_available(meta),
             Located::About(_) => false,
@@ -1737,6 +1810,8 @@ impl<H: ContentLike + crate::registry::MetadataLike> Machine<H> for DetailScreen
     type Ev = ScreenEvent<H>;
 
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        // The layout this event is answered in (`shield::sync_layout`).
+        self.sync_layout(cx, fx);
         let meta = H::metadata(cx);
         // The Watchlist toggle's face, current before anything below reads the row.
         if self.sync_watchlist(cx) {
@@ -1746,10 +1821,18 @@ impl<H: ContentLike + crate::registry::MetadataLike> Machine<H> for DetailScreen
         // scroll and let-go ride the Tick, its placement the FocusMoved). What a card DOES stays
         // in `activate` below.
         if let Some(d) = self.detail(meta) {
-            self.related.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key, cards::Which::Related, d), fx);
-            self.collection.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key, cards::Which::Collection, d), fx);
-            self.extras.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key, cards::Which::Extras, d), fx);
-            self.cast.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key, cards::Which::Cast, d), fx);
+            self.related.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key, cards::Which::Related, d,
+                &self.shield.season_rows, self.shield.on), fx);
+            self.collection.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key, cards::Which::Collection, d,
+                &self.shield.season_rows, self.shield.on), fx);
+            self.extras.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key, cards::Which::Extras, d,
+                &self.shield.season_rows, self.shield.on), fx);
+            self.cast.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key, cards::Which::Cast, d,
+                &self.shield.season_rows, self.shield.on), fx);
+            if self.shield.on {
+                self.shield.seasons.on(ev, cx, &Self::cards_of(&self.key_by_local, &self.local_by_key,
+                    cards::Which::Seasons, d, &self.shield.season_rows, true), fx);
+            }
         }
         match ev {
             ScreenEvent::Mount => {
@@ -1823,7 +1906,11 @@ impl<H: ContentLike + crate::registry::MetadataLike> Machine<H> for DetailScreen
                     self.restore_intent = None;
                 }
                 self.reveal_focus(Some(*to), cx.measure, meta);
-                if let Some(located) = self.locate(to.elem, meta) {
+                if let Some(located) = self.locate(to.elem, meta).filter(|_| self.shield.on) {
+                    // the season page describes, and acts on, the episode focus rests on; a Shield
+                    // season is a poster, opened by OK alone, so it starts no dwell
+                    self.note_subject(located, meta);
+                } else if let Some(located) = self.locate(to.elem, meta) {
                     if let Located::Season(i) = located {
                         if matches!(by, By::Dir | By::Pointer) {
                             self.pending_season = Some(i);
@@ -2008,6 +2095,12 @@ impl<H: ContentLike + crate::registry::MetadataLike> Machine<H> for DetailScreen
                 self.content(fx, ContentReq::Present(arg.clone()));
                 Handled::Yes
             }
+            // The Shield layout's More Actions panel committed a row: performed here, by the path
+            // this page's own control for it takes.
+            ScreenEvent::App(AppMsg::DetailAction(action)) => {
+                self.detail_action(*action, cx, fx);
+                Handled::Yes
+            }
             // Dismissed: the page under this surface has just been entered again, and it decided
             // what to ask for on the store as it stands. A request of this page's still in flight
             // would land on top of the item that page found loaded — and this page's teardown,
@@ -2128,6 +2221,9 @@ impl<H: ContentLike + crate::registry::MetadataLike> Screen<H> for DetailScreen 
     fn prepare(&mut self, _budget: &mut Budget, _cx: &Cx<'_, H>) {}
 
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
+        if self.shield.on {
+            return self.draw_shield(f);
+        }
         let meta = H::metadata(f.cx);
         self.spot_facts = SpotFacts::of(self, meta);
         let measure = f.cx.measure;
@@ -2623,7 +2719,24 @@ impl DetailScreen {
     ) {
         let (top, base) = plx_gfx::text::text_cap_band(theme::size::LABEL, 1);
         let cy = y + (top + base) * 0.5;
-        let mut x = plx_ui::consts::MARGIN_X;
+        self.draw_ratings_at(p, d, plx_ui::consts::MARGIN_X, cy, 32.0,
+            plx_ui::consts::SCR_W - plx_ui::consts::MARGIN_X, measure);
+    }
+
+    /// The rating groups from `x`, centred on `cy`, `gap` apart, stopping before `right` — the
+    /// Standard hero's row and the Shield header's (SHIELD-LAYOUT-SPEC §4.3).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_ratings_at(
+        &self,
+        p: Painter,
+        d: &Detail,
+        x: f32,
+        cy: f32,
+        gap: f32,
+        right: f32,
+        measure: &dyn plx_machine::machine::Measure,
+    ) {
+        let mut x = x;
         let mut i = 0;
         while i < d.ratings.len() {
             let provider = d.ratings[i].art.provider();
@@ -2642,10 +2755,10 @@ impl DetailScreen {
                 })
                 .collect();
             let width = plx_ui::widgets::rating_group_w(provider, &cells, measure);
-            if x + width > plx_ui::consts::SCR_W - plx_ui::consts::MARGIN_X {
+            if x + width > right {
                 break;
             }
-            x += plx_ui::widgets::rating_group(p, x, cy, provider, &cells, measure) + 32.0;
+            x += plx_ui::widgets::rating_group(p, x, cy, provider, &cells, measure) + gap;
             i = end;
         }
     }
@@ -3019,12 +3132,15 @@ enum Located {
     About(usize),
     Collection(usize),
     CollectionHeading,
+    /// The Shield layout's show tabs: 0 is *Show*, `1 + i` season `i`'s.
+    Tab(usize),
 }
 
 impl Located {
     fn local_key(self) -> Option<u32> {
         match self {
             Self::Hero(control) => Some(control.elem()),
+            Self::Tab(index) => shield::tab_elem(index),
             Self::Season(index) => season::elem(index),
             Self::Episode(index, row) => episodes::elem(index, row),
             Self::Related(index) => related::elem(index),
@@ -3038,7 +3154,7 @@ impl Located {
     }
     fn section(self) -> i32 {
         match self {
-            Self::Hero(_) => 0,
+            Self::Hero(_) | Self::Tab(_) => 0,
             Self::Season(_) => 1,
             Self::Episode(_, _) => 2,
             Self::Related(_) => 3,
@@ -3052,6 +3168,7 @@ impl Located {
     fn group(self) -> GroupId {
         match self {
             Self::Hero(_) => hero::HERO_GROUP,
+            Self::Tab(_) => shield::TABS_GROUP,
             Self::Season(_) => season::SEASON_GROUP,
             Self::Episode(_, _) => episodes::EPISODES_GROUP,
             Self::Related(_) => related::RELATED_GROUP,
@@ -3067,7 +3184,7 @@ impl Located {
         match self {
             Self::Hero(c) => c.elem() as usize,
             Self::Season(i) | Self::Episode(i, _) | Self::Related(i) | Self::Extras(i) | Self::Cast(i)
-            | Self::Collection(i) => i,
+            | Self::Collection(i) | Self::Tab(i) => i,
             Self::CollectionHeading => 0,
             Self::About(0) => 0,
             // Legacy Spot/focusprobe vocabulary keeps the four visual About columns numbered
@@ -3128,6 +3245,11 @@ impl LogicalState for DetailScreen {
                 w.bool(false);
             }
         }
+        // The Shield half — the season page and its subject — only while that layout is on, so a
+        // Standard page's recorded bytes are the ones they always were.
+        if self.shield.on {
+            self.shield.write(w);
+        }
         // **No panel byte at all any more.** All three of this page's panels are `ModalStack`
         // surfaces since phase 10, so which one is up — its argument, its `Phase` and its own
         // instance's hash — is written by `Navigation::write` for the whole tree, and a second
@@ -3160,6 +3282,12 @@ impl DetailScreen {
         if self.return_waiting(meta) { return; }
         let Some(located) = focus.filter(|key| key.entry == self.entry).and_then(|key| self.locate(key.elem, meta)) else { return };
         let Some(detail) = self.detail(meta) else { return };
+        if self.shield.on {
+            if let Some(plan) = self.ensure_layout(detail, measure).shield {
+                self.shield_reveal(located, &plan);
+            }
+            return;
+        }
         self.scroll_target = if located.section() == 0 { 0.0 } else {
             (self.section_top_settled(located.section(), detail, measure)
                 - plx_ui::detail_layout::TOP_MARGIN)
@@ -3248,9 +3376,12 @@ impl DetailScreen {
             .current
             .filter(|k| k.entry == self.entry)
             .and_then(|k| self.locate(k.elem, meta));
+        if self.shield.on {
+            self.shield_tick(t, cx, focused, fx);
+        }
         let hero_set = self.hero_set(meta);
         let hero_index = match focused {
-            Some(Located::Hero(c)) => hero::index_of(hero_set, c),
+            Some(Located::Hero(c)) if !self.shield.on => hero::index_of(hero_set, c),
             _ => None,
         };
         self.ctl_pop.step(hero_index, dt);
@@ -3272,7 +3403,7 @@ impl DetailScreen {
             Some(Located::Episode(i, episodes::Row::Still)) => Some(i),
             _ => None,
         };
-        for (i, spring) in self.episode_scale.iter_mut().enumerate() {
+        for (i, spring) in self.episode_scale.iter_mut().enumerate().filter(|_| !self.shield.on) {
             spring.step(
                 if episode_focus == Some(i) {
                     plx_ui::theme::EP_CARD_FOCUS_SCALE
@@ -3298,7 +3429,7 @@ impl DetailScreen {
         self.about_card_lift.step(focused == Some(Located::About(0)), dt);
         self.about_lang_lift.step(focused == Some(Located::About(1)), dt);
 
-        if let Some(d) = d {
+        if let Some(d) = d.filter(|_| !self.shield.on) {
             if let Some(i) = match focused {
                 Some(Located::Episode(i, _)) => Some(i),
                 _ => None,
@@ -3458,7 +3589,10 @@ impl DetailScreen {
         self.preview_had_picture = view.picture;
         let blocked = plx_media::player::preview::blocked(self.sid, &self.preview_cache_rk(meta));
         let already_played = preview_already_played(self.preview_played_for.as_deref(), &self.preview_cache_rk(meta));
+        // The Shield page has no place for a picture behind its header: its Trailer circle plays
+        // the trailer as a feature instead.
         let can_dwell = hero_active
+            && !self.shield.on
             && !self.preview_promoted
             && !view.playing
             && !plx_media::player::preview::occupies()
@@ -3699,6 +3833,9 @@ impl DetailScreen {
     }
 
     fn hero_set(&self, meta: plx_data::metadata::MetadataView<'_>) -> hero::HeroSet {
+        if self.shield.on {
+            return self.shield_hero_set(meta);
+        }
         let (restart, mark) = self
             .detail(meta)
             .map(|d| {
@@ -3719,6 +3856,7 @@ impl DetailScreen {
             alt: self.alt_available(meta),
             mark,
             watchlist: self.watchlisted,
+            ..Default::default()
         }
     }
 
@@ -3799,7 +3937,15 @@ impl DetailScreen {
         let meta = H::metadata(cx);
         let local = self.locate(elem, meta).and_then(Located::local_key).unwrap_or(elem);
         match self.locate(elem, meta) {
-            Some(Located::Hero(ctl)) => self.activate_hero(ctl, cx, fx, meta),
+            Some(Located::Hero(ctl)) => {
+                // the Shield row's own controls, and its season page's episode, first
+                if !(self.shield.on && self.shield_activate_hero(ctl, cx, fx)) {
+                    self.activate_hero(ctl, cx, fx, meta);
+                }
+            }
+            Some(Located::Tab(i)) => self.select_tab(i, meta),
+            // a Shield season poster opens its season page, as its tab does
+            Some(Located::Season(i)) if self.shield.on => self.select_tab(i + 1, meta),
             Some(Located::Season(i)) => {
                 // A direct press skips the dwell entirely — pre-loading `season_settle` past the
                 // threshold fires on the very NEXT `tick` rather than after a full `SETTLE_S`.
@@ -3941,6 +4087,9 @@ impl DetailScreen {
             hero::HeroCtl::WatchlistAdd | hero::HeroCtl::WatchlistRemove => {
                 self.toggle_watchlist(ctl == hero::HeroCtl::WatchlistAdd, fx, meta);
             }
+            // The Shield row's own controls (`shield::shield_activate_hero`); never in a Standard row.
+            hero::HeroCtl::More | hero::HeroCtl::Shuffle | hero::HeroCtl::ChipVideo | hero::HeroCtl::ChipAudio
+            | hero::HeroCtl::ChipSubs => {}
             hero::HeroCtl::MarkWatched | hero::HeroCtl::MarkUnwatched => {
                 if let Some(d) = self.detail(meta) {
                     fx.push(Fx::App(AppFx::Store(

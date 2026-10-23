@@ -157,6 +157,12 @@ struct State {
     progress: Option<f32>,
 }
 
+/// How far into `ep` the viewer is, while it is in progress — the bar the still wears (the Shield
+/// strip's too).
+pub fn progress(ep: &Episode) -> Option<f32> {
+    state(ep).progress
+}
+
 fn state(ep: &Episode) -> State {
     let in_progress = ep.dur_ms > 0 && ep.resume_ms > 0 && ep.resume_ms < ep.dur_ms;
     if in_progress {

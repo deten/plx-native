@@ -112,6 +112,12 @@ pub enum PreferenceCmd {
 /// here, never by naming the sibling `item_menu`.
 pub use crate::item_menu::has_actions as item_has_menu;
 
+/// The item context menu's verbs, for a page that performs one itself through the same
+/// [`AppFx::ItemMenu`] request the menu sends — the Shield layout's detail action row: Shuffle, and
+/// the season page's episode watched toggle (`loaded_episode`, as the filmstrip's menu sends it).
+/// Reached here, never by naming the sibling.
+pub use crate::item_menu::Action as ItemAction;
+
 /// **What the item context menu asks of the loop**, once its own `step` has resolved the pressed
 /// row to an [`crate::item_menu::Action`].
 ///
@@ -952,6 +958,99 @@ pub enum ContentPanel {
     /// About sheet (`screens::about_panel`) reading the collection store's current collection; it
     /// carries nothing, for `Bio`'s reason.
     CollectionAbout,
+    /// The Shield layout's **More Actions** panel (`screens::detail_more`) over the Detail page that
+    /// asked: the rows it offers, as the page decided them. A chosen row is delivered back to that
+    /// page ([`AppMsg::DetailAction`]), which performs it by its own paths.
+    More { actions: DetailActions },
+}
+
+/// **One row of the Shield layout's More Actions panel** (`screens::detail_more`): what the Detail
+/// page performs when it is chosen. Every one is an action the page already has — a hero control,
+/// one of its panels, an item-menu verb — so the panel adds a door, never a behaviour.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DetailAction {
+    /// The *Track information* sheet (the media chips' door too).
+    TrackInfo,
+    /// *Also available*: the page's other sources.
+    AlsoAvailable,
+    /// An episode page's show.
+    GoToShow,
+    /// The season page's described episode, on a page of its own.
+    GoToEpisode,
+    /// The episode, or the item, from its start.
+    PlayFromStart,
+    /// The item's trailer, played as a feature.
+    PlayTrailer,
+    ShuffleShow,
+    ShuffleSeason,
+    MarkWatched,
+    MarkUnwatched,
+    WatchlistAdd,
+    WatchlistRemove,
+    /// The *About* sheet: the synopsis in full.
+    About,
+}
+
+impl DetailAction {
+    /// Every row, in the panel's order: the item's file and sources, navigation, playing, state,
+    /// and the full synopsis last.
+    pub const ALL: [DetailAction; 13] = [
+        DetailAction::TrackInfo,
+        DetailAction::AlsoAvailable,
+        DetailAction::GoToShow,
+        DetailAction::GoToEpisode,
+        DetailAction::PlayFromStart,
+        DetailAction::PlayTrailer,
+        DetailAction::ShuffleShow,
+        DetailAction::ShuffleSeason,
+        DetailAction::MarkWatched,
+        DetailAction::MarkUnwatched,
+        DetailAction::WatchlistAdd,
+        DetailAction::WatchlistRemove,
+        DetailAction::About,
+    ];
+
+    /// The row's bit in a [`DetailActions`] set — its place in [`Self::ALL`].
+    pub fn bit(self) -> u32 {
+        1 << Self::ALL.iter().position(|a| *a == self).unwrap_or(0)
+    }
+}
+
+/// A set of [`DetailAction`]s — the rows one opening of the panel offers. `Copy` and canonical
+/// (one bit per row), so [`ContentPanel`] stays a plain value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct DetailActions(pub u32);
+
+impl DetailActions {
+    pub fn with(mut self, action: DetailAction, on: bool) -> Self {
+        if on {
+            self.0 |= action.bit();
+        }
+        self
+    }
+    pub fn contains(self, action: DetailAction) -> bool {
+        self.0 & action.bit() != 0
+    }
+    /// The set's rows, in the panel's order.
+    pub fn iter(self) -> impl Iterator<Item = DetailAction> {
+        DetailAction::ALL.into_iter().filter(move |a| self.contains(*a))
+    }
+}
+
+/// What [`AppArg::DetailMore`] carries: the Detail instance the panel reports to, and its rows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct DetailMoreArg {
+    pub host: plx_machine::machine::InstanceId,
+    pub actions: DetailActions,
+}
+
+impl LogicalState for DetailMoreArg {
+    fn write(&self, c: &mut Canon) {
+        c.u32(self.host.0).u32(self.actions.0);
+    }
+    fn probe(&self, out: &mut String) {
+        out.push_str("detail_more_arg");
+    }
 }
 
 impl ContentPanel {
@@ -995,6 +1094,8 @@ impl ContentPanel {
             Self::About => (Style::Alert, AppArg::AboutPanel),
             Self::Bio => (Style::Alert, AppArg::PersonBio),
             Self::CollectionAbout => (Style::Alert, AppArg::CollectionAbout),
+            // a side of the screen, over the sheet's dim: the Shield side panel's style
+            Self::More { actions } => (Style::Sheet, AppArg::DetailMore(DetailMoreArg { host, actions })),
         })
     }
 }
@@ -1133,6 +1234,9 @@ pub enum AppMsg {
     /// the destination and the PAGE navigates, which is `LibraryMenu`'s shape (`LibrarySelect`) and
     /// what keeps "what a press means on the Detail page" in one place instead of two.
     AltSourceOpen(ContentArg),
+    /// The Shield layout's More Actions panel committed a row: the Detail page performs it, by the
+    /// same paths its own controls take (`AltSourceOpen`'s shape).
+    DetailAction(DetailAction),
 }
 
 /// What the consent machine is told (§2.3): a person's answer to both questions at once.
@@ -1213,6 +1317,8 @@ pub mod word {
     pub const HOME: &str = "home";
     /// The Shield layout's side panel (`screens::sidebar`), an `overlay=` word.
     pub const SIDEBAR: &str = "sidebar";
+    /// The Shield layout's More Actions panel over a Detail page (`screens::detail_more`).
+    pub const DETAIL_MORE: &str = "detail_more";
     /// The profile menu (`screens::account_menu`). An `overlay=` word since phase 10 — it was a
     /// `route=` word (`Route::Account`) while the menu was a legacy popover with a route of its
     /// own, and `tests/manifest.json`'s `home-acct-glass` scene was re-keyed with it.
@@ -1509,6 +1615,9 @@ pub enum AppArg {
     /// over whichever bar-wearing page LEFT ran off. It carries the page it was opened over (the
     /// row it opens focused on) and the profile the shared chrome captured.
     Sidebar(crate::sidebar::SidebarArg),
+    /// The Shield layout's More Actions panel (`screens::detail_more`), presented on the shared
+    /// `ModalStack` over the Detail page whose "⋮" asked for it: the rows, and that page's instance.
+    DetailMore(DetailMoreArg),
     /// The item context menu (`screens::item_menu`), presented on the shared `ModalStack` over
     /// whichever card surface the hold happened on. **Everything the popover is about travels on
     /// the argument** — the row, its server, the anchor it hangs beside, and the two bits an
@@ -1584,7 +1693,8 @@ pub const ARG_SHAPE: &str = "AppArg{Login,Profiles,Onboard,Home,Library,Search,W
      TracksPanel{page:i32},AboutPanel,PersonBio,CollectionAbout,AccountMenu,\
      ItemMenu{sid:u32,rk:str,kind:{Card{from_deck:bool,type:u32},Episode{mark:u32},Season{mark:u32},WatchlistCard{type:u32,guid:str}},\
      host:u32,focus:Option<{entry:u32,elem:u32}>,anchor:[u32;4],loaded_episode:bool,from_home:bool},\
-     Sidebar{current:{Home,Watchlist,Search,Library{sid:u32,key:u64}},profile:{name:str,initial:str,thumb:str,src:u32}}}";
+     Sidebar{current:{Home,Watchlist,Search,Library{sid:u32,key:u64}},profile:{name:str,initial:str,thumb:str,src:u32}},\
+     DetailMore{host:u32,actions:u32}}";
 
 impl LogicalState for AppArg {
     fn write(&self, c: &mut Canon) {
@@ -1606,6 +1716,8 @@ impl LogicalState for AppArg {
             Self::AccountMenu => { c.u32(8); }
             // 13, allocated forward past every surface tag above.
             Self::Sidebar(arg) => { c.u32(13); arg.write(c); }
+            // 14, allocated forward.
+            Self::DetailMore(arg) => { c.u32(14); arg.write(c); }
             Self::ItemMenu(arg) => { c.u32(9); arg.write(c); }
             // The seven PAGE variants keep the canon bytes `Legacy(Route)` wrote — a `0` tag and
             // then the route's own — so a recording taken before the fold and one taken after are
@@ -1647,6 +1759,7 @@ impl plx_ui::screen::ScreenArg for AppArg {
             | AppArg::LibraryMenu(_)
             | AppArg::AccountMenu
             | AppArg::Sidebar(_)
+            | AppArg::DetailMore(_)
             | AppArg::ItemMenu(_)
             | AppArg::PlayerOverlay(_)
             | AppArg::AltSources(_)
@@ -1677,6 +1790,8 @@ impl plx_ui::screen::ScreenArg for AppArg {
             AppArg::AccountMenu => 19,
             // Allocated forward: 26 is the first id no screen has held.
             AppArg::Sidebar(_) => 26,
+            // …and 27 the next.
+            AppArg::DetailMore(_) => 27,
             // One id for all three entry points (a card, an episode still, a season tab): they are
             // three row sets of ONE screen, and `same_instance` must never let the container think
             // it is holding two of them.
@@ -1799,6 +1914,7 @@ where
             AppArg::AccountMenu => Box::new(crate::account_menu::AccountMenuScreen::new(entry)),
             AppArg::Sidebar(arg) => Box::new(crate::sidebar::SidebarScreen::new(
                 entry, arg.clone(), <H as DirectoryLike>::directory(cx), cx.measure)),
+            AppArg::DetailMore(arg) => Box::new(crate::detail_more::DetailMoreScreen::new(entry, *arg)),
             AppArg::ItemMenu(arg) => Box::new(crate::item_menu::ItemMenuScreen::new(entry, arg.clone())),
             AppArg::PlayerOverlay(arg) => Box::new(
                 crate::player::overlay::PlayerOverlayScreen::new_with(
@@ -1956,6 +2072,10 @@ pub fn every_surface_arg() -> Vec<AppArg> {
             current: crate::sidebar::Current::Home,
             profile: Default::default(),
         }),
+        AppArg::DetailMore(DetailMoreArg {
+            host: plx_machine::machine::InstanceId(1),
+            actions: DetailActions::default().with(DetailAction::About, true),
+        }),
         AppArg::ItemMenu(ItemMenuArg {
             sid: plx_plex::plex::ServerId::UNSET,
             rk: "1".into(),
@@ -1991,6 +2111,7 @@ pub fn every_surface_arg() -> Vec<AppArg> {
             AppArg::LibraryMenu(_)
             | AppArg::AccountMenu
             | AppArg::Sidebar(_)
+            | AppArg::DetailMore(_)
             | AppArg::ItemMenu(_)
             | AppArg::AltSources(_)
             | AppArg::TracksPanel(_)
@@ -2068,6 +2189,7 @@ pub const SCREEN_SHAPES: &[&str] = &[
     crate::preferences::PICKER_SHAPE,
     crate::watchlist::SHAPE,
     crate::sidebar::SHAPE,
+    crate::detail_more::SHAPE,
 ];
 
 /// The pin over [`SCREEN_SHAPES`] — bump it in the same edit that adds an entry, and say why.
@@ -2186,7 +2308,9 @@ pub const SCREEN_SHAPES: &[&str] = &[
 // and `screens::watchlist::SHAPE` joins the inventory; the previous pin was 0x43f8_1f0c_e8ef_7d6c.
 // The Shield layout's side panel: `ARG_SHAPE` gains the `Sidebar` surface and
 // `screens::sidebar::SHAPE` joins the inventory; the previous pin was 0x5600_14ed_619e_9928.
-const SCREEN_SHAPES_PIN: u64 = 0x7c63_39e8_aaa5_1ec6;
+// The Shield layout's More Actions panel: `ARG_SHAPE` gains the `DetailMore` surface and
+// `screens::detail_more::SHAPE` joins the inventory; the previous pin was 0x7c63_39e8_aaa5_1ec6.
+const SCREEN_SHAPES_PIN: u64 = 0xdefb_8e29_63c5_4ab8;
 
 #[cfg(test)]
 mod arg_tests {

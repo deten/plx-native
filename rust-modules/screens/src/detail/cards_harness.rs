@@ -59,6 +59,7 @@ fn detail_of(which: Which, rks: &[String]) -> Detail {
         Which::Extras => {
             d.extras = rks.iter().map(|rk| plx_data::metadata::Extra { rk: rk.clone(), ..Default::default() }).collect();
         }
+        Which::Seasons => unreachable!("the season posters are the Shield layout's; this harness mounts Standard"),
         Which::Cast => {
             // a person's identity is its numeric id, so a reorder keeps each headshot's key
             d.cast = rks.iter().map(|rk| plx_data::metadata::Cast {
@@ -89,6 +90,7 @@ impl Harness {
             Which::Collection => 7,
             Which::Extras => 6,
             Which::Cast => 4,
+            Which::Seasons => 1,
         }
     }
 
@@ -98,6 +100,7 @@ impl Harness {
             Which::Collection => &self.screen.collection,
             Which::Extras => &self.screen.extras,
             Which::Cast => &self.screen.cast,
+            Which::Seasons => &self.screen.shield.seasons,
         }
     }
 
@@ -117,6 +120,7 @@ impl Harness {
             Which::Collection => collection::elem(i),
             Which::Extras => extras::elem(i),
             Which::Cast => cast::elem(i),
+            Which::Seasons => season::elem(i),
         }
     }
 

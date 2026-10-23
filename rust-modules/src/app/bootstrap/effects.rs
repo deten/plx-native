@@ -184,6 +184,7 @@ fn content_request(request: &plx_screens::registry::ContentReq) -> Result<Value,
             ContentPanel::About => json!("about"),
             ContentPanel::Bio => json!("bio"),
             ContentPanel::CollectionAbout => json!("collection_about"),
+            ContentPanel::More { actions } => json!({"more":actions.0}),
         }}),
         // Full playback still needs its own controlled bootstrap and resource/result contract.
         ContentReq::Play { .. } => return Err("unsupported controlled playback effect"),

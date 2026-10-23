@@ -18,6 +18,17 @@
   "browse.person.filmography": "Filmografía",
   "browse.person.empty": "No hay títulos de esta persona en tus bibliotecas",
   "browse.detail.about": "Acerca de",
+  "browse.detail.tab.show": "Serie",
+  "browse.detail.watch_episode": "Ver {episode}",
+  "browse.detail.resume_left": "Reanudar • {left}",
+  "browse.detail.more_actions": "Más acciones",
+  "browse.detail.track_info": "Información de pistas",
+  "browse.detail.subtitles_off": "Ninguno",
+  "browse.detail.seasons_heading": {
+    "one": "{count} temporada",
+    "many": "{count} temporadas",
+    "other": "{count} temporadas"
+  },
   "browse.detail.about_heading": "ACERCA DE",
   "browse.detail.released": "Estreno",
   "browse.detail.runtime": "Duración",

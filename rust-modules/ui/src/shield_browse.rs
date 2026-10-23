@@ -76,6 +76,12 @@ pub fn tab_track(pills: &[Rect]) -> Option<Rect> {
 pub fn draw_tabs(p: Painter, labels: &[&CStr], pills: &[Rect], selected: Option<usize>, focused: Option<usize>) {
     let Some(track) = tab_track(pills) else { return };
     p.rect(track, track.h * 0.5, theme::SHIELD_TAB_TRACK, theme::SHIELD_TAB_TRACK, 0.0);
+    draw_pills(p, labels, pills, selected, focused);
+}
+
+/// The pills of a tab row without its track — for a row that scrolls its pills inside a track
+/// it draws itself (a show page's season tabs, `shield_detail::tab_track`).
+pub fn draw_pills(p: Painter, labels: &[&CStr], pills: &[Rect], selected: Option<usize>, focused: Option<usize>) {
     for (i, (label, r)) in labels.iter().zip(pills).enumerate() {
         let ink = if focused == Some(i) {
             p.rect(*r, r.h * 0.5, theme::SHIELD_FOCUS_FILL, theme::SHIELD_FOCUS_FILL, 0.0);
@@ -182,13 +188,18 @@ pub fn draw_count(p: Painter, r: Rect, figures: &CStr) {
 
 /// The round icon chip in `r`.
 pub fn draw_round(p: Painter, r: Rect, glyph: Icon, focused: bool) {
+    draw_round_sized(p, r, glyph, ROUND_GLYPH, focused);
+}
+
+/// A round icon control in `r` with a `g`-wide glyph: the chip bar's, and the detail pages' 64
+/// action circles (`shield_detail::draw_round`).
+pub fn draw_round_sized(p: Painter, r: Rect, glyph: Icon, g: f32, focused: bool) {
     let (fill, ink) = if focused {
         (theme::SHIELD_FOCUS_FILL, theme::SHIELD_FOCUS_INK)
     } else {
         (theme::SHIELD_CHIP_FILL, theme::SHIELD_TAB_INK)
     };
     p.rect(r, r.h * 0.5, fill, fill, 0.0);
-    let g = ROUND_GLYPH;
     icons::draw(p, glyph, Rect::new(r.cx() - g * 0.5, r.cy() - g * 0.5, g, g), ink);
 }
 

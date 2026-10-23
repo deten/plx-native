@@ -9,13 +9,16 @@
 //! **What Shield changes today** is the CHROME — the bar-wearing pages draw the collapsed icon
 //! rail and the clock instead of the top bar, publish no top strip for focus to land on, and LEFT
 //! off their left-most content opens the side panel (`side_nav`) — HOME, which wears a
-//! focused-item header over fixed-slot poster rows (`shield`, `screens::home`'s `shield`), and the
+//! focused-item header over fixed-slot poster rows (`shield`, `screens::home`'s `shield`), the
 //! LIBRARY, whose Recommended | Browse | Categories tabs, captioned grid, A–Z rail, genre tiles and
-//! right-side panels are `shield_browse` and `shield_panel` (`screens::library`'s `shield`). Every
-//! other page's geometry is unchanged. The swap still applies live: the chrome reads this value per
-//! frame, and Home, the Library and its menu latch it at the top of each event and re-dress
-//! themselves in place when it changes, so no page is ever laid out by one layout and drawn by the
-//! other.
+//! right-side panels are `shield_browse` and `shield_panel` (`screens::library`'s `shield`), and the
+//! DETAIL pages — the movie, show and season pages' header, pill-and-circles action row, media
+//! chips, captioned rows and season strip (`shield_detail`, `screens::detail`'s `shield`), with the
+//! rail beside them, the side panel off their left edge and a More Actions panel at the right
+//! (`screens::detail_more`). Every other page's geometry is unchanged. The swap still applies
+//! live: the chrome reads this value per frame, and Home, the Library and its menu and the Detail
+//! page latch it at the top of each event and re-dress themselves in place when it changes, so no
+//! page is ever laid out by one layout and drawn by the other.
 //!
 //! In a test build the value is per THREAD, so a test that switches the layout cannot change what
 //! a parallel test's dispatcher, chrome or Home step sees. Production is one atomic, written on

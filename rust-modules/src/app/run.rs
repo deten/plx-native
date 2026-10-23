@@ -2795,6 +2795,7 @@ pub(crate) unsafe fn report(app: &mut App, fr: &mut Frame) {
                 | AppArg::LibraryMenu(_)
                 | AppArg::AccountMenu
                 | AppArg::Sidebar(_)
+                | AppArg::DetailMore(_)
                 | AppArg::ItemMenu(_)
                 | AppArg::PlayerOverlay(_)
                 | AppArg::AltSources(_)
