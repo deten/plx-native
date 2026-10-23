@@ -173,7 +173,12 @@ Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
 ### Shield layout (in testing)
 
 **Settings > Libraries > Layout** switches between **Standard**, PlxNative's own layout, and
-**Shield**, which follows the Plex app on Android TV and NVIDIA Shield. It switches straight away.
+**Shield**, which follows the Plex app on Android TV and NVIDIA Shield. It switches straight away,
+and switching back to Standard puts everything back as it was.
+
+| The Layout setting | Standard Home, for comparison |
+|---|---|
+| ![Settings > Layout with Standard and Shield](docs/fork/settings-layout-picker.jpg) | ![PlxNative's Standard Home](docs/fork/standard-home.jpg) |
 
 - **Navigation:** a small icon rail sits at the left edge, with a clock at the top right. Press
   Left at the left edge of a page to open the side panel: your profile, Watchlist, Search, Home,
@@ -181,18 +186,15 @@ Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
 - **Home:** the top of the screen describes the focused card (logo, episode, year, runtime,
   genres, rating, summary and cast) over a background tinted from its artwork. Each row keeps the
   focused card in the same place at the left and slides under it.
-
 - **Libraries:** each library opens under page tabs. **Recommended** shows its shelves the way
   Home does. **Browse** is a captioned six-column grid with chips for filter, type, sort and item
   count, and the A to Z rail at the right. **Categories** shows a tile per genre that opens Browse
   filtered to it. Filter, sort and other menus open as a panel from the right edge.
-
 - **Detail pages:** a film leads with its title block, a white Play or Resume pill, round buttons
   for play from start, trailer, Watchlist, watched and More, and the version, audio and subtitle
   chips at the right, then Cast and Crew and related titles. A show page has Show and season tabs
   and a Watch pill for the next episode. A season page describes the focused episode above a row
   of episode stills. More opens a panel from the right edge.
-
 - **Search:** an on-screen keyboard sits in a column at the left, with results at the right as
   captioned grids grouped into films, shows, episodes, people and collections. OK on the search
   field still brings up the TV keyboard.
@@ -202,6 +204,24 @@ Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
   Options open as panels from the right edge. Skip Intro and Skip Credits appear as a white pill in
   the corner, subtitles are drawn as white text with a soft shadow, and an episode ends on a page
   showing what you just watched, the next episode with its countdown, and your On Deck titles.
+
+| Home | Side panel |
+|---|---|
+| ![Shield Home with the focused-item header](docs/fork/shield-home.jpg) | ![The side panel open over Home](docs/fork/shield-side-panel.jpg) |
+
+| Library Browse | Search |
+|---|---|
+| ![A library's Browse grid with chips and the A to Z rail](docs/fork/shield-library-browse.jpg) | ![Search with the on-screen keyboard](docs/fork/shield-search.jpg) |
+
+| Film page | Season page |
+|---|---|
+| ![A film page with the Resume pill and track chips](docs/fork/shield-movie.jpg) | ![A season page with episode stills](docs/fork/shield-season.jpg) |
+
+| Player settings | End of an episode |
+|---|---|
+| ![The player's Settings panel](docs/fork/shield-player-settings.jpg) | ![The post-play page with the Up Next countdown](docs/fork/shield-postplay.jpg) |
+
+Screenshots come from PlxNative's simulator and its demo library of open films.
 
 Code: branch [`shield-layout`](../../tree/shield-layout), built on `resume-seek`.
 
