@@ -235,6 +235,10 @@ RELEASE_LEGITIMATE_TRIGGER_NAMES = {
     # The debug flavour's kept event log (`eventlog::history`): a CREATE like the event log itself,
     # written by a RELEASE=1 debug test build on purpose, never read as a switch.
     "plxnative-history.log", "plxnative-history.log.1",
+    # Detailed logging's opt-in marker (`eventlog::history::MARKER`): read by the debug flavour
+    # only, outside the `/tmp` trigger folder, in the persistent log folder it switches on. Listed
+    # because it starts with the `plxnative-detail` boot trigger's name.
+    "plxnative-detailed-logging",
 }
 
 
