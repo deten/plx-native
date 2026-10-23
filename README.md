@@ -193,7 +193,10 @@ Code: branch [`resume-seek`](../../tree/resume-seek), built on `playback-diag`.
   and a Watch pill for the next episode. A season page describes the focused episode above a row
   of episode stills. More opens a panel from the right edge.
 
-Search and Watchlist are next.
+- **Search:** an on-screen keyboard sits in a column at the left, with results at the right as
+  captioned grids grouped into films, shows, episodes, people and collections. OK on the search
+  field still brings up the TV keyboard.
+- **Watchlist:** a captioned grid of your Watchlist titles.
 
 Code: branch [`shield-layout`](../../tree/shield-layout), built on `resume-seek`.
 
@@ -230,7 +233,7 @@ app. To remove the repository, select its address under **Settings** in Homebrew
 You can also install by hand: download the `.ipk` from a [release](../../releases) and install it
 with `ares-install` from LG's webOS developer tools.
 
-The newest test build, [Test 13](../../releases/tag/test-13), carries every feature above. Test
+The newest test build, [Test 14](../../releases/tag/test-14), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
