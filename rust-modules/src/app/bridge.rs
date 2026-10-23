@@ -223,6 +223,7 @@ fn execute_endpoint_outcomes_with(
 
 impl plx_screens::registry::PlayerLike for AppHost {
     fn session<'a>(cx: &Cx<'a, Self>) -> &'a plx_media::route::PlaybackSession { cx.views.session }
+    fn on_deck_hubs<'a>(cx: &Cx<'a, Self>) -> Option<plx_data::pms::HubsView<'a>> { Some(cx.views.hubs) }
 }
 
 impl plx_screens::registry::SearchLike for AppHost {

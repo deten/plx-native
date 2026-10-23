@@ -1011,6 +1011,8 @@ pub struct UpNext {
     pub season: i64,
     pub index: i64,
     pub thumb: String,
+    /// the successor's synopsis (the Shield post-play page's next-episode block; may be empty)
+    pub summary: String,
     pub dur_ms: i64,
     pub resume_ms: i64,
 }
@@ -1074,6 +1076,7 @@ pub(super) fn up_next_of(r: &plx_plex::plex::QueueRow) -> Option<UpNext> {
         season: r.season,
         index: r.index,
         thumb: r.thumb.clone(),
+        summary: r.summary.clone(),
         dur_ms: r.dur_ms,
         resume_ms: r.resume_ms,
     })

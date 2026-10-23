@@ -267,5 +267,14 @@
   "widgets.region.nl": "Нідэрланды",
   "widgets.region.latin_america": "Лацінская Амерыка",
   "widgets.failure.play_auto": "Уключыць «Аўтаматычна» і прайграць",
-  "widgets.failure.change_quality": "Змяніць якасць"
+  "widgets.failure.change_quality": "Змяніць якасць",
+  "widgets.player.settings": "Налады",
+  "widgets.player.playback_options": "Параметры прайгравання",
+  "widgets.player.boost_detail": "Мову чуваць лепш",
+  "widgets.player.loudness_detail": "Выраўноўвае гучныя і ціхія сцэны",
+  "widgets.player.tag_hdr": "HDR",
+  "widgets.postplay.just_played": "Толькі што",
+  "widgets.postplay.up_next": "Далей",
+  "widgets.postplay.up_next_count": "Далей · {seconds}",
+  "widgets.postplay.on_deck": "У працэсе"
 }

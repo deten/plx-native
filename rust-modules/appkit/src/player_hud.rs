@@ -39,7 +39,7 @@ fn fmt_time(ns: i64, neg: bool) -> String {
 /// The position the playbar SHOWS: a loading seek's target, else the live scrub preview, else the
 /// real playhead. One function because the draw ([`Playbar::live`]) and the clock prewarm
 /// ([`ClockWarm::queue_live`]) must resolve the same value, or the prewarm warms the wrong string.
-fn display_pos_ns(loading: bool, seekdisp: i64, scrub: i64, livepos: i64) -> i64 {
+pub(crate) fn display_pos_ns(loading: bool, seekdisp: i64, scrub: i64, livepos: i64) -> i64 {
     if loading && seekdisp >= 0 {
         seekdisp
     } else if scrub >= 0 {
@@ -157,7 +157,17 @@ pub fn draw_subtitles(hud_up: bool, burned: bool) {
 /// vertical placement follow the viewer's Settings > Playback picks (`route::subtitle_size`,
 /// `route::subtitle_position`) — native ASS/SSA keeps its authored style instead
 /// (`docs/ass-subtitles.md`).
+///
+/// **In the Shield layout** the caption is the Plex app's (j04, j05, k01, k02): regular white
+/// words on a soft dark shadow and no outline, its last line standing just above the round buttons
+/// whether or not the transport is up ([`SHIELD_SUB_BASE_Y`], which clears the bar by construction),
+/// at [`SHIELD_CAPTION_SZ`] on a 52 pitch. The viewer's size and position picks scale and lift it
+/// the same way.
 pub fn draw_subtitle_message(text: &str, hud_up: bool) {
+    if plx_ui::layout::shield() {
+        draw_shield_subtitle(text);
+        return;
+    }
     let scale = subtitle_size_scale(plx_media::route::subtitle_size());
     let max_chars = ((42.0 / scale).round() as usize).max(20);
     let mut lines: Vec<String> = Vec::new();
@@ -196,6 +206,50 @@ pub fn draw_subtitle_message(text: &str, hud_up: bool) {
                 p.text(cs.as_ptr(), cx + dx, top + 4.0 + dy, sz, outline, 1, 1);
             }
             p.text(cs.as_ptr(), cx, top + 4.0, sz, ink, 1, 1);
+        }
+    }
+}
+
+/// The Shield caption's base face — the SAME documented subtitle carve-out from `theme::size` as
+/// the Standard caption's 36 (see [`HUD_TITLE_SZ`]), at the reference's size (~44: a 31 cap).
+const SHIELD_CAPTION_SZ: f32 = 44.0;
+/// Its line pitch (j04: 783..817 and 835..869).
+const SHIELD_CAPTION_PITCH: f32 = 52.0;
+/// The Shield caption block's foot, with or without the transport: just above the round buttons
+/// (k02: the last line's descenders end at ~872, the buttons' top is 870).
+pub const SHIELD_SUB_BASE_Y: f32 = SCR_H - 200.0;
+
+/// The Shield caption ([`draw_subtitle_message`]'s doc).
+fn draw_shield_subtitle(text: &str) {
+    let scale = subtitle_size_scale(plx_media::route::subtitle_size());
+    let max_chars = ((42.0 * 36.0 / SHIELD_CAPTION_SZ / scale).round() as usize).max(16);
+    let mut lines: Vec<String> = Vec::new();
+    for seg in text.split('\n').map(str::trim).filter(|s| !s.is_empty()) {
+        for l in wrap(seg, max_chars) {
+            if lines.len() < MAX_CAPTION_LINES {
+                lines.push(l);
+            }
+        }
+    }
+    if lines.is_empty() {
+        return;
+    }
+    // subtitle caption: media chrome, the documented carve-out from theme::size (see HUD_TITLE_SZ)
+    let sz = (SHIELD_CAPTION_SZ * scale).round() as i32;
+    let lh = SHIELD_CAPTION_PITCH * scale;
+    let foot = SHIELD_SUB_BASE_Y - subtitle_position_lift(plx_media::route::subtitle_position());
+    let block_top = foot - lines.len() as f32 * lh;
+    let ink = subtitle_ink();
+    let shadow = theme::SHIELD_SUBTITLE_SHADOW;
+    let p = Painter::root();
+    for (i, ln) in lines.iter().enumerate() {
+        let top = block_top + i as f32 * lh;
+        if let Ok(cs) = CString::new(ln.as_str()) {
+            // a soft drop shadow, no box and no outline: three dark copies just below the words
+            for (dx, dy) in [(-1.0f32, 2.0f32), (1.0, 2.0), (0.0, 3.0)] {
+                p.text(cs.as_ptr(), SCR_W * 0.5 + dx, top + dy, sz, shadow, 1, 0);
+            }
+            p.text(cs.as_ptr(), SCR_W * 0.5, top, sz, ink, 1, 0);
         }
     }
 }
@@ -1950,7 +2004,8 @@ pub fn draw_hud(
     }
     let p = Painter::root();
     let e = hud_env();
-
+    // The Shield bar is `shield_hud`'s, drawn by the player screen; an Info card or Chapters strip
+    // over it keeps this Standard band beneath it (the panels are the Standard ones).
     draw_scrim(p);
 
     if transport {
@@ -2077,6 +2132,16 @@ mod tests {
     }
 
     use super::*;
+
+    /// **The Shield caption's foot** stands just above the round buttons and clear of the bar line
+    /// (k02: the last line ends at ~872 over buttons at 870 and a bar at 975), whether or not the
+    /// transport is up.
+    #[test]
+    fn the_shield_caption_sits_just_above_the_buttons_and_clear_of_the_bar() {
+        use plx_ui::shield_player::{BAR_CY, BUTTON_Y};
+        assert!(SHIELD_SUB_BASE_Y <= BUTTON_Y + 12.0 && SHIELD_SUB_BASE_Y > BUTTON_Y - 40.0);
+        assert!(SHIELD_SUB_BASE_Y < BAR_CY - 60.0);
+    }
 
     /// A held key starts near the old ramp, then crosses a sitcom episode or a film in a few
     /// seconds rather than ten or fifty; a short video keeps the old top speed.

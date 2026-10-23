@@ -263,5 +263,14 @@
   "widgets.region.nl": "Países Bajos",
   "widgets.region.latin_america": "Latinoamérica",
   "widgets.failure.play_auto": "Cambiar a Automático y reproducir",
-  "widgets.failure.change_quality": "Cambiar calidad"
+  "widgets.failure.change_quality": "Cambiar calidad",
+  "widgets.player.settings": "Ajustes",
+  "widgets.player.playback_options": "Opciones de reproducción",
+  "widgets.player.boost_detail": "Diálogos más fáciles de oír",
+  "widgets.player.loudness_detail": "Iguala escenas fuertes y suaves",
+  "widgets.player.tag_hdr": "HDR",
+  "widgets.postplay.just_played": "Recién visto",
+  "widgets.postplay.up_next": "A continuación",
+  "widgets.postplay.up_next_count": "A continuación · {seconds}",
+  "widgets.postplay.on_deck": "En curso"
 }

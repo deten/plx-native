@@ -1328,6 +1328,62 @@ pub const SHIELD_KEY_INK: [f32; 4] = WHITE;
 /// ~83%): quiet text that prompts rather than reports.
 pub const SHIELD_SEARCH_HINT: [f32; 4] = with_a(WHITE, 0.83);
 
+// ── Shield player (`shield_player`: the transport bar, the Skip pill, the post-play page; and the
+// player's `shield_panel` rows) ──────────────────────────────────────────────────────────────────
+// Measured off the Plex app on Android TV (i04, k02, p01, h03, k11, j01-j05, w016, e022; §1.4's
+// toggle and accent). The bar's played run is the same accent as a card's progress fill.
+/// The switch stops: §1.4 toggle.on track `#433004` (the accent ~25% on black), toggle.off track
+/// `#282a2d` and knob `#575a60`.
+const SWITCH_AMBER_900: [f32; 4] = rgb8(0x43, 0x30, 0x04);
+const SWITCH_GREY_800: [f32; 4] = rgb8(0x28, 0x2a, 0x2d);
+const SWITCH_GREY_600: [f32; 4] = rgb8(0x57, 0x5a, 0x60);
+/// The post-play ground's corners (e022): a near-black top, warm on the left and grey on the
+/// right, settling into a navy foot (`#141210`, `#292828`, `#2a4579`, `#2e3872` measured).
+const POSTPLAY_TL: [f32; 4] = rgb8(0x14, 0x12, 0x10);
+const POSTPLAY_TR: [f32; 4] = rgb8(0x29, 0x28, 0x28);
+const POSTPLAY_BL: [f32; 4] = rgb8(0x2a, 0x45, 0x79);
+const POSTPLAY_BR: [f32; 4] = rgb8(0x2e, 0x38, 0x72);
+/// A radio circle's ring (`#4d4d4d` over the black panel, white 30%).
+pub const SHIELD_RADIO_RING: [f32; 4] = with_a(WHITE, 0.30);
+/// The current choice's dot inside its ring: the accent.
+pub const SHIELD_RADIO_DOT: [f32; 4] = AMBER_500;
+/// A switch that is on: the dark accent track and the accent knob at its end.
+pub const SHIELD_SWITCH_ON_TRACK: [f32; 4] = SWITCH_AMBER_900;
+pub const SHIELD_SWITCH_ON_KNOB: [f32; 4] = AMBER_500;
+/// A switch that is off: the grey track and its grey knob at the start.
+pub const SHIELD_SWITCH_OFF_TRACK: [f32; 4] = SWITCH_GREY_800;
+pub const SHIELD_SWITCH_OFF_KNOB: [f32; 4] = SWITCH_GREY_600;
+/// The transport's scrims: black at its top and foot, gone by the picture's middle — the title
+/// and the bar read on any frame (p01: `#020303` at the top edge over a mid-grey picture).
+pub const SHIELD_PLAYER_SCRIM: [f32; 4] = scrim_black(0.85);
+pub const SHIELD_PLAYER_SCRIM_CLEAR: [f32; 4] = scrim_black(0.0);
+/// The playing item's title and the bar's two clocks.
+pub const SHIELD_PLAYER_INK: [f32; 4] = WHITE;
+/// The meta line under the title ("2026 · 2 hr 11 min"): the secondary grey.
+pub const SHIELD_PLAYER_META: [f32; 4] = COOL_400;
+/// The wall clock at the top right (`#d2d1d6`-ish, the clock pill's own figures).
+pub const SHIELD_PLAYER_CLOCK: [f32; 4] = COOL_200;
+/// The bar's track (`#4d4d4d` over black) and its played run (the accent).
+pub const SHIELD_PLAYER_TRACK: [f32; 4] = with_a(WHITE, 0.30);
+pub const SHIELD_PLAYER_PLAYED: [f32; 4] = AMBER_500;
+/// The playhead's dot while the bar holds focus.
+pub const SHIELD_PLAYER_KNOB: [f32; 4] = WHITE;
+/// The chevron under the bar that says more is below.
+pub const SHIELD_PLAYER_CHEVRON: [f32; 4] = with_a(WHITE, 0.80);
+/// The Skip Intro / Skip Credits pill: white with black words (w016, e001).
+pub const SHIELD_SKIP_FILL: [f32; 4] = WHITE;
+pub const SHIELD_SKIP_INK: [f32; 4] = BLACK;
+/// A subtitle's soft shadow: no box, only a dark halo under white words (j04, k02).
+pub const SHIELD_SUBTITLE_SHADOW: [f32; 4] = scrim_black(0.55);
+/// The post-play page's four-corner ground (e022).
+pub const SHIELD_POSTPLAY_GROUND: [[f32; 4]; 4] = [POSTPLAY_TL, POSTPLAY_TR, POSTPLAY_BR, POSTPLAY_BL];
+/// The post-play page's headings and the up-next episode's title.
+pub const SHIELD_POSTPLAY_HEADING: [f32; 4] = WHITE;
+/// A card's second caption line ("S10 · E7") under the two leading cards.
+pub const SHIELD_POSTPLAY_CAPTION_SUB: [f32; 4] = with_a(WHITE, 0.85);
+/// The disc under a card's replay or play glyph: black ~50% over the still.
+pub const SHIELD_POSTPLAY_GLYPH_DISC: [f32; 4] = scrim_black(0.50);
+
 // ── Review-score marks (detail hero ratings row) ─────────────────────────────
 // These used to be the ONE place the palette borrowed someone else's colour, justified by the
 // badge being a BRAND MARK. That justification is gone with the marks: Rotten Tomatoes' fruit,

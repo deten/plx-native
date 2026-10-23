@@ -224,6 +224,21 @@ pub enum PlayerReq {
     /// failure read-out's own BACK escape all perform (`exit_player`; restructure phase 12,
     /// replacing `app/run.rs`'s direct calls to it from the player's own key arms).
     Exit,
+    /// A card of the Shield post-play page was pressed (`screens::player`'s post-play): the loop
+    /// starts what it names through the ordinary start paths.
+    PostPlay(PostPlayReq),
+}
+
+/// What a card of the Shield post-play page asks for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PostPlayReq {
+    /// *Up Next*: the queued successor, as the Next Episode button starts it (a press: Passout
+    /// protection never stops one).
+    PlayNext,
+    /// *Just Played*: the ended episode again from its start.
+    Replay,
+    /// An *On Deck* card: that item, resumed where it was left, through the Continue Watching start.
+    Play { sid: plx_plex::plex::ServerId, rk: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1169,6 +1184,12 @@ pub trait HomeLike: AppLike<Memory = PageMemory> + Sized {
 /// on this path by construction.
 pub trait PlayerLike: AppLike<Memory = PageMemory> + Sized {
     fn session<'a>(cx: &Cx<'a, Self>) -> &'a plx_media::route::PlaybackSession;
+    /// The hubs the Shield post-play page reads its On Deck row from (Continue Watching).
+    /// PROVIDED, defaulting to `None` — a host without hubs shows the page without that row — so
+    /// the player's test hosts owe nothing; the production host overrides it.
+    fn on_deck_hubs<'a>(_cx: &Cx<'a, Self>) -> Option<plx_data::pms::HubsView<'a>> {
+        None
+    }
 }
 
 pub trait SearchLike: AppLike<Memory = PageMemory> + Sized {

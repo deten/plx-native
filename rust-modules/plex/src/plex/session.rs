@@ -1280,23 +1280,43 @@ impl PlaybackQuality {
     /// Display text in the UI language with its regional digits; a log line names the rung by
     /// `{:?}` instead, so the log does not depend on the viewer's language.
     pub fn label(self) -> String {
+        match self.rate() {
+            Some(rate) => format!("{} \u{b7} {rate}", self.name()),
+            None => self.name(),
+        }
+    }
+
+    /// The rung's NAME alone — `1080p`, Original, Auto — for a presentation that sets the rate on a
+    /// line of its own (the Shield player's Quality panel, k04).
+    pub fn name(self) -> String {
+        use plx_platform::i18n::msg;
+        match self.lines() {
+            // `1080p` is the format's own conventional name in every shipped language.
+            Some(lines) => format!("{lines}p"),
+            None if self == PlaybackQuality::Auto => msg::settings_playback_auto().to_owned(),
+            None => msg::widgets_quality_original().to_owned(),
+        }
+    }
+
+    /// The rung's rate cap in the UI language (`20 Mbps`, `720 kbps`); `None` for Original and Auto.
+    pub fn rate(self) -> Option<String> {
         use plx_platform::i18n::{current, msg};
-        let (lines, kbps): (i64, i64) = match self {
-            PlaybackQuality::Auto => return msg::settings_playback_auto().to_owned(),
-            PlaybackQuality::Original => return msg::widgets_quality_original().to_owned(),
-            PlaybackQuality::P1080High => (1080, 20_000),
-            PlaybackQuality::P1080 => (1080, 8_000),
-            PlaybackQuality::P720 => (720, 4_000),
-            PlaybackQuality::P720Low => (720, 2_000),
-            PlaybackQuality::P480 => (480, 720),
-        };
-        let rate = if kbps >= 1000 {
+        let kbps = self.ceiling()?.max_kbps;
+        Some(if kbps >= 1000 {
             msg::widgets_tracks_mbps(&current().number(kbps / 1000))
         } else {
             msg::widgets_tracks_kbps(&current().number(kbps))
-        };
-        // `1080p` is the format's own conventional name in every shipped language.
-        format!("{lines}p \u{b7} {rate}")
+        })
+    }
+
+    /// The rung's scan lines, for a fixed rung.
+    fn lines(self) -> Option<i64> {
+        match self {
+            PlaybackQuality::Auto | PlaybackQuality::Original => None,
+            PlaybackQuality::P1080High | PlaybackQuality::P1080 => Some(1080),
+            PlaybackQuality::P720 | PlaybackQuality::P720Low => Some(720),
+            PlaybackQuality::P480 => Some(480),
+        }
     }
 
     /// A missing field in an OLD file is handled by [`Session::playback_quality`] and is always

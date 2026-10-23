@@ -349,7 +349,10 @@ presentation in a design pass.
    paused, a seek spinner while the transport owns the busy signal, nothing at all while playing.
    Transport is driven by REMOTE KEYS, which must genuinely work. Any `<<` / `>>` added must be a
    small glyph in that same indicator slot at the clock's cap height — never a control, and never a
-   fourth entry in the HUD control row (`appkit/player_hud.rs`'s `BTN_N`, currently 3).
+   fourth entry in the HUD control row (`appkit/player_hud.rs`'s `BTN_N`, currently 3). The opt-in
+   Shield layout's transport (`shield_player`) follows the Plex app instead: its glyph slot at the
+   bar's left shows what OK on the bar does (pause while playing, play while paused) or a jump
+   arrow with its gathered seconds — still a read-out, never a focusable control.
 
 4. **Failure read-outs are never red — the app does not scold.** A failed verdict is inked bold at
    `size::TITLE` in `theme::TEXT_SECONDARY`, per the design system's `StatusOverlay` contract.

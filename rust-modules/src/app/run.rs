@@ -1595,7 +1595,27 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
             // Once per item: the markers it arrived with and the choices it plays under.
             super::playback::note_playstart(&app.player.session, app.bridge.metadata_view());
         }
-        if playback_may_run(app) && super::bridge::player(&app.pages).is_some() && plx_media::player::ended() {
+        // The Shield post-play page may hold the end instead (`screens::player::shield::eos_hold`):
+        // already held, nothing more; opened, it is held here unless Passout protection stops the
+        // advance it stands for, which leaves the player exactly as the end always has.
+        let eos_hold = super::bridge::player(&app.pages)
+            .filter(|_| playback_may_run(app) && plx_media::player::ended())
+            .map(|p| p.eos_hold(&app.player.session));
+        if eos_hold == Some(plx_screens::player::shield::EosHold::Open) {
+            let advance = super::playback::Advance::automatic(fr.now, app.last_input);
+            if super::playback::passout_stops(advance, &app.player.session, app.bridge.metadata_view()) {
+                super::playback::exit_player(&mut app.player.session,
+                    &mut app.adapters.player,
+                    &mut app.refresh_hubs_at,
+                    &mut app.pages,
+                );
+            } else {
+                super::playback::log_end_reason(&app.player.session, app.bridge.metadata_view(), "eos-postplay");
+                if let Some(player) = super::bridge::player_mut(&mut app.pages) {
+                    player.hold_post_play(fr.now);
+                }
+            }
+        } else if eos_hold == Some(plx_screens::player::shield::EosHold::Finish) {
             super::playback::log_end_reason(&app.player.session, app.bridge.metadata_view(), "eos");
             let handed_off_to_up_next = finish_playback(&mut app.player.session,
                 &mut app.adapters.player,
@@ -1737,12 +1757,13 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
                 // the tile behind a transport nobody drew. `HudState::raise_for_offer` is where
                 // that rule, its resting-position clause and the bug are written down.
                 if !auto_skip_now {
-                    player.hud.raise_for_offer(fr.now, fr.ctrl.primary_btn());
+                    player.raise_for_offer(fr.now, fr.ctrl);
                 }
             } else if plx_appkit::player_hud::standin_left_the_ring(
                 player.hud.was_standin,
                 fr.ctrl,
-                player.hud.nav.focus == 1,
+                // the Shield row is always its two round buttons: a stand-in never held its ring
+                player.hud.nav.focus == 1 && !player.shield(),
             ) {
                 // The stand-in went away under the focus ring. Without this the row swaps back
                 // to the discs with focus still on it and `btn` still 0, so the next OK opened

@@ -75,6 +75,15 @@
 //! page commits and dismisses like a root pick. A page whose listing is gone (the language left the
 //! offered list) pops to the root ([`TrackMenuState::pages_hold`]); a language page that drops to a
 //! single track stays open, and popping it lands on that track's direct row.
+//!
+//! **In the Shield layout** the same panel presents as the right-side player panel
+//! (`plx_ui::shield_panel`'s player rows, through [`plx_ui::page_stack::ShieldPresentation`]): the
+//! Subtitles button opens the Subtitles tab and the Settings panel's Audio row the Audio tab, each
+//! titled by its tab or by the page that is pushed, with no tab switch at a root (LEFT and RIGHT
+//! only pop and enter pages). The Audio tab there lists the tracks alone: Boost dialog and
+//! Normalize loudness live on the Settings panel's Playback Options page
+//! (`crate::player_settings`), which reads and commits them through [`enhancement_offer`] and
+//! [`enhancement_toggle`]. Rows, keys and commits are the Standard panel's.
 use plx_data::metadata;
 use plx_data::metadata::sub_layout::{self, LangId, OtherLang, RowBadge, RowTarget, SubHeader, SubModel, SubRow, SubTrack};
 use plx_data::metadata::track_label;
@@ -87,7 +96,7 @@ use plx_ui::screen::{At, Dir, DrawFrame, Focusable, GroupSpec, Part, Placed, Ste
 use plx_ui::form::{Activation, Form, FormId, FormSection, FormTable, RowKey, RowKind};
 use plx_ui::page_stack::{
     self, popover_group_of, popover_groups, popover_neighbour, popover_place,
-    popover_register_stops, popover_seat, PageStack, PopoverPanel,
+    popover_register_stops, popover_seat, PageStack, PopoverPanel, ShieldPage, ShieldPresentation,
 };
 use plx_ui::panel_motion::PanelMotion;
 use plx_ui::table::{Badge, Row, Section, TableView};
@@ -500,6 +509,9 @@ pub struct TrackMenuState {
     /// without the item in hand. A copy, refreshed wherever the subs list is re-read, so a
     /// subtitle that lands (or is replaced) while the page is up marks its hit at once.
     item_sidecars: Vec<metadata::Stream>,
+    /// Presented as the Shield layout's player panel (latched by the owning screen at each event),
+    /// and that panel's list scroll.
+    shield: ShieldPresentation,
 }
 
 /// **What the track menu DECIDED**, for the loop to perform (spec §2.2).
@@ -633,6 +645,7 @@ impl TrackMenuState {
             search: offer_search.then(|| plx_data::subsearch::SubSearchSnapshot::idle(0)),
             search_watching: false,
             item_sidecars: Vec::new(),
+            shield: ShieldPresentation { on: plx_ui::layout::shield(), scroll: 0.0 },
         };
         s.form.table.min_panel_w = theme::layout::PLAYER_MENU_MIN_W;
         s.sync_item(ps, meta);
@@ -718,6 +731,45 @@ impl TrackMenuState {
     pub fn focus_key(&mut self, elem: u32) {
         if let Some(i) = self.form.index_of_key(RowKey(elem)) {
             self.form.table.sel = i as i32;
+        }
+        self.follow_shield(false);
+    }
+
+    /// **Present as the Shield layout's player panel, or stop** — the owning screen latches the
+    /// layout at each event and hands it here. The Audio tab's rows depend on it (the Shield panel
+    /// lists the tracks alone), so a change rebuilds that tab in place.
+    pub fn set_shield(&mut self, on: bool, ps: &plx_media::route::PlaybackSession, meta: metadata::MetadataView<'_>) {
+        if self.shield.on == on {
+            return;
+        }
+        self.shield.set(on);
+        if self.tab == 0 && self.pages.is_empty() {
+            let (shown, route, disabled, effect) = Self::enh_state(ps);
+            self.rebuild_audio(shown, route, disabled, effect, meta, false);
+        }
+        self.follow_shield(true);
+    }
+
+    /// Is the panel presented as the Shield player panel?
+    pub fn shield(&self) -> bool {
+        self.shield.on
+    }
+
+    /// The Shield panel's title: the pushed page's, else the tab's own name.
+    pub fn shield_title(&self) -> String {
+        match self.pages.top() {
+            Some(page) => self.page_title(page),
+            None if self.tab == 0 => plx_platform::i18n::msg::widgets_tracks_audio().to_string(),
+            None => plx_platform::i18n::msg::widgets_tracks_subtitles().to_string(),
+        }
+    }
+
+    /// Keep the Shield panel's focused row in its list window; a new page (`reset`) starts at the
+    /// top.
+    fn follow_shield(&mut self, reset: bool) {
+        if self.shield.on {
+            let title = self.shield_title();
+            self.shield.follow(&self.form, &title, reset);
         }
     }
 
@@ -1539,6 +1591,7 @@ impl TrackMenuState {
         // after the sections: the band moves every row, so the pill is re-jumped onto the focused one
         self.form.table.set_title(Some(self.page_title(page)));
         self.motion.begin_slide(leaving, 1.0);
+        self.follow_shield(true);
     }
 
     /// Pop the top page: the page beneath comes back exactly as it was left — the opener focused
@@ -1563,12 +1616,14 @@ impl TrackMenuState {
                 self.form.table.set_title(Some(self.page_title(page)));
             }
         }
+        self.follow_shield(true);
         true
     }
 
     /// **LEFT**: pop a sub-page, else (on a root) the tab switch as before.
     pub fn on_left(&mut self, ps: &plx_media::route::PlaybackSession, meta: metadata::MetadataView<'_>) {
-        if !self.pop(ps, meta) {
+        // the Shield panel is one tab: a root has nowhere to go
+        if !self.pop(ps, meta) && !self.shield.on {
             self.focus_tab(ps, meta, 0);
         }
     }
@@ -1581,7 +1636,7 @@ impl TrackMenuState {
             if let Some(Activation::Push(dest)) = self.form.activate(sel) {
                 self.push(dest);
             }
-        } else {
+        } else if !self.shield.on {
             self.focus_tab(ps, meta, 1);
         }
     }
@@ -1678,6 +1733,10 @@ impl TrackMenuState {
             sec = sec.item(TrackRow::Audio(i), RowKind::Choice, (), row);
         }
         let mut form = Form::new().section(sec);
+        if self.shield.on {
+            // the Shield Audio panel lists the tracks; the pair is the Playback Options page's
+            return form;
+        }
         if let Some(shown) = enhance_shown {
             let mut enh = FormSection::new("")
                 .item(
@@ -1788,6 +1847,12 @@ impl TrackMenuState {
         let offered = visible_subs(ps, meta);
         let names = plx_media::player::SHARED.track_names.lock().unwrap();
         sub_layout::sub_sections(subs, &offered, &names, &self.yours, show_timing)
+    }
+
+    /// The plain-language reason a disabled pair names (the Shield Playback Options page's second
+    /// line).
+    pub(crate) fn enhancement_reason(reason: plx_media::route::DisabledReason) -> String {
+        Self::enh_reason_text(reason)
     }
 
     /// The [`TrackRow::Boost`]/[`TrackRow::Loudness`] pair's three inputs, read fresh
@@ -1939,6 +2004,7 @@ impl TrackMenuState {
         self.motion.step(dt, natural);
         self.motion.prewarm_text(natural, &self.form.table, measure);
         self.warm_other_tab(ps, meta, measure);
+        self.follow_shield(false);
     }
 
     /// **Queue the ROOT page's strings on the frame the panel mounts**, from the screen's `prepare`.
@@ -1970,6 +2036,7 @@ impl TrackMenuState {
         measure: &dyn plx_machine::machine::Measure,
     ) {
         if self.background_owner.is_some()
+            || self.shield.on
             || !self.pages.is_empty()
             || self.motion.transitioning()
             || plx_gfx::text::prewarm_pending()
@@ -1995,6 +2062,11 @@ impl TrackMenuState {
     }
 
     pub fn draw(&mut self, appear: f32, measure: &dyn plx_machine::machine::Measure) {
+        if self.shield.on {
+            // the Shield panel stands at its fixed frame and fades in place
+            self.shield.draw(Painter::root().alpha(appear), &self.form, &self.shield_title(), measure);
+            return;
+        }
         // The appear fade/rise — the container drives the phase and the appear spring. The dim
         // over the video plane is the container's too (`PlayerOverlayScreen::scrim`,
         // `theme::underlay::DIM_PLAYER`), painted at the end of the player's page pass.
@@ -2047,6 +2119,9 @@ impl PopoverPanel for TrackMenuState {
     }
     fn shown_rect(&self, measure: &dyn Measure) -> Rect {
         TrackMenuState::shown_rect(self, measure)
+    }
+    fn shield(&self) -> Option<ShieldPage> {
+        self.shield.page(&self.form, &self.shield_title())
     }
 }
 
@@ -2210,8 +2285,62 @@ fn audio_sub_line_for(sub: String, converted: bool) -> String {
     }
 }
 
+/// **The Boost dialog / Normalize loudness pair as the Audio tab reads it** — offered (and what it
+/// reads), disabled with a reason, or hidden — for a panel that shows the pair without the tracks:
+/// the Shield Settings panel's Playback Options page (`crate::player_settings`). One reading of the
+/// route ([`TrackMenuState::enh_state`]), so the two panels cannot disagree about the pair.
+#[derive(Clone, Copy, PartialEq)]
+pub struct EnhancementOffer {
+    pub shown: Option<plx_plex::plex::AudioEnhancements>,
+    pub route: Option<plx_media::route::EnhancementRoute>,
+    pub disabled: Option<plx_media::route::DisabledReason>,
+    pub effect: plx_media::route::SubtitleEffect,
+}
+
+impl EnhancementOffer {
+    /// Is the pair absent altogether (no Plex Pass: the one silent gap)?
+    pub fn hidden(&self) -> bool {
+        self.shown.is_none() && self.disabled.is_none()
+    }
+
+    /// What the pair says under itself: why it is disabled, else the consequence of turning it on
+    /// (a burned subtitle, a dropped Dolby Vision declaration), else nothing.
+    pub fn note(&self) -> Option<String> {
+        match (self.disabled, self.route) {
+            (Some(reason), _) => Some(TrackMenuState::enhancement_reason(reason)),
+            (None, Some(route)) => TrackMenuState::enh_note_text(route, self.effect),
+            (None, None) => None,
+        }
+    }
+}
+
+/// The pair's live offer ([`EnhancementOffer`]).
+pub fn enhancement_offer(ps: &plx_media::route::PlaybackSession) -> EnhancementOffer {
+    let (shown, route, disabled, effect) = TrackMenuState::enh_state(ps);
+    EnhancementOffer { shown, route, disabled, effect }
+}
+
+/// **Flip one switch of the pair** (`boost`: Boost dialog, else Normalize loudness) — the same
+/// commit the Audio tab's row makes: the whole preference after the flip. `None` while the pair is
+/// disabled or hidden, where OK is inert.
+pub fn enhancement_toggle(offer: &EnhancementOffer, boost: bool) -> Option<TrackCommit> {
+    if offer.disabled.is_some() {
+        return None;
+    }
+    let mut a = offer.shown?;
+    if boost {
+        a.boost_dialog = !a.boost_dialog;
+    } else {
+        a.normalize_loudness = !a.normalize_loudness;
+    }
+    plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
+        feature: plx_telemetry::diag::schema::Feature::AudioEnhancement,
+    });
+    Some(TrackCommit::AudioEnhancement(a))
+}
+
 /// "AC-3 5.1", "Dolby TrueHD 7.1", "DTS 5.1" — a compact codec + channel-layout descriptor.
-fn audio_descriptor(s: &metadata::Stream) -> String {
+pub(crate) fn audio_descriptor(s: &metadata::Stream) -> String {
     let codec = friendly_codec(&s.codec);
     let ch = if !s.layout.is_empty() {
         channel_short(&s.layout)
@@ -4474,6 +4603,7 @@ mod focus_tests {
             search: None,
             search_watching: false,
             item_sidecars: Vec::new(),
+            shield: ShieldPresentation::default(),
         }
     }
 

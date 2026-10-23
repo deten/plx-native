@@ -677,6 +677,63 @@ pub(crate) fn player_requests(
                 log_end_reason(ps, bridge.metadata_view(), "user-exit");
                 exit_player(ps, pa, refresh_hubs_at, pages);
             }
+            PlayerReq::PostPlay(req) => apply_post_play(ps, pa, req, refresh_hubs_at, pages, bridge),
+        }
+    }
+}
+
+/// **Perform a Shield post-play card** (`screens::player::shield`): every arm is an existing start.
+///
+/// - *Up Next* is the Next Episode button's own start (`play_up_next`), a press, so Passout
+///   protection never stops it; with nothing queued after all the player is left as at the end.
+/// - *Just Played* replays the ended episode: a seek to its start while the stream still plays
+///   (the credits under a Countdown page — the Info card's *From the beginning*), else the item
+///   resolved again from 0 under the context it played in (`route::replay_current_play`).
+/// - An *On Deck* card is the Continue Watching start of that catalog row (`play_item_now`),
+///   resumed where it was left, after the ended session is retired as an Up Next advance retires it.
+fn apply_post_play(
+    ps: &mut plx_media::route::PlaybackSession,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    req: plx_screens::registry::PostPlayReq,
+    refresh_hubs_at: &mut u32,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
+    bridge: &mut super::bridge::Bridge,
+) {
+    use plx_screens::registry::PostPlayReq;
+    match req {
+        PostPlayReq::PlayNext => {
+            log_end_reason(ps, bridge.metadata_view(), "postplay-next");
+            if !play_up_next(ps, pa, HUD_LINGER_MS, pages, bridge) {
+                exit_player(ps, pa, refresh_hubs_at, pages);
+            }
+        }
+        PostPlayReq::Replay => {
+            log_end_reason(ps, bridge.metadata_view(), "postplay-replay");
+            if !plx_media::player::ended() {
+                request_seek(0);
+                resume_if_paused(pa);
+            } else if plx_media::route::can_retry_current_play(ps) {
+                plx_media::player::stop_bufferfeed(ps, pa);
+                if !plx_media::route::replay_current_play(ps, bridge.metadata_mut(), 0) {
+                    log("postplay: the ended item cannot be resolved again");
+                }
+                plx_machine::idle::invalidate();
+            }
+        }
+        PostPlayReq::Play { sid, rk } => {
+            let Some(mm) = bridge.hubs_snapshot().view().find(sid, &rk).cloned() else {
+                log(&format!("postplay: on-deck rk={rk} is no longer in the hubs"));
+                return;
+            };
+            log_end_reason(ps, bridge.metadata_view(), "postplay-ondeck");
+            close_player_overlays(pages);
+            plx_media::player::stop_bufferfeed(ps, pa);
+            bridge.metadata_mut().run(plx_data::stores::metadata::MetadataCmd::RetirePlaying);
+            // SAFETY: the frame thread's start ritual, exactly as Home's Continue Watching press
+            // reaches it (`content::activate_home_item`).
+            unsafe {
+                play_item_now(ps, pa, &mm, false, Origin::Unchanged, HUD_LINGER_MS, None, pages, bridge);
+            }
         }
     }
 }

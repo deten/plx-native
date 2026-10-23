@@ -45,6 +45,12 @@
 //! only BACK on the root dismisses. Six rungs fit; when they stop fitting, the [`TableView`]
 //! scrolls, which is what it is for.
 //!
+//! **In the Shield layout** this popover stands as the right-side player panel (`plx_ui::shield_panel`'s
+//! player rows): the Settings panel's Quality row opens it straight on the Quality page
+//! (`new_quality`), titled *Quality*, each rung's name over its rate on a second line (k04) with a
+//! radio circle for the current one; BACK closes it back onto Settings rather than popping to the
+//! root, whose Options moved to the Settings panel's Playback Options page.
+//!
 //! A rung closes the menu on commit (opening the page does not), so the read-out is never what confirms the press: the
 //! overlay appearing behind the dismissed panel — or, for a rung, the next play routing differently
 //! — is.
@@ -71,7 +77,7 @@ use plx_ui::screen::{At, Dir, DrawFrame, Focusable, GroupSpec, Part, Placed, Ste
 use plx_ui::form::{Activation, Form, FormId, FormSection, FormTable, RowKey, RowKind};
 use plx_ui::page_stack::{
     self, popover_group_of, popover_groups, popover_neighbour, popover_place,
-    popover_register_stops, popover_seat, PageStack, PopoverPanel,
+    popover_register_stops, popover_seat, PageStack, PopoverPanel, ShieldPage, ShieldPresentation,
 };
 use plx_ui::panel_motion::PanelMotion;
 use plx_ui::table::Row;
@@ -166,6 +172,9 @@ pub struct MoreMenuState {
     /// menu uses: a row set that changes height animates the top edge, bottom and right stay on the
     /// anchor, and a push or pop slides the two pages.
     motion: PanelMotion,
+    /// Presented as the Shield layout's player panel (latched by the owning screen at each event),
+    /// and that panel's list scroll.
+    shield: ShieldPresentation,
 }
 
 /// The hand-assigned focus key of each row. `SetQuality` rungs are an exhaustive match, so a new
@@ -213,10 +222,11 @@ fn root_form(
     rows: &[Action],
     forced: bool,
     current: plx_media::route::Quality,
+    shield: bool,
 ) -> MoreForm {
     let mut options = FormSection::new(plx_platform::i18n::msg::widgets_menu_options());
     for a in rows.iter().copied().filter(|a| !matches!(a, Action::SetQuality(_))) {
-        options = options.item(MoreRow::Act(a), RowKind::Button, a, row_for(ps, a));
+        options = options.item(MoreRow::Act(a), RowKind::Button, a, row_for(ps, a, shield));
     }
     let quality = FormSection::new("").item_if(
         quality_offered(rows, forced),
@@ -233,11 +243,12 @@ fn quality_form(
     ps: &plx_media::route::PlaybackSession,
     rows: &[Action],
     current: plx_media::route::Quality,
+    shield: bool,
 ) -> MoreForm {
     let sec = rows.iter().copied().filter(|a| matches!(a, Action::SetQuality(_))).fold(
         FormSection::new(""),
         |sec, a| {
-            sec.choice(MoreRow::Act(a), a, row_for(ps, a), |id| {
+            sec.choice(MoreRow::Act(a), a, row_for(ps, a, shield), |id| {
                 *id == MoreRow::Act(Action::SetQuality(current))
             })
         },
@@ -253,8 +264,9 @@ impl MoreMenuState {
         let mut form = FormTable::new(plx_ui::table_screen::BAND_BASE);
         form.table.compact = true; // a short action list — BODY labels, like the profile menu
         form.table.min_panel_w = theme::layout::PLAYER_MENU_MIN_W;
-        form.set_or_open(root_form(ps, &rows, forced, current), None);
-        let mut st = MoreMenuState { form, rows, forced, current, pages: PageStack::new(), motion: PanelMotion::new() };
+        let shield = ShieldPresentation { on: plx_ui::layout::shield(), scroll: 0.0 };
+        form.set_or_open(root_form(ps, &rows, forced, current, shield.on), None);
+        let mut st = MoreMenuState { form, rows, forced, current, pages: PageStack::new(), motion: PanelMotion::new(), shield };
         // A quality entry (the failure screen's OK) opens straight on the Quality page with the
         // active rung focused, no slide: the viewer is fixing a bad decision, not browsing. Under
         // Force Direct Play there is no ladder, so it is the ordinary root.
@@ -280,7 +292,7 @@ impl MoreMenuState {
     /// The form of a pushed page, from the panel's own read-outs.
     fn page_form(&self, ps: &plx_media::route::PlaybackSession, page: MorePage) -> MoreForm {
         match page {
-            MorePage::Quality => quality_form(ps, &self.rows, self.current),
+            MorePage::Quality => quality_form(ps, &self.rows, self.current, self.shield.on),
         }
     }
 
@@ -304,6 +316,7 @@ impl MoreMenuState {
         // after the sections: the band moves every row, so the pill is re-jumped onto the focused one
         self.form.table.set_title(Some(page.title()));
         self.motion.begin_slide(leaving, 1.0);
+        self.follow_shield(true);
     }
 
     /// Pop the top page: the root comes back exactly as it was left — the opener focused by id, the
@@ -312,9 +325,10 @@ impl MoreMenuState {
         let Some(saved) = self.pages.pop() else { return false };
         let leaving = page_stack::leave_page(&mut self.form);
         self.motion.begin_slide(leaving, -1.0);
-        let form = root_form(ps, &self.rows, self.forced, self.current);
+        let form = root_form(ps, &self.rows, self.forced, self.current, self.shield.on);
         self.form.restore(form, Some(&saved.return_id), saved.scroll);
         self.form.table.set_title(None);
+        self.follow_shield(true);
         true
     }
 
@@ -377,14 +391,14 @@ impl MoreMenuState {
                 // the ladder is gone under the viewer: back to the root, restoring the opener and
                 // scroll the stack saved at its first push
                 self.pages.clear();
-                let form = root_form(ps, &self.rows, self.forced, self.current);
+                let form = root_form(ps, &self.rows, self.forced, self.current, self.shield.on);
                 self.form.restore(form, Some(&first.return_id), first.scroll);
                 self.form.table.set_title(None);
                 self.motion.cancel_slide();
             }
         } else {
             let keep = self.form.selected_id().copied();
-            self.form.set_or_open(root_form(ps, &self.rows, self.forced, self.current), keep.as_ref());
+            self.form.set_or_open(root_form(ps, &self.rows, self.forced, self.current, self.shield.on), keep.as_ref());
         }
         true
     }
@@ -430,7 +444,46 @@ impl MoreMenuState {
     pub fn focus_key(&mut self, elem: u32) -> bool {
         let Some(i) = self.form.index_of_key(RowKey(elem)) else { return false };
         self.form.table.sel = i as i32;
+        self.follow_shield(false);
         true
+    }
+
+    /// **Present as the Shield layout's player panel, or stop** — the owning screen latches the
+    /// layout at each event. The rung rows change shape with it (name over rate), so a change
+    /// refreshes the page that is showing in place.
+    pub fn set_shield(&mut self, on: bool, ps: &plx_media::route::PlaybackSession) {
+        if self.shield.on == on {
+            return;
+        }
+        self.shield.set(on);
+        let form = match self.pages.top() {
+            Some(page) => self.page_form(ps, page),
+            None => root_form(ps, &self.rows, self.forced, self.current, on),
+        };
+        self.form.refresh(form);
+        self.follow_shield(true);
+    }
+
+    /// Is the popover presented as the Shield player panel?
+    pub fn shield(&self) -> bool {
+        self.shield.on
+    }
+
+    /// The Shield panel's title: the page's (Quality), else the Settings panel's own name.
+    pub fn shield_title(&self) -> String {
+        match self.pages.top() {
+            Some(page) => page.title(),
+            None => plx_platform::i18n::msg::widgets_player_settings().to_string(),
+        }
+    }
+
+    /// Keep the Shield panel's focused row in its list window; a new page (`reset`) starts at the
+    /// top.
+    fn follow_shield(&mut self, reset: bool) {
+        if self.shield.on {
+            let title = self.shield_title();
+            self.shield.follow(&self.form, &title, reset);
+        }
     }
 
     /// OK on the highlighted row: an action to perform (the container dismisses the panel
@@ -503,9 +556,14 @@ impl MoreMenuState {
         self.form.table.update(dt, natural.h);
         self.motion.step(dt, natural);
         self.motion.prewarm_text(natural, &self.form.table, measure);
+        self.follow_shield(false);
     }
 
     pub fn draw(&mut self, appear: f32, measure: &dyn plx_machine::machine::Measure) {
+        if self.shield.on {
+            self.shield.draw(plx_ui::Painter::root().alpha(appear), &self.form, &self.shield_title(), measure);
+            return;
+        }
         // rises INTO place from below, toward the disc that opened it. The dim under it is the
         // container's (`PlayerOverlayScreen::scrim`, `theme::underlay::DIM_SHEET`), painted at the
         // end of the player's page pass — not here.
@@ -553,6 +611,9 @@ impl PopoverPanel for MoreMenuState {
     }
     fn shown_rect(&self, measure: &dyn Measure) -> Rect {
         MoreMenuState::shown_rect(self, measure)
+    }
+    fn shield(&self) -> Option<ShieldPage> {
+        self.shield.page(&self.form, &self.shield_title())
     }
 }
 
@@ -708,11 +769,28 @@ fn quality_detail(q: plx_media::route::Quality, source_decodable: bool) -> &'sta
 /// builders) so the two idioms are decided in one place: a switch gets the trailing word, a picker
 /// rung gets the leading mark ([`FormSection::choice`] derives it from the current rung), and nothing gets
 /// both.
-fn row_for(ps: &plx_media::route::PlaybackSession, a: Action) -> Row {
+///
+/// In the Shield panel (`shield`) a rung reads its name over its rate (k04), and Original's
+/// conversion note joins the rate's line.
+fn row_for(ps: &plx_media::route::PlaybackSession, a: Action, shield: bool) -> Row {
     match a {
+        Action::SetQuality(q) if shield => {
+            let note = quality_detail(q, plx_media::route::source_decodable(ps));
+            let detail = [q.rate().unwrap_or_default(), note.to_string()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" \u{b7} ");
+            Row::new(q.name()).detail(detail)
+        }
         Action::SetQuality(q) => Row::new(label(a)).detail(quality_detail(q, plx_media::route::source_decodable(ps))),
         _ => Row::new(label(a)).toggle(is_on(a)),
     }
+}
+
+/// Is the Stats for nerds read-out on? (The Shield Settings panel's Nerd Statistics switch.)
+pub fn stats_shown() -> bool {
+    stats_on()
 }
 
 /// The panel at its TALLEST, for the overscan audit ([`plx_ui::consts::SAFE`]).
@@ -813,8 +891,8 @@ mod tests {
         let rows = rows_for(forced);
         let mut form = FormTable::new(plx_ui::table_screen::BAND_BASE);
         form.table.compact = true;
-        form.set_or_open(root_form(&ps, &rows, forced, current), None);
-        MoreMenuState { form, rows, forced, current, pages: PageStack::new(), motion: PanelMotion::new() }
+        form.set_or_open(root_form(&ps, &rows, forced, current, false), None);
+        MoreMenuState { form, rows, forced, current, pages: PageStack::new(), motion: PanelMotion::new(), shield: ShieldPresentation::default() }
     }
 
     /// The same menu with the Quality page pushed (and its slide skipped).
@@ -979,7 +1057,7 @@ mod tests {
         let mut rows = rows_for(false);
         rows.reverse();
         let mut form = FormTable::new(plx_ui::table_screen::BAND_BASE);
-        form.set(quality_form(&ps, &rows, Quality::Auto), None);
+        form.set(quality_form(&ps, &rows, Quality::Auto, false), None);
         let st = MoreMenuState {
             form,
             rows: rows.clone(),
@@ -987,6 +1065,7 @@ mod tests {
             current: Quality::Auto,
             pages: PageStack::new(),
             motion: PanelMotion::new(),
+            shield: ShieldPresentation::default(),
         };
         for a in rows_for(false).into_iter().filter(|a| matches!(a, Action::SetQuality(_))) {
             let i = st.form.index_of_key(a.key()).expect("every row keeps its key");
@@ -1274,6 +1353,7 @@ mod focus_tests {
             current: plx_media::route::Quality::Auto,
             pages: PageStack::new(),
             motion: PanelMotion::new(),
+            shield: ShieldPresentation::default(),
         }
     }
 
@@ -1373,7 +1453,7 @@ mod focus_tests {
             let _guard = language_on_this_thread_for_test(language);
             for q in plx_media::route::QUALITY_LADDER {
                 let mut root = MoreMenuState::new(&ps);
-                root.form.set(root_form(&ps, &rows, false, q), None);
+                root.form.set(root_form(&ps, &rows, false, q, false), None);
                 check(language.tag(), &root.form);
                 let mut page = MoreMenuState::new(&ps);
                 page.current = q;

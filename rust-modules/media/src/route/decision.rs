@@ -8208,6 +8208,23 @@ pub fn retry_current_play(
     request_play_inner(ps, meta, request, Some(retry), None, true)
 }
 
+/// **Resolve the current item again from `resume_ns` under the context it plays in now** — the
+/// Shield post-play page's replay of an episode that has ended. [`retry_current_play`] is a failed
+/// start's rescue and suppresses an audio enhancement the failed route carried; a replay is no
+/// failure, so it keeps the viewer's.
+pub fn replay_current_play(
+    ps: &mut PlaybackSession,
+    meta: &mut plx_data::stores::metadata::MetadataStore,
+    resume_ns: i64,
+) -> bool {
+    let Some(request) = ps.request.clone() else {
+        crate::player::log("playback replay: no Plex request descriptor");
+        return false;
+    };
+    let replay = current_retry_context(ps, resume_ns);
+    request_play_inner(ps, meta, request, Some(replay), None, true)
+}
+
 /// [`rescue_retry_context`] with the failed attempt's Direct Play mode optionally replaced — the
 /// one place a retry can resolve under a different mode than the attempt it repeats.
 fn retry_context_with(ps: &PlaybackSession, resume_ns: i64, direct_play: Option<DirectPlayMode>) -> RetryContext {

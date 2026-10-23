@@ -17,11 +17,14 @@
 //! rail beside them, the side panel off their left edge and a More Actions panel at the right
 //! (`screens::detail_more`), SEARCH — the query field and an on-screen keyboard beside the hint
 //! line and a captioned four-column result grid (`shield_search`, `screens::search`'s `shield`),
-//! with no clock — and the WATCHLIST, dressed as the library's Browse grid under its title.
+//! with no clock — and the WATCHLIST, dressed as the library's Browse grid under its title — and
+//! the PLAYER: the transport bar with its round Subtitles and Settings buttons, the right-side
+//! Subtitles and Settings panels (`shield_panel`'s player rows), the Skip pill on its own over the
+//! picture, Plex-style subtitles and the post-play page (`shield_player`, `screens::player`).
 //! Every other page's geometry is unchanged. The swap still applies live: the chrome reads this
-//! value per frame, and Home, the Library and its menu, the Detail page, Search and the Watchlist
-//! latch it at the top of each event and re-dress themselves in place when it changes, so no page
-//! is ever laid out by one layout and drawn by the other.
+//! value per frame, and Home, the Library and its menu, the Detail page, Search, the Watchlist and
+//! the player latch it at the top of each event and re-dress themselves in place when it changes,
+//! so no page is ever laid out by one layout and drawn by the other.
 //!
 //! In a test build the value is per THREAD, so a test that switches the layout cannot change what
 //! a parallel test's dispatcher, chrome or Home step sees. Production is one atomic, written on

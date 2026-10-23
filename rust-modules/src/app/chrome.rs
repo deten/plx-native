@@ -192,41 +192,9 @@ impl ChromeSnapshot {
     }
 }
 
-/// **The Shield layout's clock read-out**: the local time as the clock pill shows it ("9:18 AM"),
-/// re-formatted and re-measured only when the minute turns. Owned beside the chrome publication it
-/// is drawn with; the reading itself is `plx_platform::tv::clock`'s.
-#[derive(Default)]
-pub(crate) struct ClockReadout {
-    minute: Option<plx_platform::tv::clock::LocalTime>,
-    text: std::ffi::CString,
-    width: f32,
-}
-
-impl ClockReadout {
-    /// Read the clock; `true` when the figures changed (the caller asks for a frame).
-    pub(crate) fn refresh(&mut self, measure: &dyn Measure) -> bool {
-        self.show(plx_platform::tv::clock::now(), measure)
-    }
-
-    fn show(&mut self, now: Option<plx_platform::tv::clock::LocalTime>, measure: &dyn Measure) -> bool {
-        if now == self.minute {
-            return false;
-        }
-        self.minute = now;
-        self.text = now.map(|now| {
-            let (hour, pm) = now.twelve_hour();
-            let time = format!("{hour}:{:02}", now.minute);
-            if pm { plx_platform::i18n::msg::browse_clock_pm(&time) } else { plx_platform::i18n::msg::browse_clock_am(&time) }
-        }).and_then(|s| std::ffi::CString::new(s).ok()).unwrap_or_default();
-        self.width = measure.width(&self.text, plx_ui::side_nav::CLOCK_SIZE, false);
-        true
-    }
-
-    /// The figures and their measured width, or `None` when there is no clock to show.
-    pub(crate) fn reading(&self) -> Option<(&std::ffi::CStr, f32)> {
-        self.minute.map(|_| (self.text.as_c_str(), self.width))
-    }
-}
+/// The Shield layout's clock read-out — shared with the Shield player's transport, so it lives in
+/// `plx_appkit::clock_readout`; the chrome owns one instance beside its publication.
+pub(crate) use plx_appkit::clock_readout::ClockReadout;
 
 #[cfg(test)]
 mod tests {
@@ -335,25 +303,6 @@ mod tests {
             "a type the captured strip no longer contains borrows no other position");
         assert_eq!(pill_in(1, 3, |_| None), Pill::Home,
             "an unfilled section slot falls back to the one fixed destination");
-    }
-
-    /// The clock pill reads 12-hour figures and re-formats only when the minute turns.
-    #[test]
-    fn the_clock_reads_twelve_hour_figures_and_changes_with_the_minute() {
-        use plx_platform::tv::clock::LocalTime;
-        let mut clock = ClockReadout::default();
-        assert!(clock.reading().is_none());
-        let at = |hour, minute| Some(LocalTime { hour, minute });
-        assert!(clock.show(at(9, 18), &plx_ui::fixture::FixtureMeasure));
-        assert_eq!(clock.reading().unwrap().0.to_str().unwrap(), "9:18 AM");
-        assert!(!clock.show(at(9, 18), &plx_ui::fixture::FixtureMeasure), "the same minute asks for nothing");
-        assert!(clock.show(at(0, 5), &plx_ui::fixture::FixtureMeasure));
-        assert_eq!(clock.reading().unwrap().0.to_str().unwrap(), "12:05 AM");
-        assert!(clock.show(at(13, 40), &plx_ui::fixture::FixtureMeasure));
-        assert_eq!(clock.reading().unwrap().0.to_str().unwrap(), "1:40 PM");
-        assert!(clock.reading().unwrap().1 > 0.0);
-        assert!(clock.show(None, &plx_ui::fixture::FixtureMeasure));
-        assert!(clock.reading().is_none(), "no clock, no pill");
     }
 
     #[test]

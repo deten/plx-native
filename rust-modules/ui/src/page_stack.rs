@@ -127,6 +127,77 @@ pub trait PopoverPanel {
     fn panel_rect(&self, measure: &dyn Measure) -> Rect;
     /// The card as drawn this frame.
     fn shown_rect(&self, measure: &dyn Measure) -> Rect;
+    /// The page as the Shield layout's player panel lays it out, when it is presented so: then
+    /// every stop, place and group extent below is that panel's, not the card's.
+    fn shield(&self) -> Option<ShieldPage> {
+        None
+    }
+}
+
+/// **A popover's page laid out as the Shield layout's player panel** (`shield_panel`,
+/// [`Kind::Player`](crate::shield_panel::Kind::Player)): its lines on the panel's fixed frame and
+/// the list's scroll.
+#[derive(Clone, Debug)]
+pub struct ShieldPage {
+    pub lines: Vec<crate::shield_panel::Line>,
+    pub scroll: f32,
+}
+
+/// **What a popover keeps to present its pages as the Shield player panel**: whether it does (the
+/// layout, latched by the owning screen at each event) and the list's scroll, which follows focus
+/// ([`crate::shield_panel::scroll_for`]). The rows, keys and actions stay the popover's own; only
+/// the presentation changes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ShieldPresentation {
+    pub on: bool,
+    pub scroll: f32,
+}
+
+impl ShieldPresentation {
+    /// Present (or stop presenting) as the Shield panel; a change starts the list from the top.
+    pub fn set(&mut self, on: bool) {
+        if self.on != on {
+            self.on = on;
+            self.scroll = 0.0;
+        }
+    }
+
+    /// `form`'s page laid out under `title`.
+    pub fn lines<Id: PartialEq + Clone, A: Clone, D: Clone>(form: &FormTable<Id, A, D>, title: &str)
+        -> Vec<crate::shield_panel::Line> {
+        crate::shield_panel::lay_out_for(&form.table.sections, title, crate::shield_panel::Kind::Player)
+    }
+
+    /// The page, when presented as the panel.
+    pub fn page<Id: PartialEq + Clone, A: Clone, D: Clone>(&self, form: &FormTable<Id, A, D>, title: &str)
+        -> Option<ShieldPage> {
+        self.on.then(|| ShieldPage { lines: Self::lines(form, title), scroll: self.scroll })
+    }
+
+    /// Keep the focused row inside the panel's list window; a new page (`reset`) starts at the top.
+    pub fn follow<Id: PartialEq + Clone, A: Clone, D: Clone>(&mut self, form: &FormTable<Id, A, D>, title: &str,
+        reset: bool) {
+        if reset {
+            self.scroll = 0.0;
+        }
+        let Ok(sel) = usize::try_from(form.table.sel) else { return };
+        if let Some((top, h)) = crate::shield_panel::row_span(&Self::lines(form, title), sel) {
+            self.scroll = crate::shield_panel::scroll_for(top, h, self.scroll);
+        }
+    }
+
+    /// Paint `form`'s page as the panel under `title`, through `p` (the surface's appear alpha):
+    /// its one-of-several rows ([`RowKind::Choice`](crate::form::RowKind::Choice)) wear radios.
+    pub fn draw<Id: PartialEq + Clone, A: Clone, D: Clone>(&self, p: Painter, form: &FormTable<Id, A, D>, title: &str,
+        measure: &dyn Measure) {
+        let choices: Vec<bool> = (0..form.table.n_rows().max(0) as usize)
+            .map(|i| matches!(form.binding_at(i).map(|b| &b.kind), Some(crate::form::RowKind::Choice)))
+            .collect();
+        let marks = crate::shield_panel::Marks { kind: crate::shield_panel::Kind::Player, choices: &choices };
+        let focused = usize::try_from(form.table.sel).ok();
+        crate::shield_panel::draw_with(p, title, &form.table.sections, &Self::lines(form, title), focused, self.scroll,
+            marks, measure);
+    }
 }
 
 /// The popover's one `Column` group: UP/DOWN stop at the ends; LEFT (pop a page) and RIGHT (enter
@@ -144,7 +215,7 @@ pub fn popover_groups<S: PopoverPanel>(
         seat: Seat::Remembered,
         reachable: AxisMask::VERTICAL,
         edge: [EdgeRule::Stop, EdgeRule::Stop, EdgeRule::Screen, EdgeRule::Screen],
-        extent: s.panel_rect(measure),
+        extent: if s.shield().is_some() { crate::shield_panel::PANEL } else { s.panel_rect(measure) },
         len: s.form().focusable_len(),
         elem: ElemKind::Bare,
     });
@@ -189,6 +260,12 @@ pub fn popover_place<S: PopoverPanel, E: IndexElem>(
     key: &E,
     measure: &dyn Measure,
 ) -> Option<Placed> {
+    if let Some(page) = s.shield() {
+        // the Shield panel has no title band to click: the title is the panel's own heading
+        let i = s.form().index_of_key(RowKey(key.index()?))?;
+        let rect = crate::shield_panel::row_rect(&page.lines, i, page.scroll)?;
+        return Some(Placed { rect, rest_rect: rect, clip: crate::shield_panel::list_clip(), index: Some(i as u32) });
+    }
     let natural = s.panel_rect(measure);
     let clip = s.shown_rect(measure);
     let dx = s.motion().live_dx();
@@ -223,6 +300,23 @@ pub fn popover_register_stops<S: PopoverPanel, H: Host>(
     H::Elem: IndexElem,
 {
     let p = Painter::root();
+    if let Some(page) = s.shield() {
+        let form = s.form();
+        let clip = crate::shield_panel::list_clip();
+        for i in 0..form.table.n_rows().max(0) as usize {
+            let (Some(key), Some(rect)) = (form.key_at(i), crate::shield_panel::row_rect(&page.lines, i, page.scroll))
+            else { continue };
+            f.stop(p, Stop {
+                key: FocusKey { entry, elem: H::Elem::of_index(key.0) },
+                rect,
+                rest_rect: rect,
+                clip,
+                hover: Hover::Focus,
+                activate: Activate::Direct,
+            });
+        }
+        return;
+    }
     let r = s.panel_rect(f.measure);
     let dx = s.motion().live_dx();
     let clip = s.shown_rect(f.measure);

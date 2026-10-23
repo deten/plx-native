@@ -22,9 +22,12 @@
 #![allow(dead_code)]
 
 pub mod chapters_panel;
+pub mod clock_readout; // the Shield layout's wall clock (the chrome's pill and the player's transport)
 pub mod info_panel;
 pub mod more_menu; // the player's `…` overflow popover (holds the Stats for nerds toggle)
 pub mod player_hud;
+pub mod player_settings; // the Shield layout's player Settings panel and its Playback Options page
+pub mod shield_hud; // the Shield layout's player chrome over the live session: transport, Skip pill, post-play page
 pub mod skip_pill; // the Skip Intro / Skip Credits pill — a `ControlSlot` occupant of the player HUD's control row
 pub mod source_list; // the Sources ROW MODEL, shared by the Library panel and that route
 pub mod timing_capsule; // the on-video Subtitle Timing capsule (plan `subtitle-menu-capsule` §4)

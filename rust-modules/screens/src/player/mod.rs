@@ -21,12 +21,20 @@
 //! Two fields are PUBLISHED rather than owned by `player::TX` (§2.3): `hud.until` and `scrub.ns`.
 //! [`PlayerScreen::publish`] mirrors both into the atomics the draw path and the engine read, and
 //! is the only writer of either.
+//!
+//! **In the Shield layout** the same instance wears the Plex app's transport, Skip pill and
+//! post-play page over the same state (`shield`, whose doc maps every Standard control and each
+//! Next episode mode); the layout is latched at the top of every event, so a frame is never laid
+//! out by one layout and drawn by the other.
 
 mod ass_subtitles;
 pub mod input;
 pub mod overlay;
 #[cfg(test)]
 mod overlay_tests;
+pub mod shield;
+#[cfg(test)]
+mod shield_tests;
 
 use std::borrow::Cow;
 
@@ -154,6 +162,16 @@ pub struct PlayerScreen {
     failure_up: bool,
     /// The transport clocks' prewarm memo — a render resource, not logical state (`prepare`).
     clock_warm: plx_appkit::player_hud::ClockWarm,
+    /// The Shield layout, latched at the top of every event (`shield::latch_shield`).
+    shield: bool,
+    /// The Shield post-play page.
+    pub post: shield::PostPlay,
+    /// The Shield Skip pill's offer clock, and whether this frame drew it (its stop's gate).
+    skip: shield::SkipPill,
+    skip_drawn: bool,
+    /// The Shield transport's wall clock and the bar's span as last drawn (render memos).
+    clock: plx_appkit::clock_readout::ClockReadout,
+    bar_span: (f32, f32),
 }
 
 impl PlayerScreen {
@@ -179,6 +197,12 @@ impl PlayerScreen {
             failure_sel: 0,
             failure_up: false,
             clock_warm: Default::default(),
+            shield: plx_ui::layout::shield(),
+            post: shield::PostPlay::default(),
+            skip: shield::SkipPill::default(),
+            skip_drawn: false,
+            clock: Default::default(),
+            bar_span: (plx_ui::shield_player::ELAPSED_X, plx_ui::shield_player::RIGHT),
         }
     }
 
@@ -216,6 +240,7 @@ impl PlayerScreen {
             self.hud.dismissed = false;
             self.hud.last_offer = None;
             self.up_next.reset();
+            self.post = shield::PostPlay::default();
         }
         self.publish();
     }
@@ -305,6 +330,9 @@ impl PlayerScreen {
     /// transport's MIDDLE, which an open Info card or Chapters strip hides.
     fn group_drawn(&self, g: GroupId, hud_drawn: bool) -> bool {
         let failed = player_hud::readout_owns_frame(self.busy);
+        if let Some(drawn) = self.shield.then(|| self.shield_group_drawn(g)).flatten() {
+            return drawn;
+        }
         match g {
             GROUP_REPAIR => self.repair_alert.is_open() && self.repair_alert.settled(),
             GROUP_FAILURE => !self.repair_alert.visible() && player_hud::failure_row_drawn(self.busy),
@@ -316,6 +344,9 @@ impl PlayerScreen {
 
     /// Element `i` of group `g` — the inverse of `group_of`.
     fn elem_of(g: GroupId, i: u32) -> u32 {
+        if let Some(elem) = Self::shield_elem_of(g, i) {
+            return elem;
+        }
         match g {
             GROUP_SCRUB => player_hud::ELEM_SCRUB,
             GROUP_ROW => player_hud::ELEM_ROW_BASE + i,
@@ -391,6 +422,7 @@ impl PlayerScreen {
             ControlSlot::Skip(_) => 2,
             ControlSlot::UpNext(_) => 3,
         });
+        mix(self.shield_fingerprint(hud_up, now));
         mix(match plx_appkit::player_hud::busy(ps) {
             plx_appkit::player_hud::Busy::None => 1,
             plx_appkit::player_hud::Busy::Transport => 2,
@@ -493,6 +525,7 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
     /// this the stop landed on `key_ok`'s final `else` and toggled play/pause, and the drag flag
     /// was a field of the loop's pointer machine whose producer had become unreachable.
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        self.latch_shield(fx);
         if self.repair_alert.visible() {
             match ev {
                 ScreenEvent::FocusMoved { to, .. } => {
@@ -550,7 +583,8 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Machine<H> for PlayerScreen 
                 // …and the Up Next countdown, which arms on APPEARANCE and is dropped with the
                 // segment. Stepped for the whole route, not per-overlay: the countdown must keep
                 // running whichever panel is up (`up_next::tick`).
-                self.up_next.tick(self.slot, tick.ms);
+                self.up_next.tick_offered(self.offers_up_next(), tick.ms);
+                self.shield_tick(cx, tick.ms);
                 // The scrub gesture's whole per-frame half — `app/run.rs`'s old
                 // per-loop-iteration block, now on this screen's own Tick: the continuous
                 // accelerating advance with its lost-keyup safety commit, then the tap debounce.
@@ -684,6 +718,11 @@ impl PlayerScreen {
             Self::ask(fx, PlayerReq::Transport(None));
             return Handled::Yes;
         };
+        if self.shield {
+            if let Some(handled) = self.shield_click(elem, now, fx) {
+                return handled;
+            }
+        }
         // A click on a control is a fresh interaction with the transport, exactly as a key is: it
         // re-arms the linger. Without it a pointer that had rested still for most of the 4.5 s
         // could click a disc whose deferred press (~210 ms) then committed AFTER the auto-hide had
@@ -737,7 +776,12 @@ impl PlayerScreen {
     /// `scrub_frac_x` is x-only on purpose: an engaged drag tracks the pointer even when it
     /// wanders off the band vertically, which is why the drag arm below never re-tests the hit.
     fn pointed_ns(&self, x: f32, duration_ns: i64) -> i64 {
-        let frac = player_hud::scrub_frac_x(x) as f64;
+        let frac = if self.shield {
+            let (x0, x1) = self.bar_span;
+            if x1 > x0 { ((x - x0) / (x1 - x0)).clamp(0.0, 1.0) as f64 } else { 0.0 }
+        } else {
+            player_hud::scrub_frac_x(x) as f64
+        };
         Scrub::clamp_target((frac * duration_ns as f64) as i64, duration_ns)
     }
 
@@ -824,6 +868,11 @@ impl PlayerScreen {
             }
             // Swallowed either way: that is what "the read-out owns the frame" means.
             return Handled::Yes;
+        }
+        if self.shield {
+            if let Some(handled) = self.shield_key(key, edge, now, fx) {
+                return handled;
+            }
         }
         match key {
             Key::Play | Key::Pause | Key::PlayPause => {
@@ -966,7 +1015,7 @@ impl PlayerScreen {
             }
             input::ScrubPress::Row => {
                 self.hud.nav.btn =
-                    (self.hud.nav.btn + if fwd { 1 } else { -1 }).clamp(0, self.slot.items() - 1);
+                    (self.hud.nav.btn + if fwd { 1 } else { -1 }).clamp(0, self.row_items() - 1);
             }
             input::ScrubPress::Tabs => {
                 let max_tab = if plx_appkit::chapters_panel::has_chapters(meta) { 1 } else { 0 };
@@ -1189,40 +1238,47 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Focusable<H> for PlayerScree
                 reachable: AxisMask::BOTH, edge: [EdgeRule::Stop; 4], extent: self.repair_rect(false, cx.measure).union(self.repair_rect(true, cx.measure)), len, elem: plx_ui::screen::ElemKind::Control });
             return;
         }
-        out.push(GroupSpec {
-            id: GROUP_SCRUB,
-            kind: GroupKind::Free,
-            seat: Seat::First,
-            reachable: AxisMask::BOTH,
-            edge: [EdgeRule::Screen; 4],
-            extent: player_hud::scrub_hit_rect(),
-            len: 1,
-            elem: plx_ui::screen::ElemKind::Control,
-        });
-        // Every item of whatever occupies the row — the Up Next PAIR included, which is two
-        // controls the D-pad walks and so two stops (`ControlSlot::item_rect`).
-        let row_len = self.slot.items().max(1) as usize;
-        out.push(GroupSpec {
-            id: GROUP_ROW,
-            kind: GroupKind::Row { wrap: false },
-            seat: Seat::First,
-            reachable: AxisMask::BOTH,
-            edge: [EdgeRule::Screen; 4],
-            extent: player_hud::ctrl_row_hit_rect(),
-            len: row_len,
-            elem: plx_ui::screen::ElemKind::Control,
-        });
-        let has_ch = plx_appkit::chapters_panel::has_chapters(H::metadata(cx));
-        out.push(GroupSpec {
-            id: GROUP_TABS,
-            kind: GroupKind::Row { wrap: false },
-            seat: Seat::First,
-            reachable: AxisMask::BOTH,
-            edge: [EdgeRule::Screen; 4],
-            extent: player_hud::tab_hit_rect(0, has_ch, cx.measure).unwrap_or(Rect::FULL),
-            len: if has_ch { 2 } else { 1 },
-            elem: plx_ui::screen::ElemKind::Control,
-        });
+        if self.shield {
+            self.shield_groups(cx, out);
+            if self.post.shown {
+                return;
+            }
+        } else {
+            out.push(GroupSpec {
+                id: GROUP_SCRUB,
+                kind: GroupKind::Free,
+                seat: Seat::First,
+                reachable: AxisMask::BOTH,
+                edge: [EdgeRule::Screen; 4],
+                extent: player_hud::scrub_hit_rect(),
+                len: 1,
+                elem: plx_ui::screen::ElemKind::Control,
+            });
+            // Every item of whatever occupies the row — the Up Next PAIR included, which is two
+            // controls the D-pad walks and so two stops (`ControlSlot::item_rect`).
+            let row_len = self.slot.items().max(1) as usize;
+            out.push(GroupSpec {
+                id: GROUP_ROW,
+                kind: GroupKind::Row { wrap: false },
+                seat: Seat::First,
+                reachable: AxisMask::BOTH,
+                edge: [EdgeRule::Screen; 4],
+                extent: player_hud::ctrl_row_hit_rect(),
+                len: row_len,
+                elem: plx_ui::screen::ElemKind::Control,
+            });
+            let has_ch = plx_appkit::chapters_panel::has_chapters(H::metadata(cx));
+            out.push(GroupSpec {
+                id: GROUP_TABS,
+                kind: GroupKind::Row { wrap: false },
+                seat: Seat::First,
+                reachable: AxisMask::BOTH,
+                edge: [EdgeRule::Screen; 4],
+                extent: player_hud::tab_hit_rect(0, has_ch, cx.measure).unwrap_or(Rect::FULL),
+                len: if has_ch { 2 } else { 1 },
+                elem: plx_ui::screen::ElemKind::Control,
+            });
+        }
         if matches!(
             self.busy,
             plx_appkit::player_hud::Busy::Readout(plx_ui::widgets::StatusKind::Failed, _)
@@ -1245,6 +1301,9 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Focusable<H> for PlayerScree
         use player_hud::{ELEM_FAILURE_BASE, ELEM_FAILURE_END, ELEM_ROW_BASE, ELEM_SCRUB, ELEM_TAB_BASE};
         if self.repair_alert.visible() {
             return matches!(*key, REPAIR_CANCEL | REPAIR_CONFIRM).then_some(GROUP_REPAIR);
+        }
+        if let Some(g) = Self::shield_group_of(*key) {
+            return Some(g);
         }
         match *key {
             e if e == ELEM_SCRUB => Some(GROUP_SCRUB),
@@ -1273,6 +1332,11 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Focusable<H> for PlayerScree
             let rect = self.repair_rect(*key == REPAIR_CONFIRM, cx.measure);
             return Some(Placed { rect, rest_rect: rect, clip: Rect::FULL, index: None });
         }
+        if self.shield {
+            if let Some(placed) = self.shield_place(*key, cx) {
+                return placed;
+            }
+        }
         let rect = match *key {
             e if e == ELEM_SCRUB => player_hud::scrub_hit_rect(),
             e if (ELEM_ROW_BASE..ELEM_TAB_BASE).contains(&e) => {
@@ -1300,7 +1364,7 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Focusable<H> for PlayerScree
             GROUP_TABS => player_hud::ELEM_TAB_BASE,
             GROUP_FAILURE => player_hud::ELEM_FAILURE_BASE,
             GROUP_REPAIR => REPAIR_CANCEL,
-            _ => player_hud::ELEM_SCRUB,
+            g => Self::shield_elem_of(g, 0).unwrap_or(player_hud::ELEM_SCRUB),
         };
         FocusKey { entry: self.entry, elem }
     }
@@ -1328,6 +1392,7 @@ impl LogicalState for PlayerScreen {
             c.u32(o.entry.0);
         });
         c.bool(self.repair_alert.is_open()).bool(self.repair_alert.choice() == plx_ui::decision_alert::Choice::Destructive).u32(self.repair_scroll);
+        self.write_shield(c);
     }
     fn probe(&self, out: &mut String) {
         out.push_str(WORD);
@@ -1388,7 +1453,9 @@ impl<H: PlayerLike + crate::registry::MetadataLike> Screen<H> for PlayerScreen {
         // what the element means — including the scrubber, whose meaning needs the click's `x`
         // and so cannot be carried by a bare `ScreenEvent::Activate` at all.
         let hud_drawn = self.hud_drawn(ps, now);
-        if hud_drawn {
+        if self.shield {
+            self.draw_shield(f.cx, f.measure, now, hud_drawn);
+        } else if hud_drawn {
             self.draw_hud(ps, now, f.measure, H::metadata(f.cx));
         }
         // The read-out is NOT transport chrome — it is drawn whether or not the HUD is up, so a

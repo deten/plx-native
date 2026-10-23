@@ -1083,5 +1083,44 @@
   "widgets.failure.change_quality": {
     "value": "Change quality",
     "description": "Failed-playback button: opens the quality ladder; picking a rung retries at it."
+  },
+  "widgets.player.settings": {
+    "value": "Settings",
+    "description": "Title of the Shield player's Settings panel (quality, subtitles, audio and playback options), opened from the round gear button over the playbar."
+  },
+  "widgets.player.playback_options": {
+    "value": "Playback Options",
+    "description": "Row and page title in the Shield player's Settings panel: the page holding the dialogue boost, loudness and statistics switches."
+  },
+  "widgets.player.boost_detail": {
+    "value": "Make speech easier to hear",
+    "description": "Second line under the Boost dialog switch in the Shield player's Playback Options page. Keep it short: one line beside a switch."
+  },
+  "widgets.player.loudness_detail": {
+    "value": "Even out loud and quiet scenes",
+    "description": "Second line under the Normalize loudness switch in the Shield player's Playback Options page. Keep it short: one line beside a switch."
+  },
+  "widgets.player.tag_hdr": {
+    "value": "HDR",
+    "description": "Media tag after the playing item's year and runtime on the Shield player's transport: the picture is high dynamic range. A format name; keep it untranslated."
+  },
+  "widgets.postplay.just_played": {
+    "value": "Just Played",
+    "description": "Heading over the episode that just ended on the Shield post-play page; selecting it plays the episode again from the start."
+  },
+  "widgets.postplay.up_next": {
+    "value": "Up Next",
+    "description": "Heading over the next episode on the Shield post-play page, while no countdown runs."
+  },
+  "widgets.postplay.on_deck": {
+    "value": "On Deck",
+    "description": "Heading over the row of items in progress (Continue Watching) on the Shield post-play page."
+  },
+  "widgets.postplay.up_next_count": {
+    "value": "Up Next · {seconds}",
+    "description": "Heading over the next episode on the Shield post-play page while its countdown runs: the seconds left before it starts on its own.",
+    "args": {
+      "seconds": "i64"
+    }
   }
 }

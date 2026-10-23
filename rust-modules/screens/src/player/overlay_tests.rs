@@ -1151,10 +1151,54 @@ fn every_kind_is_listed_once() {
         | OverlayKind::Info
         | OverlayKind::Chapters
         | OverlayKind::More { .. }
-        | OverlayKind::Timing => OverlayKind::ALL.iter().any(|a| a.slot() == k.slot()),
+        | OverlayKind::Timing
+        | OverlayKind::Settings => OverlayKind::ALL.iter().any(|a| a.slot() == k.slot()),
     };
     let mut slots: Vec<u8> = OverlayKind::ALL.iter().map(|k| k.slot()).collect();
     slots.sort_unstable();
     assert_eq!(slots, (0..OverlayKind::ALL.len() as u8).collect::<Vec<_>>());
     assert!(OverlayKind::ALL.into_iter().all(listed));
+}
+
+/// **The Shield panels** (`plx_ui::layout::shield()`): the Settings panel asks for the other panels
+/// OVER itself (Subtitles, Audio, Quality), pushes Playback Options and walks back out one page at
+/// a time before BACK closes it; the track menu opened by the Subtitles button stays on its tab at
+/// a root (no tab switch); the Quality panel closes on BACK; and none of them dims the picture.
+#[test]
+fn the_shield_settings_panel_opens_the_others_over_itself_and_backs_out_page_by_page() {
+    use plx_appkit::player_settings::SetRow;
+    use plx_ui::consts::{SDLK_LEFT, SDLK_RIGHT};
+    use plx_ui::screen::Screen;
+    let _g = plx_base::testlock::serial();
+    plx_ui::layout::with_shield(|| {
+        let ps = plx_media::route::PlaybackSession::IDLE;
+        let meta = plx_data::stores::metadata::MetadataStore::default();
+        let mut page = PlayerOverlayScreen::new(&ps, meta.view(), ENTRY, OverlayKind::Settings);
+        assert_eq!(Screen::<TestHost>::scrim(&page).alpha, 0.0, "a Shield panel stands beside the picture undimmed");
+        for (row, kind) in [(SetRow::Subtitles, OverlayKind::Tracks { tab: 1 }), (SetRow::Audio, OverlayKind::Tracks { tab: 0 })] {
+            let (_, reqs, dismissed) = activate(&mut page, row.key().0);
+            assert!(!dismissed, "{row:?}: Settings stays under the panel it opens");
+            assert!(reqs.contains(&PlayerReq::OpenOverlay(kind)), "{row:?}: {reqs:?}");
+        }
+        let (_, _, dismissed) = activate(&mut page, SetRow::Options.key().0);
+        assert!(!dismissed);
+        let Panel::Settings(settings) = page.panel() else { panic!("Settings") };
+        assert_eq!(settings.page(), Some(plx_appkit::player_settings::SetPage::Options));
+        let (_, _, dismissed) = press(&mut page, 0, WCODE_BACK, Edge::Down);
+        assert!(!dismissed, "BACK on Playback Options returns to Settings");
+        let Panel::Settings(settings) = page.panel() else { panic!("Settings") };
+        assert_eq!((settings.page(), settings.selected()), (None, Some(SetRow::Options)));
+        let (_, _, dismissed) = press(&mut page, 0, WCODE_BACK, Edge::Down);
+        assert!(dismissed, "BACK on the root closes the panel");
+
+        let mut subs = PlayerOverlayScreen::new(&ps, meta.view(), ENTRY, OverlayKind::Tracks { tab: 1 });
+        assert_eq!(Screen::<TestHost>::scrim(&subs).alpha, 0.0);
+        press_at_edge(&mut subs, SDLK_LEFT);
+        press_at_edge(&mut subs, SDLK_RIGHT);
+        assert_eq!(subs.tracks_probe().map(|(tab, depth, _)| (tab, depth)), Some((1, 0)), "no tab switch in the Shield panel");
+
+        let mut quality = PlayerOverlayScreen::new(&ps, meta.view(), ENTRY, OverlayKind::More { quality: true });
+        let (_, _, dismissed) = press(&mut quality, 0, WCODE_BACK, Edge::Down);
+        assert!(dismissed, "the Quality panel closes back onto Settings");
+    });
 }

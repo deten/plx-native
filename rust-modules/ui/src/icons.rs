@@ -256,6 +256,14 @@ pub enum Icon {
     MoreVertical,
     /// An open bracket lying on its back — the on-screen keyboard's space bar (`shield_search`).
     Space,
+    // ---- the Shield layout's player (`shield_player`) ----
+    //
+    // Our own drawings at the navigation family's 2-unit stroke.
+    /// An arrow heading LEFT along the top that curls round and returns underneath — the glyph
+    /// slot while a hop or a hold travels backwards, beside the seconds it has gathered.
+    JumpBack,
+    /// [`Icon::JumpBack`] mirrored: travelling forwards.
+    JumpForward,
 }
 
 /// **Where a mark's INK sits inside its 24-unit viewBox**, as `(left, right)` fractions — and
@@ -352,6 +360,8 @@ fn src(id: Icon) -> &'static str {
         Icon::Gear => include_str!("../../../assets/icons/gear.svg"),
         Icon::MoreVertical => include_str!("../../../assets/icons/more-vertical.svg"),
         Icon::Space => include_str!("../../../assets/icons/space.svg"),
+        Icon::JumpBack => include_str!("../../../assets/icons/jump-back.svg"),
+        Icon::JumpForward => include_str!("../../../assets/icons/jump-forward.svg"),
     }
 }
 
@@ -583,7 +593,7 @@ mod ink_tests {
     #[test]
     fn the_shield_navigation_marks_rasterize_clean_at_their_draw_sizes() {
         for id in [Icon::Home, Icon::Menu, Icon::Film, Icon::Tv, Icon::Gear, Icon::MoreVertical, Icon::Space,
-            Icon::Close] {
+            Icon::Close, Icon::JumpBack, Icon::JumpForward] {
             for px in [24, 32] {
                 let rgba = plx_gfx::svg::rasterize(src(id), px, px)
                     .unwrap_or_else(|| panic!("{id:?} failed to rasterize at {px}px"));

@@ -28,6 +28,12 @@
 //! answers for the clamp. This module owns the countdown and nothing else — which is also why the
 //! cancel rule lives at `app.rs`'s one frame block rather than being spread across the key arms.
 //!
+//! **In the Shield layout** the same offer is a full-screen post-play page instead of the tile
+//! (`plx_ui::shield_player`'s, composed by `crate::shield_hud`): the Up Next card holds the focus
+//! the tile's *Next Episode* would and this countdown runs its heading, so its expiry starts the
+//! successor through the same path, and the page is offered at the end of the stream too under
+//! *After credits* (`Countdown::tick_offered`).
+//!
 //! *(A full-screen post-play CARD — show poster, DISPLAY title, countdown ring — was built for the
 //! cross-show case and lives at commit `84ff9328`. It is not here because its trigger does not
 //! exist: `continuous=1` is per-show, and a final episode returns `totalCount=1`, so the queue
@@ -88,7 +94,13 @@ pub fn is_shown(slot: crate::player_hud::ControlSlot) -> bool {
 /// episode on its own. Focus only ever [`cancel`]s it.
 impl Countdown {
 pub fn tick(&mut self, slot: crate::player_hud::ControlSlot, now: u32) {
-    if !is_shown(slot) {
+    self.tick_offered(is_shown(slot), now);
+}
+
+/// [`Self::tick`] for an offer that is not the control row's occupant: the Shield post-play page
+/// held at the end of the stream (`screens::player`), which arms the same countdown.
+pub fn tick_offered(&mut self, offered: bool, now: u32) {
+    if !offered {
         // segment over (or the queue emptied): drop the deadline AND the cancel latch, so the
         // next episode's credits arm normally instead of inheriting this one's refusal
         self.reset();
@@ -159,6 +171,11 @@ fn remaining_ms(&self, now: u32) -> u32 {
     } else {
         left
     }
+}
+
+/// Whole seconds left on a running countdown, rounded up (the post-play heading's "Up Next · 10").
+pub fn seconds_left(&self, now: u32) -> Option<u32> {
+    self.armed().then(|| self.remaining_ms(now).div_ceil(1000))
 }
 
 /// True once the countdown has run out — `app.rs` polls this and starts the next episode.

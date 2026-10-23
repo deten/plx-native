@@ -171,6 +171,8 @@ pub struct QueueRow {
     /// episode of the show the viewer is already watching — so this is the queue row's honest
     /// parse of the container and not a promise about a screen.
     pub poster: String,
+    /// `summary` — the item's own synopsis (the Shield post-play page's next-episode block).
+    pub summary: String,
     pub dur_ms: i64,
     /// `viewOffset` — the resume point, 0 = unwatched/from the start
     pub resume_ms: i64,
@@ -209,6 +211,7 @@ impl QueueRow {
             index: m.index,
             thumb: m.thumb,
             poster: m.grandparent_thumb,
+            summary: m.summary,
             dur_ms: m.duration,
             resume_ms: m.view_offset,
             part,
