@@ -238,7 +238,7 @@ app. To remove the repository, select its address under **Settings** in Homebrew
 You can also install by hand: download the `.ipk` from a [release](../../releases) and install it
 with `ares-install` from LG's webOS developer tools.
 
-The newest test build, [Test 15](../../releases/tag/test-15), carries every feature above. Test
+The newest test build, [Test 16](../../releases/tag/test-16), carries every feature above. Test
 builds are compiled the release way, so the on-screen frame counter that debug builds show is
 left out.
 
@@ -246,6 +246,10 @@ Test builds also keep a playback log at `/tmp/com.beb.plxnative.debug/plxnative-
 (capped at 2 MB, kept across app restarts, cleared when the television restarts). Each episode or
 film records why it ended, such as reaching the end, the Up Next countdown or Back, which helps
 when reporting playback problems.
+
+**Settings > System > Detailed logging** keeps that log in permanent storage, so it survives a
+television restart, and records more: remote key presses and holds, every seek and its cause, the
+text of each subtitle line as it arrives, playback pace, and page changes. It is off by default.
 
 ## Building
 
