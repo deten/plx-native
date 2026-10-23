@@ -15,10 +15,13 @@
 //! DETAIL pages — the movie, show and season pages' header, pill-and-circles action row, media
 //! chips, captioned rows and season strip (`shield_detail`, `screens::detail`'s `shield`), with the
 //! rail beside them, the side panel off their left edge and a More Actions panel at the right
-//! (`screens::detail_more`). Every other page's geometry is unchanged. The swap still applies
-//! live: the chrome reads this value per frame, and Home, the Library and its menu and the Detail
-//! page latch it at the top of each event and re-dress themselves in place when it changes, so no
-//! page is ever laid out by one layout and drawn by the other.
+//! (`screens::detail_more`), SEARCH — the query field and an on-screen keyboard beside the hint
+//! line and a captioned four-column result grid (`shield_search`, `screens::search`'s `shield`),
+//! with no clock — and the WATCHLIST, dressed as the library's Browse grid under its title.
+//! Every other page's geometry is unchanged. The swap still applies live: the chrome reads this
+//! value per frame, and Home, the Library and its menu, the Detail page, Search and the Watchlist
+//! latch it at the top of each event and re-dress themselves in place when it changes, so no page
+//! is ever laid out by one layout and drawn by the other.
 //!
 //! In a test build the value is per THREAD, so a test that switches the layout cannot change what
 //! a parallel test's dispatcher, chrome or Home step sees. Production is one atomic, written on

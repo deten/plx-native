@@ -62,12 +62,16 @@ pub struct GridSpec {
     /// The x of column 0's card.
     pub left: f32,
     pub scroll: ScrollMode,
+    /// Rows above the one a snapped scroll put on [`edge`](Self::edge) stay drawn while any of
+    /// them shows ([`keeping_above`](Self::keeping_above)).
+    pub keep_above: bool,
 }
 
 impl GridSpec {
     /// A grid that scrolls home when focus leaves it.
     pub const fn new(top: f32, edge: f32) -> Self {
-        Self { top, edge, home_when_unfocused: true, cols: COLS, style: STYLE, left: MARGIN_X, scroll: ScrollMode::Own }
+        Self { top, edge, home_when_unfocused: true, cols: COLS, style: STYLE, left: MARGIN_X, scroll: ScrollMode::Own,
+            keep_above: false }
     }
 
     /// `cols` columns of `style` cards starting at x = `left` (a page with an alphabet rail, or
@@ -80,6 +84,13 @@ impl GridSpec {
     /// where it is when focus is elsewhere on the page.
     pub const fn external(self) -> Self {
         Self { scroll: ScrollMode::External, home_when_unfocused: false, ..self }
+    }
+
+    /// A grid whose snapped row stands low enough on the screen to leave the row above it in view
+    /// (the Shield layout's grids hold the focused row at `shield_browse::GRID_FOCUS_ROW_Y`, d02):
+    /// a row above the edge is culled only once no part of it, caption included, is on the screen.
+    pub const fn keeping_above(self) -> Self {
+        Self { keep_above: true, ..self }
     }
 
     fn geom(&self) -> Geom { Geom::of(self.cols, self.left, &self.style) }
@@ -354,9 +365,11 @@ impl Grid {
     }
 
     /// Whether card `i`'s row rests wholly above the content edge: the row over the one a snapped
-    /// scroll put on the edge, which would show its last few pixels there.
+    /// scroll put on the edge, which would show its last few pixels there. A grid
+    /// [`keeping_above`](GridSpec::keeping_above) culls against the screen's top instead.
     fn above_edge(&self, i: usize, bands: &[GridBand]) -> bool {
-        self.cell(i, bands).y + self.spec.style.h <= self.spec.edge - (self.spec.geom().pitch() - self.spec.style.h) + 0.5
+        let edge = if self.spec.keep_above { 0.0 } else { self.spec.edge };
+        self.cell(i, bands).y + self.spec.style.h <= edge - (self.spec.geom().pitch() - self.spec.style.h) + 0.5
     }
 
     /// Where `elem` is: the LIVE drawn rect (pop and press folded in) for `At::Drawn`, the settled

@@ -2460,3 +2460,21 @@ fn shelf_header_press_dips_no_unindexed_member() {
 fn grid_header_press_dips_no_unindexed_member() {
     a_header_press_dips_no_unindexed_member::<Grid>();
 }
+
+/// A grid that snaps its rows to its edge culls the row over the edge, which would show only its
+/// last few pixels there; one keeping the row above in view (the Shield grids hold the focused row
+/// at y 390) paints it while any of it shows and culls it once it is wholly off the screen.
+#[test]
+fn a_grid_keeping_the_row_above_paints_it_while_it_shows() {
+    let spec = GridSpec::new(140.0, 390.0).columns(6, RowStyle::SHIELD_GRID, 127.0).external();
+    let mut snapped = Grid::new(ENTRY, spec);
+    let mut kept = Grid::new(ENTRY, spec.keeping_above());
+    // row 1 held at 390: row 0's cards at -70..290, its caption to ~358
+    snapped.set_page(140.0, 210.0);
+    kept.set_page(140.0, 210.0);
+    assert_eq!(snapped.painted(Painter::root(), 12).start, 6, "the snapping grid culls the row over its edge");
+    assert_eq!(kept.painted(Painter::root(), 12).start, 0, "the row above is in view, so it is painted");
+    // row 2 held at 390: row 0 is far off the top, row 1 shows above the focused row
+    kept.set_page(140.0, 670.0);
+    assert_eq!(kept.painted(Painter::root(), 18).start, 6);
+}

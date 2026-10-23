@@ -16,6 +16,16 @@
 //!   (`widgets::poster_note`); OK or a hold opens a card ([`card::TitleCard`]) with the title, year
 //!   and summary and *Remove from Watchlist*;
 //! - **still being checked**, drawn plainly; a press waits for the answer.
+//!
+//! In the Shield layout (`plx_ui::layout::shield()`) the page is dressed as that layout's library
+//! Browse grid (SHIELD-LAYOUT-SPEC §6.1; the app it follows was not captured on its own list): the
+//! title stands in the tab pills' place with the count beside it, the grid is six captioned
+//! 240x360 posters across from x 127 (`RowStyle::SHIELD_GRID`) on the neutral ground, a row after
+//! the first held at the Browse grid's focus line with the row above in view, and there is no chip
+//! bar, the list having no filter or sort. The cards, their presses, the dimmed *Not on
+//! your server* note and the title card are the same; LEFT off the grid's first column is the side
+//! panel's door (`Rig::edge_surface`). The layout is latched once per event and a switch re-lays
+//! the page in place (`WatchlistScreen::sync_layout`).
 
 mod card;
 #[cfg(test)]
@@ -67,6 +77,11 @@ const HEADING_Y: f32 = plx_ui::consts::GRID_TOP_Y;
 const GRID_TOP: f32 = HEADING_Y + 73.0;
 /// The quiet read-outs' region, where the grid would be.
 const STATUS_FRAME: Rect = Rect { x: MARGIN_X, y: GRID_TOP, w: SCR_W - 2.0 * MARGIN_X, h: 475.0 };
+/// The Shield grid's first row: under the title pill, where the library's Categories tiles start.
+const SHIELD_GRID_TOP: f32 = plx_ui::shield_browse::TILE_TOP;
+/// The Shield read-outs' region, where that grid would be.
+const SHIELD_STATUS_FRAME: Rect = Rect { x: plx_ui::shield::CONTENT_X, y: SHIELD_GRID_TOP,
+    w: plx_ui::shield::CONTENT_RIGHT - plx_ui::shield::CONTENT_X, h: STATUS_FRAME.h };
 
 /// The card a press on `entry` names, by what the servers said about it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +123,9 @@ struct Cards<'a> {
     rows: &'a [PmsMovie],
     elems: &'a [u32],
     note: &'a str,
+    /// The Shield layout's ring cards draw their own resume bar (`shield::draw_card`, from
+    /// `progress`), inset in the card's foot; the overlay does not draw a second.
+    shield: bool,
 }
 
 impl<'a> Cards<'a> {
@@ -129,9 +147,10 @@ impl<H: plx_machine::machine::Host<Elem = u32>> CardSource<H> for Cards<'_> {
         let Some(entry) = self.entries.get(i) else { return };
         match &entry.avail {
             Availability::Missing => widgets::poster_note(p, tile.rect, tile.radius, self.note, measure),
-            Availability::OnServer(row) => {
+            Availability::OnServer(row) if !self.shield => {
                 if let Some(frac) = row.resume_frac() { ui_cards::resume_bar(p, tile.rect, frac, tile.radius); }
             }
+            Availability::OnServer(_) => {}
             Availability::Checking => {}
         }
     }
@@ -152,6 +171,8 @@ struct Page {
     synced: Option<u64>,
     status: WatchlistStatus,
     empty: bool,
+    /// The layout the page is laid out for (`WatchlistScreen::sync_layout`).
+    shield: bool,
 }
 
 impl Page {
@@ -184,7 +205,7 @@ impl Page {
     fn ready(&self) -> bool { self.status == WatchlistStatus::Ready && !self.empty }
 
     fn cards<'a>(&'a self, view: WatchlistView<'a>) -> Cards<'a> {
-        Cards { entries: view.entries(), rows: &self.rows, elems: &self.elems, note: &self.note }
+        Cards { entries: view.entries(), rows: &self.rows, elems: &self.elems, note: &self.note, shield: self.shield }
     }
 
     fn entry_of<'a>(&self, view: WatchlistView<'a>, elem: u32) -> Option<&'a Entry> {
@@ -192,14 +213,18 @@ impl Page {
         view.entry(guid)
     }
 
+    fn status_frame(&self) -> Rect {
+        if self.shield { SHIELD_STATUS_FRAME } else { STATUS_FRAME }
+    }
+
     fn status_overlay<'a>(&self, tick: u32) -> Option<StatusOverlay<'a>> {
         Some(match self.status {
-            WatchlistStatus::Ready if self.empty => StatusOverlay::new(STATUS_FRAME,
+            WatchlistStatus::Ready if self.empty => StatusOverlay::new(self.status_frame(),
                 plx_platform::i18n::msg::browse_watchlist_empty_c(), StatusKind::Empty)
                 .reason(plx_platform::i18n::msg::browse_watchlist_empty_reason_c()),
             WatchlistStatus::Ready => return None,
             // placeholder-exempt: builds the value only; counted where drawn (StatusOverlay::draw_geometry, Working)
-            WatchlistStatus::Idle | WatchlistStatus::Loading => StatusOverlay::new(STATUS_FRAME,
+            WatchlistStatus::Idle | WatchlistStatus::Loading => StatusOverlay::new(self.status_frame(),
                 plx_platform::i18n::msg::browse_watchlist_loading_c(), StatusKind::Working).phase(tick),
             WatchlistStatus::Unavailable => StatusOverlay::new(Rect::FULL,
                 plx_platform::i18n::msg::browse_watchlist_unavailable_c(), StatusKind::Failed)
@@ -229,17 +254,27 @@ impl<H: MetadataLike> StackPage<H> for Page {
             WatchlistStatus::Idle => 0, WatchlistStatus::Loading => 1, WatchlistStatus::Ready => 2,
             WatchlistStatus::Unavailable => 3, WatchlistStatus::Failed => 4,
         };
-        self.synced.unwrap_or(0) << 4 | status << 1 | u64::from(self.empty)
+        self.synced.unwrap_or(0) << 5 | u64::from(self.shield) << 4 | status << 1 | u64::from(self.empty)
     }
 
     fn sections(&self, cx: &Cx<'_, H>, out: &mut Vec<SectionSpec<Sec>>) {
-        out.push(SectionSpec::new(Sec::Head, Kind::Custom { height: GRID_TOP, focusable: false }, HEAD_GROUP).ranked(2));
-        out.push(SectionSpec::new(Sec::Items, Kind::Grid { spec: GridSpec::new(GRID_TOP, HEADING_Y) }, GRID_GROUP));
+        if self.shield {
+            // as the library's Browse grid: a row after the first is held at `GRID_FOCUS_ROW_Y`,
+            // the row above it still in view (d02)
+            let spec = GridSpec::new(SHIELD_GRID_TOP, plx_ui::shield_browse::GRID_FOCUS_ROW_Y)
+                .columns(plx_ui::shield_browse::GRID_COLS, ui_cards::RowStyle::SHIELD_GRID, plx_ui::shield::CONTENT_X)
+                .keeping_above();
+            out.push(SectionSpec::new(Sec::Head, Kind::Custom { height: SHIELD_GRID_TOP, focusable: false }, HEAD_GROUP).ranked(2));
+            out.push(SectionSpec::new(Sec::Items, Kind::Grid { spec }, GRID_GROUP));
+        } else {
+            out.push(SectionSpec::new(Sec::Head, Kind::Custom { height: GRID_TOP, focusable: false }, HEAD_GROUP).ranked(2));
+            out.push(SectionSpec::new(Sec::Items, Kind::Grid { spec: GridSpec::new(GRID_TOP, HEADING_Y) }, GRID_GROUP));
+        }
         let retry = self.status_overlay(cx.tick.ms)
             .filter(|_| self.status == WatchlistStatus::Failed)
             .and_then(|o| o.action_frame_measured(cx.measure));
         out.push(SectionSpec::new(Sec::Status,
-            Kind::Overlay { rect: retry.unwrap_or(STATUS_FRAME), focusable: retry.is_some() }, STATUS_GROUP).ranked(1));
+            Kind::Overlay { rect: retry.unwrap_or(self.status_frame()), focusable: retry.is_some() }, STATUS_GROUP).ranked(1));
     }
 
     fn fallback(&self, _cx: &Cx<'_, H>, out: &mut Vec<Sec>) {
@@ -264,9 +299,10 @@ impl<H: MetadataLike> StackPage<H> for Page {
             edge: [EdgeRule::Stop; 4], extent, len: 1, elem: ElemKind::Bare }
     }
 
-    fn custom_draw(&self, k: Sec, f: &mut DrawFrame<'_, '_, H>, _r: Rect, scroll: f32) {
+    fn custom_draw(&self, k: Sec, f: &mut DrawFrame<'_, '_, H>, r: Rect, scroll: f32) {
         let p = f.painter.alpha(f.page_alpha);
         match k {
+            Sec::Head if self.shield => self.draw_shield_head(p, r, f.measure),
             Sec::Head => {
                 let alpha = (1.0 - scroll / (GRID_TOP - HEADING_Y)).clamp(0.0, 1.0);
                 if alpha > 0.0 && self.status == WatchlistStatus::Ready {
@@ -286,6 +322,24 @@ impl<H: MetadataLike> StackPage<H> for Page {
     }
 }
 
+impl Page {
+    /// **The Shield head**, its top at `r.y` (the document carries it away): the page's title as
+    /// the one selected pill in the tab pills' track, and once the list is up its count in the dark
+    /// box the Browse chip bar's count wears.
+    fn draw_shield_head(&self, p: Painter, r: Rect, measure: &dyn Measure) {
+        use plx_ui::shield_browse as sb;
+        let title = std::ffi::CString::new(plx_platform::i18n::msg::browse_watchlist_title()).unwrap_or_default();
+        let pills = sb::tab_pills(&[measure.width(&title, sb::TAB_SIZE, false)], r.y);
+        sb::draw_tabs(p, &[title.as_c_str()], &pills, Some(0), None);
+        let Some(track) = sb::tab_track(&pills).filter(|_| self.ready()) else { return };
+        let count = std::ffi::CString::new(self.count.as_str()).unwrap_or_default();
+        let w = measure.width(&count, sb::COUNT_SIZE, false);
+        let rect = Rect::new(track.x + track.w + sb::CHIP_GAP, track.cy() - sb::COUNT_H * 0.5,
+            w + 2.0 * sb::COUNT_PAD, sb::COUNT_H);
+        sb::draw_count(p, rect, &count);
+    }
+}
+
 pub struct WatchlistScreen {
     page: Page,
     stack: Stack<Sec>,
@@ -297,6 +351,8 @@ pub struct WatchlistScreen {
     moved: bool,
     ground: PageGround,
     ground_seeded: bool,
+    /// The Shield layout's neutral ground (SHIELD-LAYOUT-SPEC §1.4 bg.neutral); idle in Standard.
+    neutral: plx_ui::shield::HeroGround,
 }
 
 impl LogicalState for WatchlistScreen {
@@ -315,18 +371,33 @@ impl LogicalState for WatchlistScreen {
 
 impl WatchlistScreen {
     pub fn new(entry: EntryId, instance: InstanceId) -> Self {
-        let floor = widgets::TOP_BAR_BOTTOM;
+        let shield = plx_ui::layout::shield();
         Self {
             page: Page { entry, keys: Vec::new(), next_elem: FIRST_CARD_ELEM, elems: Vec::new(), rows: Vec::new(),
-                count: String::new(), note: String::new(), synced: None, status: WatchlistStatus::Idle, empty: true },
-            // The standing strip owns the hits under it; a page that leaves focus rests at its top.
-            stack: Stack::new(entry).home_when_unfocused(true).clipped(Rect::new(0.0, floor, SCR_W, SCR_H - floor)),
+                count: String::new(), note: String::new(), synced: None, status: WatchlistStatus::Idle, empty: true,
+                shield },
+            stack: new_stack(entry, shield),
             card: TitleCard::new(),
             instance,
             moved: false,
             ground: PageGround::new(),
             ground_seeded: false,
+            neutral: plx_ui::shield::HeroGround::new(),
         }
+    }
+
+    /// **Latch the live layout for this event.** A change while the page is up re-lays it in place:
+    /// a fresh document of the new layout's sections (the grid's columns, card style and first row
+    /// all change), its scroll home; each card keeps its element, so a focused card stays focused.
+    fn sync_layout<H: MetadataLike>(&mut self, fx: &mut Effects<'_, H>) {
+        let shield = plx_ui::layout::shield();
+        if shield == self.page.shield {
+            return;
+        }
+        self.page.shield = shield;
+        self.stack = new_stack(self.entry(), shield);
+        self.neutral.reset();
+        fx.invalidate(Provenance::Nav);
     }
 
     fn entry(&self) -> EntryId { self.page.entry }
@@ -401,6 +472,11 @@ impl WatchlistScreen {
         let focused = cx.focus.current.filter(|key| key.entry == self.entry())
             .and_then(|key| self.page.elems.iter().position(|e| *e == key.elem))
             .and_then(|i| self.page.rows.get(i));
+        if self.page.shield {
+            // the neutral pages' fixed ground (SHIELD-LAYOUT-SPEC §9.1): no card keys it
+            self.neutral.update(plx_ui::shield::ground_target(None), t.dt());
+            return;
+        }
         let target = PageGround::page_target(focused.or_else(|| self.page.rows.first()).map(tile_facts::of));
         if self.ground_seeded { self.ground.key_target(target, t.dt()); }
         else { self.ground.jump_target(target); self.ground_seeded = true; }
@@ -425,6 +501,8 @@ impl WatchlistScreen {
 impl<H: MetadataLike> Machine<H> for WatchlistScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        // The layout this event is answered in (`sync_layout`).
+        self.sync_layout(fx);
         let landed = self.resync(cx);
         if landed {
             fx.invalidate(Provenance::Landing(fx.from()));
@@ -488,6 +566,13 @@ impl<H: MetadataLike> Machine<H> for WatchlistScreen {
     }
 }
 
+/// The page's stack: under the Standard bar, the standing strip owns the hits under it; a page
+/// that leaves focus rests at its top. The Shield layout has no bar: the page is the whole screen.
+fn new_stack(entry: EntryId, shield: bool) -> Stack<Sec> {
+    let floor = if shield { 0.0 } else { widgets::TOP_BAR_BOTTOM };
+    Stack::new(entry).home_when_unfocused(true).clipped(Rect::new(0.0, floor, SCR_W, SCR_H - floor))
+}
+
 /// The card's answers first while it is open; the page's stack otherwise.
 impl<H: MetadataLike> Focusable<H> for WatchlistScreen {
     fn groups(&self, cx: &Cx<'_, H>, out: &mut Vec<GroupSpec>) {
@@ -525,7 +610,7 @@ impl<H: MetadataLike> Screen<H> for WatchlistScreen {
     fn prepare(&mut self, _budget: &mut plx_ui::frame::Budget, _cx: &Cx<'_, H>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
         let p = f.painter.alpha(f.page_alpha);
-        self.ground.draw(p, Rect::FULL);
+        if self.page.shield { self.neutral.draw(p) } else { self.ground.draw(p, Rect::FULL) }
         self.stack.view(&self.page).paint(f);
         let entry = self.entry();
         self.card.draw(f, entry);

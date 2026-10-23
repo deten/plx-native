@@ -9,6 +9,7 @@ mod draft;
 pub mod layout;
 mod render;
 mod memory;
+mod shield;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -27,8 +28,8 @@ use plx_ui::frame::Budget;
 use plx_machine::machine::{Canon, Cx, Delivery, Edge, Effects, EntryId, FocusKey, Fx, GroupId,
     Handled, InputKind, InputOwner, InstanceId, Key, LogicalState, Machine, MachineId, TextEdit};
 use plx_machine::present::Provenance;
-use plx_ui::screen::{At, Dir, DrawFrame, EdgeRule, ElemKind, Enter, FocusTarget, GroupKind, GroupSpec,
-    Link, Placed, RenderStrategy, Screen, ScreenEvent, Seat, AxisMask};
+use plx_ui::screen::{At, Dir, DrawFrame, EdgeRule, ElemKind, Enter, FocusTarget, Focusable, GroupKind, GroupSpec,
+    Link, Placed, RenderStrategy, Screen, ScreenEvent, Seat, Step, AxisMask};
 use plx_ui::{Rect, Spring};
 use draft::Draft;
 
@@ -67,8 +68,10 @@ struct Row { kind: Kind, group: GroupId, elems: Vec<u32> }
 
 /// The sections of the page, top to bottom. A result row's key carries the page's `rows_gen`: a
 /// row the page wiped and rebuilt is a new section with a new shelf, as a wiped row always was.
+/// `Heading` is the Shield layout's alone: a result group's heading block over its grid
+/// (`shield.rs`), where the Standard shelf draws its own heading.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Sec { Head, Recents, Clear, Row(Kind, u32) }
+pub enum Sec { Head, Recents, Clear, Heading(Kind, u32), Row(Kind, u32) }
 
 pub struct SearchScreen {
     entry: EntryId,
@@ -104,17 +107,24 @@ pub struct SearchScreen {
     /// "did a store notice reach the top screen" probes stay readable now that `Route::Search`
     /// mounts this screen unconditionally.
     notices: u32,
+    /// The layout this page is laid out for: `plx_ui::layout::shield()`, latched at the top of
+    /// every event by `sync_layout` (`shield.rs`), so one event's focus geometry, document and draw
+    /// agree. Not part of the state hash: the layout is the session's, as on Home and the Library.
+    shield: bool,
+    /// The Shield layout's neutral ground (SHIELD-LAYOUT-SPEC §1.4 bg.neutral); idle in Standard.
+    neutral: plx_ui::shield::HeroGround,
 }
 
 impl SearchScreen {
     pub fn new(entry: EntryId, instance: InstanceId) -> Self {
+        let shield = plx_ui::layout::shield();
         Self { entry, instance, draft: Draft::new(0, ""), mounted: false, editing: false,
-            blink_us: 0, hot: Spring::at(1.0), stack: new_stack(entry), rows_gen: 0,
+            blink_us: 0, hot: Spring::at(1.0), stack: new_stack(entry, shield), rows_gen: 0,
             keys: Vec::new(), next_elem: 10, rows: Vec::new(), recents: Vec::new(), query_gen: 0,
             recent_clear_pending: false, publication: None, content_dirty: true,
             fade: plx_ui::xfade::Xfade::new(), ground: plx_ui::widgets::PageGround::new(),
             owner_row: None, owner: String::new(), owner_alpha: Spring::at(0.0), restored: None, render: Default::default(),
-            notices: 0 }
+            notices: 0, shield, neutral: plx_ui::shield::HeroGround::new() }
     }
     fn key(&self, elem: u32) -> FocusKey<u32> { FocusKey { entry: self.entry, elem } }
     fn real_query(&self) -> bool { plx_data::search::terms(self.draft.query()).is_some() }
@@ -256,6 +266,10 @@ impl SearchScreen {
     }
 
     fn activate<H: SearchLike>(&mut self, elem: u32, held: bool, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        if let Some(i) = shield::key_index(elem).filter(|_| self.shield) {
+            self.type_key(i, fx);
+            return Handled::Yes;
+        }
         if let Some(tab) = elem.checked_sub(plx_ui::dispatch::STRIP_BASE) {
             let request = match tab {
                 0 => SearchReq::Tab(HomeTab::Home), 1 => SearchReq::Tab(HomeTab::Movies),
@@ -329,21 +343,27 @@ impl SearchScreen {
 impl<H: SearchLike> Machine<H> for SearchScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
+        // The layout this event is answered in (`shield::sync_layout`).
+        let relaid = self.sync_layout(cx, fx);
         let store_changed = matches!(ev, ScreenEvent::StoreChanged(store, _) if *store == StoreId::Search.ord());
         if store_changed { self.notices += 1; }
         let acknowledged = matches!(ev, ScreenEvent::Mount) || store_changed;
-        let mut follow = self.sync(cx, acknowledged, fx);
+        let mut follow = self.sync(cx, acknowledged, fx) | relaid;
         if let ScreenEvent::RestoreMemory(PageMemory::Search(memory)) = ev {
             self.restore(memory);
             follow |= self.sync(cx, true, fx);
         }
+        // where the column was headed before the stack heard this event (the Shield keys keep it)
+        let headed = self.stack.target();
         let card = self.stack_on(ev, cx, fx);
-        if follow { self.with_stack(|stack, page| stack.reveal(page, cx)); self.keep_home_while_editing(); }
+        if follow { self.reveal(cx); self.keep_home_while_editing(); }
         match ev {
             ScreenEvent::RestoreMemory(PageMemory::Search(_)) => {}
             ScreenEvent::Mount => {
                 self.fade.mount();
-                self.reseat(FocusTarget::Elem(self.key(FIELD)), fx);
+                // The Shield page opens on its keyboard's first key, ready to type (c01).
+                let seat = if self.shield { self.first_key() } else { self.key(FIELD) };
+                self.reseat(FocusTarget::Elem(seat), fx);
             }
             ScreenEvent::WillLeave(_) | ScreenEvent::Unmount | ScreenEvent::Cover | ScreenEvent::Suspend => self.keyboard(false, false, fx),
             ScreenEvent::Activate(elem) => return self.activate(*elem, false, cx, fx),
@@ -385,7 +405,11 @@ impl<H: SearchLike> Machine<H> for SearchScreen {
                         if *key == Key::Back { self.keyboard(false, false, fx); return Handled::Yes; }
                         if *key == Key::Ok { self.keyboard(false, true, fx); return Handled::Yes; }
                         if *key == Key::Down {
-                            if let Some(group) = self.first_content() {
+                            // The Shield field stands over its own keyboard, not over the results.
+                            if self.shield {
+                                self.keyboard(false, true, fx);
+                                self.reseat(FocusTarget::ContainerGroup(shield::KEYS_GROUP), fx);
+                            } else if let Some(group) = self.first_content() {
                                 self.keyboard(false, true, fx);
                                 self.reseat(FocusTarget::ContainerGroup(group), fx);
                             }
@@ -411,6 +435,7 @@ impl<H: SearchLike> Machine<H> for SearchScreen {
             ScreenEvent::Tick(tick) => self.tick(*tick, cx, fx),
             ScreenEvent::FocusMoved { to, .. } => {
                 if to.elem != FIELD { self.keyboard(false, true, fx); }
+                if self.shield { self.shield_reveal(cx, headed); }
                 self.keep_home_while_editing();
                 fx.invalidate(Provenance::Input);
             }
@@ -435,6 +460,16 @@ impl SearchScreen {
         self.stack = stack;
         got
     }
+    /// Bring the focused element's block into view now (the shelves were replaced under it): the
+    /// stack's reveal, or in the Shield layout the page's own (`shield::shield_reveal`).
+    fn reveal<H: SearchLike>(&mut self, cx: &Cx<'_, H>) {
+        if self.shield {
+            let headed = self.stack.target();
+            self.shield_reveal(cx, headed);
+        } else {
+            self.with_stack(|stack, page| stack.reveal(page, cx));
+        }
+    }
     /// While the keyboard is up the page rests at its head, whatever moves focus.
     fn keep_home_while_editing(&mut self) {
         if self.editing { self.stack.scroll_to(0.0); }
@@ -451,6 +486,11 @@ impl SearchScreen {
 
     pub fn redraw_focused<H: SearchLike>(&self, f: &mut DrawFrame<'_, '_, H>, focus: Option<FocusKey<u32>>) {
         if self.selected_item(focus, f.cx).is_none() { return; }
+        if self.shield {
+            // a result is a grid card, which the stack redraws as it draws it
+            self.stack.view(self).redraw_focused(f, focus);
+            return;
+        }
         let Some(key) = focus else { return };
         let Some(row) = self.rows.iter().position(|model| model.elems.contains(&key.elem)) else { return };
         let painter = f.painter.alpha(f.page_alpha * self.fade.alpha());
@@ -487,6 +527,9 @@ impl SearchScreen {
         match elem {
             Some(FIELD) => ("Field", -1, -1, -1, false),
             Some(CLEAR) => ("Clear", -1, -1, -1, false),
+            // the Shield layout's on-screen keyboard: the key's index in its board order
+            Some(elem) if shield::key_index(elem).is_some() =>
+                ("Keyboard", -1, shield::key_index(elem).map_or(-1, |i| i as i64), -1, false),
             Some(elem) if self.recents.contains(&elem) => {
                 let index = self.recents.iter().position(|e| *e == elem).unwrap_or(0);
                 ("Recents", -1, -1, index as i64, false)
@@ -533,20 +576,25 @@ impl SearchScreen {
     fn row_cards<'a>(&'a self, view: plx_data::search::view::SearchView<'a>, row: usize) -> Option<RowCards<'a>> {
         let model = self.rows.get(row)?;
         Some(RowCards { kind: model.kind, elems: &model.elems, items: &view.shelves().get(row)?.items,
-            sources: view.scope().sources() })
+            sources: view.scope().sources(), shield: self.shield })
     }
     fn tick<H: SearchLike>(&mut self, tick: plx_machine::machine::Tick, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) {
         fx.push(Fx::App(AppFx::StoreWork(plx_data::stores::StoreWork::BrowseDiscovery)));
         fx.push(Fx::App(AppFx::StoreWork(plx_data::stores::StoreWork::Search { dt_us: tick.dt_us })));
         if self.step_blink(tick.dt_us) { fx.invalidate(Provenance::Input); }
         self.fade.tick(tick.dt(), !self.draft.pending() && H::search(cx).state() != plx_data::search::State::Searching);
-        let colours = cx.focus.current.and_then(|key| self.rows.iter().enumerate().find_map(|(row, model)|
-            model.elems.iter().position(|elem| *elem == key.elem).and_then(|col|
-                H::search(cx).shelves().get(row)?.items.get(col)).and_then(|item| match item {
-                    Item::Media(media) if media.has_blur => Some(media.blur),
-                    Item::Collection(hit) if hit.item.has_blur => Some(hit.item.blur), _ => None,
-                })));
-        self.ground.key(colours, plx_ui::widgets::PageGround::CARD_W, tick.dt());
+        if self.shield {
+            // the neutral pages' fixed ground (SHIELD-LAYOUT-SPEC §9.1): no card keys it
+            self.neutral.update(plx_ui::shield::ground_target(None), tick.dt());
+        } else {
+            let colours = cx.focus.current.and_then(|key| self.rows.iter().enumerate().find_map(|(row, model)|
+                model.elems.iter().position(|elem| *elem == key.elem).and_then(|col|
+                    H::search(cx).shelves().get(row)?.items.get(col)).and_then(|item| match item {
+                        Item::Media(media) if media.has_blur => Some(media.blur),
+                        Item::Collection(hit) if hit.item.has_blur => Some(hit.item.blur), _ => None,
+                    })));
+            self.ground.key(colours, plx_ui::widgets::PageGround::CARD_W, tick.dt());
+        }
         let target = cx.focus.current.and_then(|key| self.rows.iter().enumerate().find_map(|(row, model)|
             model.elems.iter().position(|elem| *elem == key.elem).map(|col| (row, col))));
         let view = H::search(cx);
@@ -592,10 +640,12 @@ fn group(id: GroupId, kind: GroupKind, len: usize, extent: Rect, elem: ElemKind,
 
 /// The page's stack: the standing strip owns the hits under it, the scroll follows focus when it
 /// moves (a wheel or a raised keyboard sets it in between), and the page paints through
-/// `render.rs` (the cards fade in with the results).
-fn new_stack(entry: EntryId) -> Stack<Sec> {
+/// `render.rs` (the cards fade in with the results). In the Shield layout the stack is the results
+/// column right of the keyboard, and the page sets its scroll itself (`shield::shield_reveal`).
+fn new_stack(entry: EntryId, shield: bool) -> Stack<Sec> {
     let floor = plx_ui::widgets::TOP_BAR_BOTTOM;
-    Stack::new(entry).hold_hint(plx_ui::hold_hint::Kind::Search).reveal_on_move(true).clipped(Rect::new(0.0, floor, SCR_W, SCR_H - floor))
+    let clip = if shield { shield::results_clip() } else { Rect::new(0.0, floor, SCR_W, SCR_H - floor) };
+    Stack::new(entry).hold_hint(plx_ui::hold_hint::Kind::Search).reveal_on_move(true).clipped(clip)
 }
 
 impl<H: SearchLike> StackPage<H> for SearchScreen {
@@ -606,6 +656,7 @@ impl<H: SearchLike> StackPage<H> for SearchScreen {
         let view = H::search(cx);
         let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
         let mut h = mix(mix(0xcbf2_9ce4_8422_2325, self.rows_gen as u64), self.recents.len() as u64);
+        if self.shield { h = mix(h, 1); }
         for (i, row) in self.rows.iter().enumerate() {
             let shown = view.shelves().get(i).map_or(0, |shelf| shelf.items.len()).min(row.elems.len());
             h = mix(mix(h, layout::ordinal(row.kind) as u64), shown as u64);
@@ -613,6 +664,9 @@ impl<H: SearchLike> StackPage<H> for SearchScreen {
         h
     }
     fn sections(&self, _cx: &Cx<'_, H>, out: &mut Vec<SectionSpec<Sec>>) {
+        if self.shield {
+            return self.shield_sections(out);
+        }
         out.push(SectionSpec::new(Sec::Head, plx_ui::cards::Kind::Custom { height: layout::CONTENT_TOP, focusable: true }, FIELD_GROUP));
         if !self.recents.is_empty() {
             let shown = self.recents.len().min(layout::RECENT_CAP) as f32;
@@ -646,7 +700,8 @@ impl<H: SearchLike> StackPage<H> for SearchScreen {
         match k { Sec::Head => Some(FIELD), Sec::Clear if !self.recents.is_empty() => Some(CLEAR), _ => None }
     }
     fn plain_len(&self, k: Sec) -> usize {
-        match k { Sec::Recents => self.recents.len(), Sec::Head => 1, Sec::Clear => (!self.recents.is_empty()) as usize, Sec::Row(..) => 0 }
+        match k { Sec::Recents => self.recents.len(), Sec::Head => 1, Sec::Clear => (!self.recents.is_empty()) as usize,
+            Sec::Heading(..) | Sec::Row(..) => 0 }
     }
     fn plain_elem(&self, k: Sec, n: usize) -> Option<u32> {
         match k { Sec::Recents => self.recents.get(n).copied(), _ => if n == 0 { StackPage::<H>::elem_of(self, k) } else { None } }
@@ -659,6 +714,14 @@ impl<H: SearchLike> StackPage<H> for SearchScreen {
         }
     }
     fn focus_rect(&self, cx: &Cx<'_, H>, k: Sec, section: Rect) -> Rect {
+        if self.shield {
+            // a group's extent: the recents' rows under their heading, the Clear chip
+            return match k {
+                Sec::Recents => Rect::new(plx_ui::shield_search::RESULTS_X, section.y + plx_ui::shield_search::HEADING_BLOCK,
+                    plx_ui::shield_search::RECENT_W, section.h - plx_ui::shield_search::HEADING_BLOCK),
+                _ => self.shield_element_rect(cx, k, 0, section),
+            };
+        }
         match k {
             Sec::Recents => layout::recent(0, layout::CONTENT_TOP - section.y),
             Sec::Clear => layout::clear_below(section.y, cx.measure),
@@ -666,6 +729,7 @@ impl<H: SearchLike> StackPage<H> for SearchScreen {
         }
     }
     fn element_rect(&self, cx: &Cx<'_, H>, k: Sec, n: usize, section: Rect) -> Rect {
+        if self.shield { return self.shield_element_rect(cx, k, n, section); }
         if k == Sec::Recents { layout::recent(n, layout::CONTENT_TOP - section.y) } else { self.focus_rect(cx, k, section) }
     }
     fn plain_group(&self, _cx: &Cx<'_, H>, k: Sec, id: GroupId, extent: Rect) -> GroupSpec {
@@ -679,10 +743,15 @@ impl<H: SearchLike> StackPage<H> for SearchScreen {
             _ => group(id, GroupKind::Row { wrap: false }, 1, extent, ElemKind::Bare, Seat::First),
         }
     }
-    /// Entered from the field, a group takes the card focus last left on in it, else its first.
-    fn seat_override(&self, cx: &Cx<'_, H>, k: Sec, _from: Placed) -> Option<u32> {
-        if !cx.focus.current.is_some_and(|key| key.elem == FIELD) { return None; }
-        let group = match k { Sec::Recents => RECENTS_GROUP, Sec::Clear => CLEAR_GROUP, Sec::Head => FIELD_GROUP, Sec::Row(kind, _) => layout::group(kind) };
+    /// Entered from the field, a group takes the card focus last left on in it, else its first. In
+    /// the Shield layout a result group entered from anywhere else takes the card nearest the move
+    /// (`shield::shield_seat`): its groups are grids stacked one under another.
+    fn seat_override(&self, cx: &Cx<'_, H>, k: Sec, from: Placed) -> Option<u32> {
+        if !cx.focus.current.is_some_and(|key| key.elem == FIELD) {
+            return self.shield.then(|| self.shield_seat(cx, k, from)).flatten();
+        }
+        let group = match k { Sec::Recents => RECENTS_GROUP, Sec::Clear => CLEAR_GROUP, Sec::Head => FIELD_GROUP,
+            Sec::Heading(kind, _) => shield::heading_group(kind), Sec::Row(kind, _) => layout::group(kind) };
         let valid = |elem: &u32| match k {
             Sec::Row(kind, _) => self.rows.iter().any(|row| row.kind == kind && row.elems.contains(elem)),
             _ => (0..StackPage::<H>::plain_len(self, k)).any(|n| StackPage::<H>::plain_elem(self, k, n) == Some(*elem)),
@@ -698,6 +767,11 @@ impl<H: SearchLike> StackPage<H> for SearchScreen {
     fn reveal_margin(&self, _k: Sec) -> f32 { layout::CONTENT_TOP }
     fn shelf_foot(&self, _k: Sec) -> f32 { plx_ui::consts::UNDER_LABEL_AIR }
     fn wide_extent(&self, _k: Sec) -> bool { false }
+    /// The Shield layout's plain blocks (`shield::shield_custom_draw`); the Standard page paints
+    /// its own through `render.rs` and never asks.
+    fn custom_draw(&self, k: Sec, f: &mut DrawFrame<'_, '_, H>, r: Rect, _scroll: f32) {
+        if self.shield { self.shield_custom_draw(k, f, r); }
+    }
     /// A shown element that went away is replaced by the one now at its slot (the last of a
     /// shrunken group), else the field.
     fn recover(&self, _cx: &Cx<'_, H>, want: &u32) -> Option<u32> {
@@ -712,11 +786,39 @@ impl<H: SearchLike> StackPage<H> for SearchScreen {
     }
 }
 
-plx_ui::focusable_via_view!(SearchScreen, H: [SearchLike], view);
+/// The page's `Focusable`: the stack's view over the page — and in the Shield layout, ahead of it,
+/// the field and the on-screen keyboard, which stand outside the scrolling document (`shield.rs`).
+impl<H: SearchLike> Focusable<H> for SearchScreen {
+    fn groups(&self, cx: &Cx<'_, H>, out: &mut Vec<GroupSpec>) {
+        if self.shield { self.keyboard_groups(out); }
+        self.view::<H>().groups(cx, out);
+    }
+    fn group_of(&self, key: &u32, cx: &Cx<'_, H>) -> Option<GroupId> {
+        self.keyboard_group_of(*key).filter(|_| self.shield).or_else(|| self.view::<H>().group_of(key, cx))
+    }
+    fn neighbour(&self, key: FocusKey<u32>, dir: Dir, cx: &Cx<'_, H>) -> Step<u32> {
+        match self.keyboard_neighbour(key, dir).filter(|_| self.shield) {
+            Some(step) => step,
+            None => self.view::<H>().neighbour(key, dir, cx),
+        }
+    }
+    fn place(&self, key: &u32, cx: &Cx<'_, H>, at: At) -> Option<Placed> {
+        self.keyboard_place(*key).filter(|_| self.shield).or_else(|| self.view::<H>().place(key, cx, at))
+    }
+    fn reconcile(&self, want: FocusKey<u32>, cx: &Cx<'_, H>) -> FocusKey<u32> {
+        if self.shield { self.keyboard_reconcile(want, cx) } else { self.view::<H>().reconcile(want, cx) }
+    }
+    fn seat(&self, g: GroupId, from: Placed, cx: &Cx<'_, H>) -> FocusKey<u32> {
+        match self.keyboard_seat(g, from).filter(|_| self.shield) {
+            Some(key) => key,
+            None => self.view::<H>().seat(g, from, cx),
+        }
+    }
+}
 
 impl SearchScreen {
     /// The page's `Focusable` (see `focusable_via_view!` above): the stack's view over the page.
-    fn view<H: SearchLike>(&self) -> impl plx_ui::screen::Focusable<H> + '_ {
+    fn view<H: SearchLike>(&self) -> impl Focusable<H> + '_ {
         self.stack.view(self)
     }
 }
@@ -735,11 +837,15 @@ impl<H: SearchLike> Screen<H> for SearchScreen {
     fn crumb(&self, _: &Cx<'_, H>) -> Option<Cow<'_, str>> { None }
     fn prepare(&mut self, _: &mut Budget, cx: &Cx<'_, H>) {
         self.render.prepare(self.draft.query(), self.draft.caret(), &self.owner, cx);
+        if self.shield { self.render.shield.prepare(self.draft.query(), self.draft.caret(), cx.measure); }
     }
-    fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) { render::draw(self, f); }
+    fn draw(&mut self, f: &mut DrawFrame<'_, '_, H>) {
+        if self.shield { shield::draw(self, f) } else { render::draw(self, f) }
+    }
     fn render(&self) -> RenderStrategy { RenderStrategy::Page }
     fn memory(&self) -> PageMemory { PageMemory::Search(self.page_memory()) }
     fn links(&self, out: &mut Vec<Link>) {
+        if self.shield { return self.shield_links(out); }
         out.push(Link { from: STRIP, dir: Dir::Down, to: FIELD_GROUP });
         out.push(Link { from: FIELD_GROUP, dir: Dir::Up, to: STRIP });
         if let Some(first) = self.first_content() {

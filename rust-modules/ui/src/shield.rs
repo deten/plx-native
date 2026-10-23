@@ -181,8 +181,13 @@ pub fn heading_text_y(card_top: f32) -> f32 {
 /// row names its source — a quiet `· source` on the title's baseline. Server text: the title elides
 /// at the content's right edge and a source with no room left is dropped.
 pub fn draw_row_heading(p: Painter, title: &str, source: &str, card_top: f32, measure: &dyn Measure) {
-    let bx = heading_box(card_top);
-    let y = heading_text_y(card_top);
+    draw_row_heading_in(p, heading_box(card_top), title, source, measure);
+}
+
+/// [`draw_row_heading`] in the heading box `bx`, for a column other than the rows' own (the Search
+/// page's results, `shield_search::draw_heading`).
+pub fn draw_row_heading_in(p: Painter, bx: Rect, title: &str, source: &str, measure: &dyn Measure) {
+    let y = plx_gfx::text::text_vcenter_y(HEADING_SIZE, 1, bx.cy());
     let title = plx_gfx::text::elide_by(title, bx.w, false, |t| measure.width_str(t, HEADING_SIZE, true));
     let Ok(t) = CString::new(title) else { return };
     let mut dx = p.text(t.as_ptr(), bx.x, y, HEADING_SIZE, theme::SHIELD_HEADING, 0, 1);

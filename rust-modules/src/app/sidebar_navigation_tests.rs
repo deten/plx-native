@@ -294,3 +294,70 @@ fn the_library_reached_from_the_side_panel_seats_its_first_row() {
     });
     plx_plex::plex::reset_servers_for_test();
 }
+
+fn search_probe(d: &Dispatcher<AppHost>) -> Option<(&'static str, i64)> {
+    let entry = d.nav.top_page()?;
+    let page = entry.inst.as_ref()?.screen.as_any()?.downcast_ref::<plx_screens::search::SearchScreen>()?;
+    let (zone, _, col, _, _) = page.probe(page_focus(d));
+    Some((zone, col))
+}
+
+/// Search in Shield, through the real frame: the page opens on its keyboard's first key, RIGHT and
+/// LEFT walk the keys, UP reaches the field, and LEFT off the first key (or off the field) — nothing
+/// left of either — opens the side panel on Search's row.
+#[test]
+fn search_opens_on_its_keyboard_and_left_off_it_opens_the_side_panel() {
+    let _guard = plx_base::testlock::serial();
+    plx_ui::layout::with_shield(|| {
+        for via_field in [false, true] {
+            let mut d = Dispatcher::<AppHost>::new();
+            let mut rig = rig_with_libraries();
+            let route = AppArg::Search;
+            let t = settle(&mut d, &mut rig, &route, 0, 3);
+            assert_eq!(search_probe(&d), Some(("Keyboard", 0)), "the page opens on the first key");
+            let t = press(&mut d, &mut rig, &route, t, Key::Right);
+            assert_eq!(search_probe(&d), Some(("Keyboard", 1)));
+            let t = press(&mut d, &mut rig, &route, t, Key::Left);
+            assert_eq!(search_probe(&d), Some(("Keyboard", 0)));
+            assert!(sidebar(&d).is_none(), "LEFT with a key to its left moves to it");
+            let t = if via_field {
+                let t = press(&mut d, &mut rig, &route, t, Key::Up);
+                assert_eq!(search_probe(&d).map(|(zone, _)| zone), Some("Field"), "UP off the first row: the field");
+                t
+            } else {
+                t
+            };
+            press(&mut d, &mut rig, &route, t, Key::Left);
+            assert!(sidebar(&d).is_some(), "via_field={via_field}: LEFT off the board's edge opens the side panel");
+            assert_eq!(focused_go(&d), Some(Go::Search), "on Search's own row");
+        }
+    });
+}
+
+/// The Watchlist in Shield, through the real frame: LEFT off the grid's first card opens the side
+/// panel on the Watchlist's row.
+#[test]
+fn left_off_the_watchlists_first_card_opens_the_side_panel() {
+    use plx_data::watchlist::{Availability, Entry};
+    let _guard = plx_base::testlock::serial();
+    plx_ui::layout::with_shield(|| {
+        let mut d = Dispatcher::<AppHost>::new();
+        let mut rig = rig_with_libraries();
+        let titles = (0..4).map(|n| Entry {
+            item: plx_plex::plex::discover::WatchItem { guid: format!("plex://movie/w{n}"), kind: "movie".into(),
+                title: format!("Title {n}"), ..Default::default() },
+            avail: Availability::Missing,
+        }).collect();
+        rig.stores.watchlist.install_for_test(titles);
+        let route = AppArg::Watchlist;
+        let t = settle(&mut d, &mut rig, &route, 0, 4);
+        assert_eq!(Bridge::watchlist_focus_index(&d), Some(0), "the grid's first card");
+        let t = press(&mut d, &mut rig, &route, t, Key::Right);
+        assert_eq!(Bridge::watchlist_focus_index(&d), Some(1));
+        let t = press(&mut d, &mut rig, &route, t, Key::Left);
+        assert!(sidebar(&d).is_none());
+        press(&mut d, &mut rig, &route, t, Key::Left);
+        assert!(sidebar(&d).is_some(), "LEFT off the first column opens the side panel");
+        assert_eq!(focused_go(&d), Some(Go::Watchlist));
+    });
+}

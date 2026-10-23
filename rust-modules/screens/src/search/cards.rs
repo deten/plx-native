@@ -17,6 +17,9 @@ pub struct RowCards<'a> {
     pub(super) elems: &'a [u32],
     pub(super) items: &'a [Item],
     pub(super) sources: &'a [ScopeSource],
+    /// The Shield layout's grid: every result a poster (an episode its show's, as that layout's
+    /// rows show one), with no still overlay.
+    pub(super) shield: bool,
 }
 
 impl RowCards<'_> {
@@ -34,10 +37,22 @@ impl<H: SearchLike> CardSource<H> for RowCards<'_> {
         self.elems.iter().position(|elem| elem == e).filter(|&i| i < self.items.len())
     }
     fn art(&self, i: usize) -> Art<'_> {
-        self.items.get(i).map_or(Art::Poster(None), |item| render::tile_art(self.kind, item))
+        match self.items.get(i) {
+            Some(Item::Media(media)) if self.shield => Art::Poster(Some(tile_facts::of(media))),
+            Some(item) => render::tile_art(self.kind, item),
+            None => Art::Poster(None),
+        }
     }
     fn label(&self, i: usize) -> TileLabel {
         match self.items.get(i) {
+            // The Shield grid shows an episode as its show's poster, so its caption names the show
+            // and the episode, as the Standard still's overlay does.
+            Some(Item::Media(media)) if self.shield && self.kind == Kind::Episode => {
+                let facts = tile_facts::of(media);
+                let mut label = TileLabel::title(if facts.show_title.is_empty() { facts.title } else { facts.show_title });
+                label.caption = plx_ui::cards::focused_caption(&facts, false);
+                label
+            }
             Some(item) => TileLabel::titled(item.title(), &render::subtitle(self.kind, item, self.handle(item))),
             None => TileLabel::default(),
         }
@@ -49,7 +64,7 @@ impl<H: SearchLike> CardSource<H> for RowCards<'_> {
         }
     }
     fn overlay(&self, p: Painter, i: usize, tile: &Tile, measure: &dyn Measure) {
-        if let (Kind::Episode, Some(Item::Media(media))) = (self.kind, self.items.get(i)) {
+        if let (Kind::Episode, Some(Item::Media(media)), false) = (self.kind, self.items.get(i), self.shield) {
             plx_ui::widgets::still_overlay(p, &tile_facts::of(media), tile.rect, tile.radius, false, measure);
         }
     }

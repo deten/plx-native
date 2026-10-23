@@ -1,0 +1,6 @@
+<!-- An open bracket lying on its back — the on-screen keyboard's space bar (the Shield layout's
+     Search page). One closed outline, no holes: two 2-unit uprights joined by a 2-unit floor,
+     spanning x 3..21 and y 11..18, wound clockwise like every mark in the set. -->
+<svg viewBox="0 0 24 24" fill="#ffffff">
+  <path d="M 3 11 L 5 11 L 5 16 L 19 16 L 19 11 L 21 11 L 21 18 L 3 18 Z"/>
+</svg>

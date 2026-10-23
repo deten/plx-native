@@ -132,6 +132,9 @@ fn text_event(edit: TextEdit) -> ScreenEvent<HostFixture> {
     ScreenEvent::Input(InputEvent { at: tick(0), source: Source::Script, kind: InputKind::Text(edit) })
 }
 
+#[path = "shield_tests.rs"]
+mod shield_tests;
+
 fn links(screen: &SearchScreen) -> Vec<Link> {
     let mut out = Vec::new();
     <SearchScreen as Screen<HostFixture>>::links(screen, &mut out);

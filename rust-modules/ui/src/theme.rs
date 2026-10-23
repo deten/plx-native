@@ -1317,6 +1317,17 @@ pub const SHIELD_PANEL_VALUE_INK: [f32; 4] = COOL_400;
 /// A trailing value on the focused row's white plate (dark grey).
 pub const SHIELD_PANEL_VALUE_FOCUS_INK: [f32; 4] = with_a(BLACK, 0.60);
 
+// ── Shield Search (`shield_search`: the query field, the on-screen keyboard, the hint line) ─────
+// Measured off the Plex app on Android TV (SHIELD-LAYOUT-SPEC §1.4, §8.1). Focus is the white plate
+// with black ink the library pages use.
+/// A keyboard key's idle plate (control.idle, white ~10%: `#484848` on `#333333` measured).
+pub const SHIELD_KEY_FILL: [f32; 4] = with_a(WHITE, 0.10);
+/// An idle key's glyph, the typed query and a recent search's term.
+pub const SHIELD_KEY_INK: [f32; 4] = WHITE;
+/// The hint line over the results and the empty field's placeholder (`#d3d3d3` measured, white
+/// ~83%): quiet text that prompts rather than reports.
+pub const SHIELD_SEARCH_HINT: [f32; 4] = with_a(WHITE, 0.83);
+
 // ── Review-score marks (detail hero ratings row) ─────────────────────────────
 // These used to be the ONE place the palette borrowed someone else's colour, justified by the
 // badge being a BRAND MARK. That justification is gone with the marks: Rotten Tomatoes' fruit,

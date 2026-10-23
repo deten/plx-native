@@ -441,6 +441,18 @@
     "value": "Clear recent searches",
     "description": "browse search clear"
   },
+  "browse.search.field": {
+    "value": "Search",
+    "description": "The Shield layout's Search page: what the query field above the on-screen keyboard says while nothing is typed. One short word on a line about 290 pixels wide"
+  },
+  "browse.search.hint": {
+    "value": "You can search titles, people and collections…",
+    "description": "The Shield layout's Search page: the quiet line at the top of the results column before anything is typed, saying what a search finds (movies, shows and episodes by title, cast and crew, collections). One line"
+  },
+  "browse.search.recent_heading": {
+    "value": "Recent searches",
+    "description": "The Shield layout's Search page: the heading over the terms this profile searched before, shown in the results column while nothing is typed. Sentence case, like the layout's other headings"
+  },
   "browse.search.failed": {
     "value": "Search didn’t reach the server",
     "description": "browse search failed"

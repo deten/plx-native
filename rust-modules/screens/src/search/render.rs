@@ -31,9 +31,16 @@ pub(super) struct Resources {
     count_keys: [Option<(Kind, usize)>; 5],
     counts: [CString; 5],
     owner: CString,
+    /// The Shield layout's field and keyboard labels (`shield::Res`), prepared only in that layout.
+    pub(super) shield: super::shield::Res,
 }
 
 impl Resources {
+    /// The scope line the Standard field shows under itself (the Shield hint line's once results
+    /// are up).
+    pub(super) fn scope_line(&self) -> Option<&CStr> {
+        self.scope_line.as_deref()
+    }
     pub(super) fn prepare<H: SearchLike>(
         &mut self,
         query: &str,

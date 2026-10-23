@@ -50,6 +50,14 @@ pub(super) fn style(kind: Kind) -> &'static RowStyle {
         _ => &POSTER,
     }
 }
+/// The grid style of `kind`'s group in the Shield layout: captioned posters four across, people as
+/// circles on the same columns.
+pub(super) fn shield_style(kind: Kind) -> &'static RowStyle {
+    match kind {
+        Kind::Person => &RowStyle::SHIELD_SEARCH_PEOPLE,
+        _ => &RowStyle::SHIELD_SEARCH_GRID,
+    }
+}
 /// A shelf block's height under a caption band of `band` px (a shelf's live
 /// [`Shelf::under_band`](plx_ui::cards::Shelf::under_band), or [`card_row::under_band`] of a
 /// settled 0 / 1).

@@ -1478,8 +1478,10 @@ impl Rig<AppHost> for Bridge {
         let p = plx_ui::Painter::root().alpha(nav.chrome_alpha);
         if plx_ui::layout::shield() {
             // The Shield layout's chrome: the collapsed rail and the clock, in place of the bar.
+            // Search wears no clock (SHIELD-LAYOUT-SPEC §8.1): its results column runs to the
+            // right edge from the top.
             plx_ui::side_nav::draw_rail(p, self.chrome.profile());
-            if let Some((text, width)) = self.clock.reading() {
+            if let Some((text, width)) = self.clock.reading().filter(|_| *arg != AppArg::Search) {
                 plx_ui::side_nav::draw_clock(p, text, width);
             }
             return;

@@ -84,6 +84,7 @@ pub mod shield; // the Shield layout's content: the focused-item header, its tin
 pub mod shield_browse; // the Shield layout's library pages: page tabs, chip bar, captioned grid, A–Z rail, Categories tiles
 pub mod shield_panel; // the Shield layout's right-side panel: a table menu's rows as full-width pills on a fixed frame
 pub mod shield_detail; // the Shield layout's detail pages: header column, action row, media chips, sections, season strip
+pub mod shield_search; // the Shield layout's Search page: the query field, the on-screen keyboard, the hint line and result grid
 pub mod rec; // RESTRUCTURE (spec §5.3): the recorder — format, bounded writer, loader, TableMeasure
 pub mod replay; // RESTRUCTURE (spec §5.5): `--targets` replay of a recording over the dispatcher
 pub mod screen; // RESTRUCTURE spike (spec §6.1, §7.1): Screen, Focusable, Composed/Part, DrawFrame

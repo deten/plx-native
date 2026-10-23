@@ -215,6 +215,20 @@ impl RowStyle {
         scroll: RowScroll::Reveal,
         ..Self::SHIELD_POSTER
     };
+    /// **The Shield layout's Search results** (SHIELD-LAYOUT-SPEC §8.1): [`Self::SHIELD_GRID`]'s
+    /// captioned posters four across from x 686 on the results' ~292.7 column pitch.
+    pub const SHIELD_SEARCH_GRID: RowStyle = RowStyle {
+        gap: crate::shield_search::RESULTS_GAP,
+        margin_x: crate::shield_search::RESULTS_X,
+        ..Self::SHIELD_GRID
+    };
+    /// …and the people among them: 240 circles on the same columns, ringed on their own curve.
+    pub const SHIELD_SEARCH_PEOPLE: RowStyle = RowStyle {
+        h: crate::shield::CARD_W,
+        radius: crate::shield::CARD_W * 0.5,
+        circular: true,
+        ..Self::SHIELD_SEARCH_GRID
+    };
     /// **The Shield detail page's poster rows** (SHIELD-LAYOUT-SPEC §5.5, §7.2): Seasons, Related
     /// and the collection — [`Self::SHIELD_POSTER`] from the detail column's x 128, every card
     /// captioned under it by the page.

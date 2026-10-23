@@ -324,3 +324,101 @@ fn the_watchlist_text_fits_in_every_language() {
     }
     assert!(over.is_empty(), "Watchlist text that would not fit:\n  {}", over.join("\n  "));
 }
+
+// ---- the Shield layout ---------------------------------------------------------------------------
+
+/// Eight titles: the Shield grid fills its first row and starts a second.
+fn eight() -> Vec<Entry> {
+    let mut out = entries();
+    for n in 0..5 {
+        out.push(Entry { item: item(&format!("plex://movie/demo-{n}"), &format!("Title {n}")), avail: Availability::Missing });
+    }
+    out
+}
+
+/// Where card `elem` rests (no focus, so no pop).
+fn rest_of(screen: &WatchlistScreen, rig: &Rig, elem: u32) -> Rect {
+    Focusable::<WatchlistHost>::place(screen, &elem, &rig.cx(None), At::SpringTarget).expect("a placed card").rect
+}
+
+/// In the Shield layout the list is the library's Browse grid without its chips: six captioned
+/// 240x360 posters across from x 127 on the ~282.6 pitch, the first row under the title pill and
+/// rows 460 apart. LEFT off the first column moves nothing on the page (the dispatcher's edge,
+/// which the side panel answers), and the cards keep their meaning: a title on no server still
+/// opens its card.
+#[test]
+fn the_shield_watchlist_is_the_browse_grid_under_its_title() {
+    plx_ui::layout::with_shield(|| {
+        let rig = Rig::new(eight());
+        let mut screen = mounted(&rig);
+        assert!(screen.page.shield);
+        let elems = screen.page.elems.clone();
+        for (i, x) in [127.0, 410.0, 692.0, 975.0, 1258.0, 1540.0].into_iter().enumerate() {
+            let r = rest_of(&screen, &rig, elems[i]);
+            assert!((r.x - x).abs() < 1.0 && r.y == 140.0 && (r.w, r.h) == (240.0, 360.0), "card {i}: {r:?}");
+        }
+        let r = rest_of(&screen, &rig, elems[6]);
+        assert_eq!((r.x, r.y), (127.0, 600.0), "row two, 460 under row one");
+
+        let owner = InputOwner::Entry(EntryId(9));
+        let first = screen.key(elems[0]);
+        let mut engine = plx_ui::focus::FocusEngine::new();
+        engine.set(owner, first, Some(GRID_GROUP), By::Restore);
+        let mut links = Vec::new();
+        Screen::<WatchlistHost>::links(&screen, &mut links);
+        let outcome = engine.move_dir(owner, &screen, &links, Dir::Left, &rig.cx(Some(first)));
+        assert!(!matches!(outcome, plx_ui::focus::Outcome::Moved { .. }), "LEFT off the first column: the edge");
+        let right = engine.move_dir(owner, &screen, &links, Dir::Right, &rig.cx(Some(first)));
+        assert!(matches!(right, plx_ui::focus::Outcome::Moved { to, .. } if to.elem == elems[1]));
+
+        let key = card_key(&screen, OFF);
+        let out = step(&mut screen, ScreenEvent::PressCommit(PressId(1)), &rig.cx(Some(key)));
+        assert!(requests(&out).is_empty() && screen.card_open(), "a title on no server still opens its card");
+    });
+}
+
+/// A switch while the page is up re-lays it in place, and back: the same element in the Shield
+/// grid's place, then in the Standard grid's again.
+#[test]
+fn a_live_switch_relays_the_watchlist_in_place() {
+    let rig = Rig::new(eight());
+    let mut screen = mounted(&rig);
+    let card = screen.key(screen.page.elems[1]);
+    let standard = rest_of(&screen, &rig, card.elem);
+    assert_eq!(standard.y, GRID_TOP, "the Standard grid under its heading");
+    plx_ui::layout::with_shield(|| {
+        step(&mut screen, ScreenEvent::Tick(Tick { ms: 32, dt_us: 16_667 }), &rig.cx(Some(card)));
+        assert!(screen.page.shield, "the first event after the switch latches it");
+        let r = rest_of(&screen, &rig, card.elem);
+        assert!((r.x - 410.0).abs() < 1.0 && r.y == 140.0, "the Shield grid's second card: {r:?}");
+    });
+    step(&mut screen, ScreenEvent::Tick(Tick { ms: 48, dt_us: 16_667 }), &rig.cx(Some(card)));
+    assert!(!screen.page.shield);
+    assert_eq!(rest_of(&screen, &rig, card.elem), standard);
+}
+
+/// As the library's Browse grid (d02): the first row rests the page at its head, a later row is held
+/// at `GRID_FOCUS_ROW_Y` with the row above it still in view.
+#[test]
+fn the_shield_watchlist_holds_a_later_row_on_the_browse_grids_focus_line() {
+    plx_ui::layout::with_shield(|| {
+        let mut entries = eight();
+        for n in 5..12 {
+            entries.push(Entry { item: item(&format!("plex://movie/demo-{n}"), &format!("Title {n}")), avail: Availability::Missing });
+        }
+        let rig = Rig::new(entries);
+        let mut screen = mounted(&rig);
+        let elems = screen.page.elems.clone();
+        let settle = |screen: &mut WatchlistScreen, elem: u32| {
+            let key = screen.key(elem);
+            step(screen, ScreenEvent::FocusMoved { from: None, to: key, by: By::Dir }, &rig.cx(Some(key)));
+            for n in 0..90 { step(screen, ScreenEvent::Tick(Tick { ms: 32 + n * 16, dt_us: 16_667 }), &rig.cx(Some(key))); }
+            screen.stack.target()
+        };
+        assert_eq!(settle(&mut screen, elems[1]), 0.0, "the first row: the page's head");
+        let row = |n: f32| SHIELD_GRID_TOP + n * plx_ui::shield_browse::GRID_ROW_PITCH - plx_ui::shield_browse::GRID_FOCUS_ROW_Y;
+        assert_eq!(settle(&mut screen, elems[7]), row(1.0), "row two held at y 390");
+        assert_eq!(settle(&mut screen, elems[13]), row(2.0), "row three likewise");
+        assert_eq!(settle(&mut screen, elems[7]), row(1.0), "and back up");
+    });
+}
