@@ -22,6 +22,8 @@
 use super::*;
 use plx_media::player::report::AttemptOrigin;
 mod queue_transport;
+#[cfg(test)]
+mod resume_rewind_tests;
 // The list is what the LOOP still spells, and phase 12 (PX-PLAYER) is why it is short: the scrub
 // gesture's constants and its two pure policies (`scrub_press`, `failed_key_action`) are read by
 // `screens::player` alone now, so re-exporting them here would be this module claiming a
@@ -412,6 +414,16 @@ impl PlaybackResources for LivePlaybackResources {
 
 /// Shared start policy after resource preparation: gate the page push, forward the caller's
 /// origin and return state, and reset/seed the HUD. Used by both ordinary and menu starts.
+///
+/// **Rewind on resume is applied here and nowhere else** ([`launch_resume_ns`]), because this is
+/// the one door every launch the VIEWER chose passes through while its resume point is still a
+/// choice: Resume on a detail page (`ContentReq::Play`, held behind a preview or not), a Continue
+/// Watching card and the item menu's play (`play_item_now_with`), a picked version, the hero and a
+/// launch link's play (`play_loaded_hero`) all arrive with [`Origin::Here`]. What must keep its
+/// position exactly never comes through here as `Here`: Up Next and the queue's Next/Previous call
+/// in with [`Origin::Unchanged`] (`queue_transport::play`), and a retry, reload, recovery rebuild,
+/// seek, track or quality switch and the foreground restore move a session through `route` and
+/// `player::begin_resume` without passing this door at all.
 pub(super) fn start_playback_with<R: PlaybackResources>(
     ps: &mut plx_media::route::PlaybackSession,
     pa: &mut plx_media::player::adapter::PlayerAdapter,
@@ -423,6 +435,7 @@ pub(super) fn start_playback_with<R: PlaybackResources>(
     bridge: &mut super::bridge::Bridge,
     resources: &mut R,
 ) -> bool {
+    let resume_ns = launch_resume_ns(resume_ns, from, plx_media::route::resume_rewind());
     let entering = resources.prepare_start(ps, pa, resume_ns);
     if entering {
         enter_player(pages, bridge, from, ret);
@@ -464,6 +477,22 @@ pub(super) fn start_playback_with<R: PlaybackResources>(
     }
     set_paused(false);
     entering
+}
+
+/// The position a launch starts at: a viewer's own launch ([`Origin::Here`]) resumes `rewind`
+/// earlier (clamped at the start, and a start from the beginning stays at 0), anything else
+/// exactly where it was asked to. See [`start_playback_with`] for why `Origin` is the question.
+fn launch_resume_ns(resume_ns: i64, from: Origin, rewind: plx_plex::plex::session::ResumeRewind) -> i64 {
+    match from {
+        Origin::Here => {
+            let rewound = rewind.apply(resume_ns);
+            if rewound != resume_ns {
+                log(&format!("resume: rewind {}s {}->{}ms", rewind.seconds(), resume_ns / 1_000_000, rewound / 1_000_000));
+            }
+            rewound
+        }
+        Origin::Unchanged => resume_ns,
+    }
 }
 
 /// Legacy card launches resolve media data without creating an invisible Detail screen.

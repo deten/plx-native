@@ -748,7 +748,7 @@
       "one": "{count} second",
       "other": "{count} seconds"
     },
-    "description": "Skip interval picker option and row read-out: the length of one jump, in seconds (5, 10, 15, 30 or 60).",
+    "description": "Skip interval and Rewind on resume picker option and row read-out: a length in seconds (5, 10, 15, 30 or 60).",
     "args": {
       "count": "i64"
     }

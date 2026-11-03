@@ -5,5 +5,8 @@
   "settings.playback.instant_dpad_seeking.on": "Вкл.",
   "settings.playback.dolby_vision": "Dolby Vision",
   "settings.playback.dolby_vision.copy": "«Авто» использует Dolby Vision, если телевизор его поддерживает. «Выкл.» воспроизводит слой HDR10. Файлы без слоя HDR10 преобразует сервер Plex, и они могут не воспроизвестись.",
-  "settings.playback.dolby_vision.off": "Выкл."
+  "settings.playback.dolby_vision.off": "Выкл.",
+  "settings.playback.resume_rewind": "Откат при продолжении",
+  "settings.playback.resume_rewind.copy": "При продолжении просмотра видео начинается на столько раньше того места, где вы остановились.",
+  "settings.playback.resume_rewind.off": "Выкл."
 }

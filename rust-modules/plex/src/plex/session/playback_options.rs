@@ -77,11 +77,76 @@ impl DolbyVisionMode {
     }
 }
 
+/// How far before the saved spot a resume the viewer chose starts — one per profile, like
+/// [`InstantDpadSeeking`]. Absence is `Off`, the exact resume every build before the preference
+/// made. A closed set, like [`super::SkipInterval`], so a hand-edited file cannot ask for an
+/// hour-long rewind. Only a viewer's own launch asks for it (`app::playback::start_playback_with`):
+/// Up Next, a reopen, a retry and a seek keep their position exactly.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResumeRewind {
+    #[default]
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "5s")]
+    Seconds5,
+    #[serde(rename = "10s")]
+    Seconds10,
+    #[serde(rename = "15s")]
+    Seconds15,
+    #[serde(rename = "30s")]
+    Seconds30,
+}
+
+impl ResumeRewind {
+    /// Every option, Off first and then shortest first — the order the picker lists them in.
+    pub const LADDER: [ResumeRewind; 5] = [
+        ResumeRewind::Off,
+        ResumeRewind::Seconds5,
+        ResumeRewind::Seconds10,
+        ResumeRewind::Seconds15,
+        ResumeRewind::Seconds30,
+    ];
+
+    /// An in-memory index back to an option — out of range is the default, for the reason
+    /// [`super::SubtitleTone::from_index`] gives: the ladder can grow or shrink.
+    pub fn from_index(i: u8) -> ResumeRewind {
+        Self::LADDER.get(i as usize).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> u8 {
+        Self::LADDER.iter().position(|&r| r == self).unwrap_or(0) as u8
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The rewind in seconds; `Off` is 0.
+    pub fn seconds(self) -> i64 {
+        match self {
+            ResumeRewind::Off => 0,
+            ResumeRewind::Seconds5 => 5,
+            ResumeRewind::Seconds10 => 10,
+            ResumeRewind::Seconds15 => 15,
+            ResumeRewind::Seconds30 => 30,
+        }
+    }
+
+    /// Where a resume to `resume_ns` starts: this much earlier, never before the start. A start
+    /// from the beginning (0) is not a resume and stays where it is.
+    pub fn apply(self, resume_ns: i64) -> i64 {
+        if resume_ns <= 0 {
+            return resume_ns;
+        }
+        resume_ns.saturating_sub(self.seconds() * 1_000_000_000).max(0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plex::session::{effective, own_prefs, put_own, DolbyVisionModePref,
-        InstantDpadSeekingPref, Preferences, ProfilePrefs};
+        InstantDpadSeekingPref, Preferences, ProfilePrefs, ResumeRewindPref};
 
     #[test]
     fn instant_dpad_seeking_is_defaulted_and_scoped_per_profile() {
@@ -127,6 +192,52 @@ mod tests {
         for probed in [Supported, Unknown, Unsupported] {
             assert_eq!(DolbyVisionMode::Auto.gate(probed), probed);
             assert_eq!(DolbyVisionMode::Off.gate(probed), Unsupported);
+        }
+    }
+
+    /// Absent, null, an unknown spelling or a wrong type reads as Off, and Off writes no key; a
+    /// profile's own pick is its own and round-trips.
+    #[test]
+    fn resume_rewind_is_defaulted_and_scoped_per_profile() {
+        for json in ["{}", r#"{"resume_rewind":"45s"}"#, r#"{"resume_rewind":null}"#, r#"{"resume_rewind":10}"#] {
+            let prefs: Preferences = serde_json::from_str(json).unwrap();
+            assert_eq!(prefs.resume_rewind, ResumeRewind::Off, "{json}");
+            let encoded = serde_json::to_value(&prefs).unwrap();
+            assert!(encoded.get("resume_rewind").is_none());
+        }
+        let prefs = Preferences::default();
+        for rewind in ResumeRewind::LADDER.into_iter().filter(|r| !r.is_default()) {
+            let mut records = Vec::new();
+            assert!(put_own::<ResumeRewindPref>(&mut records, "alice", "account", rewind));
+            assert_eq!(effective::<ResumeRewindPref>(&prefs, own_prefs(&records, "alice", "account")), rewind);
+            for (user, account) in [("bob", "account"), ("alice", "other")] {
+                assert_eq!(effective::<ResumeRewindPref>(&prefs, own_prefs(&records, user, account)), ResumeRewind::Off);
+            }
+            let encoded = serde_json::to_string(&records[0].prefs).unwrap();
+            assert!(encoded.contains("resume_rewind"), "{encoded}");
+            assert_eq!(serde_json::from_str::<ProfilePrefs>(&encoded).unwrap(), records[0].prefs);
+        }
+        for rewind in ResumeRewind::LADDER {
+            assert_eq!(ResumeRewind::from_index(rewind.index()), rewind);
+        }
+        assert_eq!(ResumeRewind::from_index(200), ResumeRewind::Off);
+    }
+
+    /// Each step moves a resume that much earlier, never before the start; Off and a start from
+    /// the beginning are left alone.
+    #[test]
+    fn resume_rewind_moves_a_resume_earlier_and_clamps_at_the_start() {
+        const S: i64 = 1_000_000_000;
+        assert_eq!(ResumeRewind::LADDER.map(ResumeRewind::seconds), [0, 5, 10, 15, 30]);
+        assert_eq!(ResumeRewind::Off.apply(600 * S), 600 * S);
+        assert_eq!(ResumeRewind::Seconds5.apply(600 * S), 595 * S);
+        assert_eq!(ResumeRewind::Seconds10.apply(600 * S), 590 * S);
+        assert_eq!(ResumeRewind::Seconds15.apply(600 * S), 585 * S);
+        assert_eq!(ResumeRewind::Seconds30.apply(600 * S), 570 * S);
+        assert_eq!(ResumeRewind::Seconds30.apply(12 * S), 0, "clamped at the start");
+        assert_eq!(ResumeRewind::Seconds10.apply(10 * S), 0);
+        for rewind in ResumeRewind::LADDER {
+            assert_eq!(rewind.apply(0), 0, "{rewind:?}: a start from the beginning is not a resume");
         }
     }
 }

@@ -38,7 +38,7 @@ use super::plan::{supported_quality, Quality, QUALITY_LADDER};
 use plx_plex::plex::session::{
     DolbyVisionMode, DolbyVisionModePref, InstantDpadSeeking, InstantDpadSeekingPref, effective, own_prefs, persist_profile_pref, AudioEnhancementsPref, DeckPress, DeckPressPref, DirectPlayMode,
     DirectPlayModePref, HdrOverlayBrightness, HdrOverlayBrightnessPref, NextEpisodeMode, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsRecord,
-    ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitlePosition,
+    ProfileSetting, ProfileWrite, QualityPref, ResumeRewind, ResumeRewindPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitlePosition,
     SubtitlePositionPref, SubtitleSize, SubtitleSizePref, SubtitleTone, SubtitleTonePref, TrailerAutoplayPref, UnderPosters,
     UnderPostersPref,
 };
@@ -142,7 +142,7 @@ macro_rules! packed_by_index {
         }
     )*};
 }
-packed_by_index!(DolbyVisionMode = 0, InstantDpadSeeking = 0, NextEpisodeMode = 0, SkipInterval = 1, DeckPress = 0, SubtitleSize = 1, SubtitlePosition = 0, SubtitleTone = 0, HdrOverlayBrightness = 1);
+packed_by_index!(DolbyVisionMode = 0, ResumeRewind = 0, InstantDpadSeeking = 0, NextEpisodeMode = 0, SkipInterval = 1, DeckPress = 0, SubtitleSize = 1, SubtitlePosition = 0, SubtitleTone = 0, HdrOverlayBrightness = 1);
 
 impl Packed for DirectPlayMode {
     const SEED: u8 = 0;
@@ -232,6 +232,7 @@ impl Packed for AudioEnhancements {
 
 live_cell!(pub(super) INSTANT_DPAD_SEEKING: InstantDpadSeeking, "instant D-pad seeking");
 live_cell!(pub(super) DOLBY_VISION_MODE: DolbyVisionMode, "Dolby Vision mode");
+live_cell!(pub(super) RESUME_REWIND: ResumeRewind, "rewind on resume");
 
 // ---- the cells ------------------------------------------------------------------------------
 
@@ -349,6 +350,13 @@ live_setting!(SkipIntervalPref, SKIP_INTERVAL, "skip interval",
         });
     }
 );
+live_setting!(ResumeRewindPref, RESUME_REWIND, "rewind on resume",
+    fn after_saved(rewind: ResumeRewind) {
+        plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
+            feature: plx_telemetry::diag::schema::Feature::ResumeRewind(rewind),
+        });
+    }
+);
 live_setting!(QualityPref, QUALITY, "playback quality",
     fn normalize(q: Quality) -> Quality {
         supported_quality(q)
@@ -386,6 +394,7 @@ pub const LIVE_ROWS: &[LiveRow] = &[
     LiveRow::of::<HdrOverlayBrightnessPref>(),
     LiveRow::of::<NextEpisodeModePref>(),
     LiveRow::of::<SkipIntervalPref>(),
+    LiveRow::of::<ResumeRewindPref>(),
     LiveRow::of::<InstantDpadSeekingPref>(),
     LiveRow::of::<DolbyVisionModePref>(),
     LiveRow::of::<DeckPressPref>(),
@@ -771,6 +780,7 @@ choices! {
     DirectPlay => DirectPlayModePref,
     NextEpisode => NextEpisodeModePref,
     SkipInterval => SkipIntervalPref,
+    ResumeRewind => ResumeRewindPref,
     InstantDpadSeeking => InstantDpadSeekingPref,
     DolbyVision => DolbyVisionModePref,
     DeckPress => DeckPressPref,
@@ -902,6 +912,13 @@ pub fn skip_interval() -> SkipInterval { SkipIntervalPref::live() }
 pub fn restore_skip_interval(interval: SkipInterval) { restore_live::<SkipIntervalPref>(interval) }
 /// Blocking persistence seam, as [`set_next_episode_mode`].
 pub fn set_skip_interval(interval: SkipInterval) -> bool { confirm::<SkipIntervalPref>(interval) }
+
+/// The seated profile's Rewind on resume. Read once per launch the viewer chose
+/// (`app::playback::start_playback_with`); nothing in the route or the player reads it.
+pub fn resume_rewind() -> ResumeRewind { ResumeRewindPref::live() }
+pub fn restore_resume_rewind(rewind: ResumeRewind) { restore_live::<ResumeRewindPref>(rewind) }
+/// Blocking persistence seam, as [`set_next_episode_mode`].
+pub fn set_resume_rewind(rewind: ResumeRewind) -> bool { confirm::<ResumeRewindPref>(rewind) }
 
 pub fn deck_press() -> DeckPress { DeckPressPref::live() }
 pub fn restore_deck_press(mode: DeckPress) { restore_live::<DeckPressPref>(mode) }

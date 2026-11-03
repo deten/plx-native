@@ -5,5 +5,8 @@
   "settings.playback.instant_dpad_seeking.on": "Ein",
   "settings.playback.dolby_vision": "Dolby Vision",
   "settings.playback.dolby_vision.copy": "„Automatisch“ nutzt Dolby Vision, wenn der Fernseher es unterstützt. „Aus“ spielt die HDR10-Ebene ab. Dateien ohne HDR10-Ebene konvertiert dein Plex-Server, und sie werden womöglich nicht abgespielt.",
-  "settings.playback.dolby_vision.off": "Aus"
+  "settings.playback.dolby_vision.off": "Aus",
+  "settings.playback.resume_rewind": "Rücksprung beim Fortsetzen",
+  "settings.playback.resume_rewind.copy": "Setzt du ein Video fort, beginnt es so viel vor der Stelle, an der du aufgehört hast.",
+  "settings.playback.resume_rewind.off": "Aus"
 }

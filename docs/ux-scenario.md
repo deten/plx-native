@@ -381,7 +381,7 @@ The action row:
 
 | control | what OK does |
 |---|---|
-| **Play** / **Resume** | start, or resume from the stored position |
+| **Play** / **Resume** | start, or resume from the stored position (moved earlier by Settings > Playback > *Rewind on resume*, Off by default) |
 | **↺** | play from the start (shown when there is a resume point) |
 | the watched disc | toggle watched — it **wears the face of the write it would perform**, so it is a **✓** on an unwatched item and a **−** on a watched one |
 
@@ -714,6 +714,11 @@ Credits is unreachable**, and only *Skip Intro* and *Up Next* can be exercised.
 At the end of an item with nothing queued — or with *Next episode* set to *Off* — the player simply
 exits to the page it came from. **There
 is no full-screen post-play interstitial** — one was built and is deliberately not shipped.
+
+**Rewind on resume** (Settings > Playback, Off by default, or 5, 10, 15 or 30 s) starts a resume the
+viewer chose (Resume, a Continue Watching card, the card menu, a launch link that plays) that far
+before the saved spot, never before the start. Up Next, Next and Previous, starting from the
+beginning, and the player's own reloads, retries and seeks keep their position exactly.
 
 ### 6.8 Info and Chapters
 

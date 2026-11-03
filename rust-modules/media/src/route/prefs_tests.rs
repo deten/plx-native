@@ -688,3 +688,49 @@ fn dolby_vision_mode_is_picked_into_the_seated_profiles_record_and_follows_the_s
     restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
     assert_eq!(dolby_vision_mode(), DolbyVisionMode::Off, "u1 seated again restores Off");
 }
+
+// ---- Rewind on resume (Settings > Playback) -----------------------------------------------------
+
+struct ResumeRewindBack;
+impl Drop for ResumeRewindBack {
+    fn drop(&mut self) {
+        restore_resume_rewind(ResumeRewind::default());
+    }
+}
+
+/// A pick is the seated profile's own: it is live at once, written into that profile's record (the
+/// TV's top-level key is untouched), absent for another profile, and back when the first is seated
+/// again. A stored spelling this build does not know restores as Off.
+#[test]
+fn resume_rewind_is_picked_into_the_seated_profiles_record_and_follows_the_seat() {
+    let _g = plx_base::testlock::serial();
+    let session = session::TempSession::new("resume-rewind");
+    let _restore = Put::back(cells());
+    let _back = ResumeRewindBack;
+    session.seated("u1", TOKEN);
+    let mut legacy = record(Preferences::default(), vec![]);
+    legacy.client_id = "cid-test".into();
+    session::save(&legacy);
+    seed_profile_prefs_for_test(&session::peek());
+    restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
+    assert_eq!(resume_rewind(), ResumeRewind::Off);
+
+    assert!(confirm::<ResumeRewindPref>(ResumeRewind::Seconds15));
+    assert_eq!(resume_rewind(), ResumeRewind::Seconds15);
+    let after = session::load();
+    assert_eq!(after.prefs.resume_rewind, ResumeRewind::Off, "the TV's key is untouched");
+    assert_eq!(own_of::<ResumeRewindPref>(&after.prefs.profile_prefs, "u1"), Some(ResumeRewind::Seconds15));
+
+    session.seated("u2", TOKEN);
+    restore_profile_rows(&session::peek(), &seat("u2"), Overrides::default());
+    assert_eq!(resume_rewind(), ResumeRewind::Off, "another profile reads the default");
+
+    session.seated("u1", TOKEN);
+    restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
+    assert_eq!(resume_rewind(), ResumeRewind::Seconds15, "u1 seated again restores its pick");
+    assert!(Choice::KEYS.contains(&"resume_rewind"), "a Settings row saves it through the door");
+
+    let unknown = record(Preferences::default(), vec![picked("u1", "", serde_json::json!({"resume_rewind": "45s"}))]);
+    restore(&unknown, &seat("u1"), Overrides::default());
+    assert_eq!(resume_rewind(), ResumeRewind::Off, "an unknown stored value degrades to Off");
+}

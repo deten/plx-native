@@ -37,7 +37,7 @@
 //! ([`SubtitleOffsetsPref`]).
 use super::{
     DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
-    PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
+    PlaintextConsent, HoldHintTaught, PlaybackQuality, ResumeRewind, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
     SubtitleSize, SubtitleTone, UiResolution, UnderPosters,
 };
 use serde::de::DeserializeOwned;
@@ -128,6 +128,9 @@ pub struct Preferences {
     /// Dolby Vision override (`Auto` or `Off`); `Auto` by default.
     #[serde(default, deserialize_with = "de_soft_dolby_vision_mode", skip_serializing_if = "DolbyVisionMode::is_default")]
     pub dolby_vision_mode: DolbyVisionMode,
+    /// How far before the saved spot a viewer's resume starts (see [`ResumeRewind`]); `Off` by default.
+    #[serde(default, deserialize_with = "de_soft_resume_rewind", skip_serializing_if = "ResumeRewind::is_default")]
+    pub resume_rewind: ResumeRewind,
     /// **What OK does on a Continue Watching card** — see [`DeckPress`]. A frozen fallback like
     /// [`Preferences::playback_quality`]: each profile keeps its own pick in `profile_prefs`, and a
     /// profile that has not picked reads this top-level key. Absence is Details, so a session written
@@ -520,6 +523,8 @@ setting!(InstantDpadSeekingPref: InstantDpadSeeking = instant_dpad_seeking, "ins
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(DolbyVisionModePref: DolbyVisionMode = dolby_vision_mode, "dolby_vision_mode", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
+setting!(ResumeRewindPref: ResumeRewind = resume_rewind, "resume_rewind", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(SkipIntervalPref: SkipInterval = skip_interval, "skip_interval", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(DeckPressPref: DeckPress = deck_press, "deck_press", Profile fallback LegacyInstallKey,
@@ -651,6 +656,7 @@ pub const DESCRIPTORS: &[Descriptor] = &[
     Descriptor::of::<SkipIntervalPref>(),
     Descriptor::of::<InstantDpadSeekingPref>(),
     Descriptor::of::<DolbyVisionModePref>(),
+    Descriptor::of::<ResumeRewindPref>(),
     Descriptor::of::<DeckPressPref>(),
     Descriptor::of::<UnderPostersPref>(),
     Descriptor::of::<AudioEnhancementsPref>(),
@@ -1376,6 +1382,17 @@ where
         return Ok(DolbyVisionMode::default());
     };
     Ok(serde_json::from_value::<DolbyVisionMode>(v).unwrap_or_default())
+}
+
+/// Rewind on resume is a preference too: a spelling this build does not know degrades to Off.
+fn de_soft_resume_rewind<'de, D>(d: D) -> Result<ResumeRewind, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(ResumeRewind::default());
+    };
+    Ok(serde_json::from_value::<ResumeRewind>(v).unwrap_or_default())
 }
 
 /// The deck-press mode is a preference too: a spelling this build does not know degrades to Details.

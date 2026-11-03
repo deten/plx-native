@@ -201,6 +201,10 @@ pub enum Feature {
     /// five lengths. The length is the whole payload: a closed set of five codes, fired once per
     /// durable change, never per press and never with anything about what was playing.
     SkipInterval(plx_plex::plex::session::SkipInterval),
+    /// **A viewer set the Rewind on resume preference** (Settings → Video & playback) to one of its
+    /// five choices. The choice is the whole payload: a closed set of five codes, fired once per
+    /// durable change, never per playback and never with anything about what was playing.
+    ResumeRewind(plx_plex::plex::session::ResumeRewind),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +248,13 @@ impl Feature {
                 plx_plex::plex::session::SkipInterval::Seconds15 => "skip_interval_15s",
                 plx_plex::plex::session::SkipInterval::Seconds30 => "skip_interval_30s",
                 plx_plex::plex::session::SkipInterval::Seconds60 => "skip_interval_60s",
+            },
+            Self::ResumeRewind(rewind) => match rewind {
+                plx_plex::plex::session::ResumeRewind::Off => "resume_rewind_off",
+                plx_plex::plex::session::ResumeRewind::Seconds5 => "resume_rewind_5s",
+                plx_plex::plex::session::ResumeRewind::Seconds10 => "resume_rewind_10s",
+                plx_plex::plex::session::ResumeRewind::Seconds15 => "resume_rewind_15s",
+                plx_plex::plex::session::ResumeRewind::Seconds30 => "resume_rewind_30s",
             },
         }
     }
@@ -997,6 +1008,28 @@ mod tests {
                 want("skip_interval_15s"),
                 want("skip_interval_30s"),
                 want("skip_interval_60s"),
+            ]
+        );
+    }
+
+    /// The Rewind on resume preference is reported as `feature.used` carrying exactly one of five
+    /// fixed codes: the choice and nothing else.
+    #[test]
+    fn the_resume_rewind_setting_reports_only_its_length() {
+        use plx_plex::plex::session::ResumeRewind;
+        let sent: Vec<_> = ResumeRewind::LADDER
+            .iter()
+            .map(|&rewind| serialize(DiagEvent::FeatureUsed { feature: Feature::ResumeRewind(rewind) }))
+            .collect();
+        let want = |code| ("feature.used", vec![("feature", Value::Str(code))]);
+        assert_eq!(
+            sent,
+            [
+                want("resume_rewind_off"),
+                want("resume_rewind_5s"),
+                want("resume_rewind_10s"),
+                want("resume_rewind_15s"),
+                want("resume_rewind_30s"),
             ]
         );
     }

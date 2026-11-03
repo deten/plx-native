@@ -26,5 +26,17 @@
   "settings.playback.dolby_vision.off": {
     "value": "Off",
     "description": "Choice for the Dolby Vision setting (singular): Dolby Vision is never used."
+  },
+  "settings.playback.resume_rewind": {
+    "value": "Rewind on resume",
+    "description": "Playback setting title and picker title: how far before the saved spot a video starts when the viewer resumes it; default Off. Its options are Off (settings.playback.resume_rewind.off) and lengths in seconds (settings.playback.skip_interval.seconds)."
+  },
+  "settings.playback.resume_rewind.copy": {
+    "value": "When you resume a video, it starts this much earlier than where you stopped.",
+    "description": "Explanation under the title of the Rewind on resume picker. Applies only when the viewer resumes (Resume, a Continue Watching card, a link that plays); starting from the beginning, the next episode starting by itself and the player's own reloads keep the exact position."
+  },
+  "settings.playback.resume_rewind.off": {
+    "value": "Off",
+    "description": "Choice for the Rewind on resume setting (the default): a resumed video starts exactly where it stopped."
   }
 }

@@ -5,5 +5,8 @@
   "settings.playback.instant_dpad_seeking.on": "Уключана",
   "settings.playback.dolby_vision": "Dolby Vision",
   "settings.playback.dolby_vision.copy": "«Аўтаматычна» выкарыстоўвае Dolby Vision, калі тэлевізар яго падтрымлівае. «Выкл.» прайгравае слой HDR10. Файлы без слоя HDR10 канвертуе сервер Plex, і яны могуць не прайгравацца.",
-  "settings.playback.dolby_vision.off": "Выкл."
+  "settings.playback.dolby_vision.off": "Выкл.",
+  "settings.playback.resume_rewind": "Перамотка пры працягу",
+  "settings.playback.resume_rewind.copy": "Калі вы працягваеце прагляд, відэа пачынаецца на столькі раней за месца, дзе вы спыніліся.",
+  "settings.playback.resume_rewind.off": "Выкл."
 }

@@ -1,8 +1,8 @@
 # Playback settings
 
 Settings has **Video & playback** and **Audio & subtitles** pages. The Video & playback
-settings (quality, Direct Play, subtitle size and position, next episode, Continue Watching
-and skip interval) are saved on this television, **per profile**: each Plex Home profile keeps
+settings (quality, Direct Play, subtitle size and position, next episode, Continue Watching,
+skip interval and rewind on resume) are saved on this television, **per profile**: each Plex Home profile keeps
 its own picks, and a profile that has not chosen yet starts from the value the television held
 before profiles had their own. The page names the profile it shows ("Playback settings for
 Maya") and follows a profile switch (Settings itself closes on one). Settings is reached
@@ -34,6 +34,17 @@ the quality controls explain that the saved quality is overridden. Returning to 
 Disabled needs no confirmation.
 
 Audio passthrough remains the television's Digital Sound Output setting.
+
+## Rewind on resume
+
+**Rewind on resume** (Off by default, or 5, 10, 15 or 30 seconds) starts a video the viewer resumes
+that many seconds before the saved position, never before the start: Resume on a detail page or the
+hero, a Continue Watching card or its menu, a picked version and a launch link that plays. It is
+applied in one place, the app's start of a launch the viewer chose (`app::playback::start_playback_with`,
+for a launch whose origin is `Origin::Here`). Every position the player sets itself is kept exactly:
+Up Next and the queue's Next and Previous (`Origin::Unchanged`), Play from Start, a retry, reload or
+recovery rebuild, a seek, a track or quality switch and the foreground restore. Off is the exact
+resume of every build before the setting.
 
 ## Plex account preferences
 

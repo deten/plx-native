@@ -3,7 +3,7 @@
 //! seats. The live half (cells, the door, the restore) is `media::route::prefs_tests`; the seat
 //! trigger is the app's `restore_characterisation_tests`.
 use super::super::{
-    DolbyVisionMode, InstantDpadSeeking, current_seat, AudioEnhancementsPref, CurrentProfile, DeckPress, DeckPressPref, UnderPosters, UnderPostersDetails, DirectPlayMode, DirectPlayModePref,
+    DolbyVisionMode, InstantDpadSeeking, ResumeRewind, current_seat, AudioEnhancementsPref, CurrentProfile, DeckPress, DeckPressPref, UnderPosters, UnderPostersDetails, DirectPlayMode, DirectPlayModePref,
     HdrOverlayBrightness, HdrOverlayBrightnessPref, NextEpisodeMode, NextEpisodeModePref, PlaybackQuality, QualityPref, Seat, Session, SkipInterval, SkipIntervalPref,
     SubtitlePosition, SubtitlePositionPref, SubtitleSize, SubtitleSizePref, SubtitleTone, SubtitleTonePref, TempSession,
     TrailerAutoplayPref, UserRef,
@@ -58,6 +58,7 @@ fn the_record_has_one_field_for_each_setting_with_a_legacy_fallback() {
         skip_interval: Some(SkipInterval::Seconds30),
         instant_dpad_seeking: Some(InstantDpadSeeking::On),
         dolby_vision_mode: Some(DolbyVisionMode::Off),
+        resume_rewind: Some(ResumeRewind::Seconds10),
         deck_press: Some(DeckPress::Play),
         under_posters: Some(UnderPosters { title: true, details: UnderPostersDetails::Video, sort_value: false }),
         audio_enhancements: Some(AudioEnhancements { boost_dialog: true, normalize_loudness: true }),
@@ -70,7 +71,7 @@ fn the_record_has_one_field_for_each_setting_with_a_legacy_fallback() {
         .filter(|d| d.fallback == Fallback::LegacyInstallKey)
         .map(|d| d.key.to_string())
         .collect();
-    assert_eq!(rows.len(), 15, "every per-profile setting has a legacy fallback");
+    assert_eq!(rows.len(), 16, "every per-profile setting has a legacy fallback");
     assert_eq!(fields, rows, "ProfilePrefs and the rows with a legacy fallback drifted");
     assert!(DESCRIPTORS.iter().filter(|d| d.fallback == Fallback::LegacyInstallKey).all(|d| d.scope == Scope::Profile));
 }

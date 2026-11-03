@@ -59,3 +59,30 @@ fn a_failed_write_changes_and_reports_nothing() {
     assert_eq!(skip_interval(), SkipInterval::Seconds10);
     assert!(events.is_empty(), "{events:?}");
 }
+
+/// **Rewind on resume takes the same seam**: a durable pick is live, the seated profile's own, and
+/// reported once as the choice alone.
+#[test]
+fn a_durable_resume_rewind_pick_is_live_persisted_and_reported_once() {
+    use plx_plex::plex::session::{ResumeRewind, ResumeRewindPref};
+    struct Back(ResumeRewind);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            restore_resume_rewind(self.0);
+        }
+    }
+    let _g = plx_base::testlock::serial();
+    let session = plx_plex::plex::session::TempSession::new("resume-rewind-set");
+    sign_in(&session);
+    let _restore = Back(resume_rewind());
+    restore_resume_rewind(ResumeRewind::Off);
+
+    let (saved, events) = plx_telemetry::diag::test_events::capture(|| set_resume_rewind(ResumeRewind::Seconds10));
+    assert!(saved);
+    assert_eq!(resume_rewind(), ResumeRewind::Seconds10);
+    assert_eq!(picked::<ResumeRewindPref>(), Some(ResumeRewind::Seconds10));
+    assert_eq!(
+        events,
+        [DiagEvent::FeatureUsed { feature: Feature::ResumeRewind(ResumeRewind::Seconds10) }]
+    );
+}

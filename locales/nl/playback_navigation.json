@@ -5,5 +5,8 @@
   "settings.playback.instant_dpad_seeking.on": "Aan",
   "settings.playback.dolby_vision": "Dolby Vision",
   "settings.playback.dolby_vision.copy": "Auto gebruikt Dolby Vision als de tv dit ondersteunt. Uit speelt de HDR10-laag af. Bestanden zonder HDR10-laag converteert je Plex-server, en ze spelen mogelijk niet af.",
-  "settings.playback.dolby_vision.off": "Uit"
+  "settings.playback.dolby_vision.off": "Uit",
+  "settings.playback.resume_rewind": "Terugspoelen bij hervatten",
+  "settings.playback.resume_rewind.copy": "Als je een video hervat, begint die zoveel eerder dan waar je was gestopt.",
+  "settings.playback.resume_rewind.off": "Uit"
 }
