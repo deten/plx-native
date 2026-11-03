@@ -565,7 +565,7 @@ jobs:
         # than over it. The release job is the only place `FLAVOR=stable` belongs (release.yml).
         # Named explicitly rather than inherited, so this is a decision on the page instead of a
         # default that moves if the Makefile's does.
-        run: make ipk FLAVOR=debug WEBOS_SDK='${{ steps.ndk.outputs.sdk-dir }}'
+        run: make ipk FLAVOR=nightly RELEASE=1 WEBOS_SDK='${{ steps.ndk.outputs.sdk-dir }}'
 
       - name: Binary size budget
         # The STRIPPED binary `make ipk` just staged (the one inside the .ipk), not the unstripped
