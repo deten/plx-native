@@ -53,9 +53,9 @@
 use super::origin::Origin;
 use super::probe::Location;
 mod playback_options;
-pub use playback_options::{DolbyVisionMode, InstantDpadSeeking, PassoutProtection};
+pub use playback_options::{MarkerSkipMode, DolbyVisionMode, InstantDpadSeeking, PassoutProtection};
 
-pub use prefs::{DolbyVisionModePref, InstantDpadSeekingPref, HoldHintTaughtPref, effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, put_own, stored_effective, stored_effective_hud, tenure, HudSelectionPref, AudioEnhancementsPref,
+pub use prefs::{IntroSkipPref, CreditsSkipPref, DolbyVisionModePref, InstantDpadSeekingPref, HoldHintTaughtPref, effective, effective_hud, own_prefs, persist_profile_hud, persist_profile_pref, put_own, stored_effective, stored_effective_hud, tenure, HudSelectionPref, AudioEnhancementsPref,
     DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsPref,
     ProfilePrefsRecord, ProfileSetting, ProfileWrite, PassoutProtectionPref, QualityPref, Row, Setting, SkipIntervalPref,
     SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UiResolutionPref, UnderPostersPref};

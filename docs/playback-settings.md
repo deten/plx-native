@@ -58,8 +58,9 @@ the limit whatever is left, since it would never reach its end on its own; once 
 screensaver has taken the decoder back the session is already parked with nothing playing, and it
 waits for the viewer's next press as before.
 
-The advance itself is held back at the player's own two advance points: the Up Next countdown
-running out, and the end of the stream under *Up Next countdown* or *After credits*. The player then
+The advance itself is held back at the player's own advance points: the Up Next countdown
+running out, the end of the stream under *Up Next countdown* or *After credits*, and an automatic
+skip of the final credits (*Skip credits: Automatic*, see below) running out. The player then
 goes back to the page it was opened from, exactly as under *Next episode: Off*; a countdown held
 back ends the episode in its final credits and marks it watched, as Skip Credits on that segment
 does. Each held advance records `up next: passout after <N>m idle (limit <H>h), not advancing`.
@@ -191,3 +192,31 @@ the server first and plays as stereo, labelled the same way. The next request st
 The television remained muted with its panel off. These results do not claim audible output
 verification, and no real Plex account language preferences were written. The throwaway-account
 PMS propagation measurement is still outstanding.
+
+## Intro and credits skipping
+
+Requested in [discussion #826](https://github.com/GLinnik21/plx-native/discussions/826).
+
+Playback settings offers **Skip intros** and **Skip credits** separately for a viewer whose
+Plex account feature list grants the corresponding capability. These are per-profile choices:
+**Manual** is the default, **Disabled** hides the skip button, and **Automatic** offers a
+**Watch Intro** or **Watch Credits** button with a five-second countdown fill. Where the existing
+player offers **Watch Credits + Next Episode**, both controls stay available and the five-second
+fill appears on Next Episode. Watch Credits cancels that countdown while leaving Next Episode
+available to press. BACK dismisses the offer; choosing a standalone Watch button dismisses its
+single-button offer too.
+
+Only time with an actionable, presented Watch button and advancing playback counts. Pause,
+buffering freeze the remaining opportunity. The pair retains its existing cancellation behavior:
+moving away from Next Episode or opening a panel cancels its countdown. A panel covering a
+standalone Watch button freezes its countdown. Seeking or leaving the
+marker resets it. Intro and intermediate credits expiry seek to the marker end; final credits
+use the existing playback-finished path, respecting the Next episode preference. Automatic final
+credits use five presented seconds on the Up Next controls wherever that pair is available; other
+final-credits offers keep their standalone Watch control. Disabled and Manual retain
+Next episode's independent policy, and synthetic end-of-item tails never auto-skip.
+
+The app checks the **viewer’s** `intro-markers` and `credits-markers` grants; a shared server
+owner's subscription is not evidence of viewer eligibility. An unavailable, expired or denied
+grant hides the new settings and uses the existing manual controls. Saved choices remain intact.
+No Plex viewing-history write is needed to change these local settings.
