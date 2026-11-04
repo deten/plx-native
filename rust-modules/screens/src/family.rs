@@ -39,6 +39,9 @@ pub enum SettingsPage {
     Favourites,
     /// The shared favorites editor opened from Library, returning directly to that page.
     LibraryFavourites,
+    /// Settings > Libraries > Library order: the profile's favorite libraries arranged into the
+    /// order Home's Recently Added shelves and the Library's names follow (`settings::library_order`).
+    LibraryOrder,
     /// Privacy & data — the consent screen in Settings mode.
     Privacy,
     /// The Legal index.
@@ -127,6 +130,7 @@ impl ScreenArg for SettingsPage {
             SettingsPage::UnderPostersDetails => 114,
             SettingsPage::Favourites => 101,
             SettingsPage::LibraryFavourites => 116,
+            SettingsPage::LibraryOrder => 117,
             SettingsPage::Privacy => 102,
             SettingsPage::Legal => 103,
             SettingsPage::About => 104,
@@ -171,6 +175,7 @@ impl LogicalState for SettingsPage {
             | SettingsPage::AudioSubtitles
             | SettingsPage::Favourites
             | SettingsPage::LibraryFavourites
+            | SettingsPage::LibraryOrder
             | SettingsPage::Privacy
             | SettingsPage::Legal
             | SettingsPage::PlayerHud
@@ -190,6 +195,7 @@ impl LogicalState for SettingsPage {
             SettingsPage::AudioSubtitles => "audio-subtitles",
             SettingsPage::Favourites => "favourites",
             SettingsPage::LibraryFavourites => "library-favourites",
+            SettingsPage::LibraryOrder => "library-order",
             SettingsPage::Privacy => "privacy",
             SettingsPage::Legal => "legal",
             SettingsPage::About => "about",
@@ -363,6 +369,7 @@ mod tests {
             SettingsPage::AudioSubtitles,
             SettingsPage::Favourites,
             SettingsPage::LibraryFavourites,
+            SettingsPage::LibraryOrder,
             SettingsPage::Privacy,
             SettingsPage::Legal,
             SettingsPage::About,

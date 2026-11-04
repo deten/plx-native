@@ -451,6 +451,13 @@ struct DirectoryData {
     sources: Vec<(ServerId, super::SrcGroup)>,
     sections: Vec<SectionView>,
     favorites: Vec<(ServerId, i64, bool)>,
+    /// Every index of `sections` in the profile's library display order
+    /// (`BrowseState::display_order`), or empty while the profile has arranged nothing, which is
+    /// table order. `sections` itself stays in table order: its indices are addresses.
+    order: Vec<usize>,
+    /// The same order as identities, every library a server is known for: what Home ranks its
+    /// Recently Added shelves by ([`DirectoryView::arranged`]). Empty with `order`.
+    arranged: Vec<(ServerId, i64, super::SecKind)>,
 }
 
 /// Retained by the Bridge-owned `BrowseStore` and captured from its `BrowseState`, never a new
@@ -500,15 +507,21 @@ impl DirectorySnapshot {
             state.sources().len(),
         );
         if self.stamp != Some(stamp) {
+            let sections: Vec<SectionView> = state.sections().iter().zip(state.all_source_rows())
+                .map(|(section, row)| SectionView {
+                    sid: state.sources().get(section.src).map(|source| source.sid),
+                    key: section.key, kind: section.kind, row,
+                }).collect();
+            let order = if state.arranged() { state.display_order() } else { Vec::new() };
+            let arranged = order.iter().filter_map(|&index| sections.get(index))
+                .filter_map(|section| section.sid.map(|sid| (sid, section.key, section.kind))).collect();
             self.data = Arc::new(DirectoryData {
                 sources: state.sources().iter().map(|s| s.sid)
                     .zip(state.source_groups()).collect(),
-                sections: state.sections().iter().zip(state.all_source_rows())
-                    .map(|(section, row)| SectionView {
-                        sid: state.sources().get(section.src).map(|source| source.sid),
-                        key: section.key, kind: section.kind, row,
-                    }).collect(),
+                sections,
                 favorites: state.favorite_sections(),
+                order,
+                arranged,
             });
             self.stamp = Some(stamp);
         }
@@ -538,8 +551,7 @@ impl DirectorySnapshot {
             stamp: Some((epoch, 0, 0, 1)),
             data: Arc::new(DirectoryData {
                 sources: vec![(sid, source)],
-                sections: Vec::new(),
-                favorites: Vec::new(),
+                ..Default::default()
             }),
             items: super::SecItems::default(),
             source: Some(0),
@@ -596,6 +608,7 @@ impl DirectorySnapshot {
                 sources,
                 sections,
                 favorites,
+                ..Default::default()
             }),
             items: super::SecItems::default(),
             source: None,
@@ -610,6 +623,23 @@ impl DirectorySnapshot {
     #[cfg(any(test, feature = "test-support"))]
     pub fn fixture(epoch: u32, current: usize, sections: Vec<SectionView>) -> Self {
         Self::fixture_with_sources(epoch, current, Vec::new(), sections)
+    }
+
+    /// This fixture with the profile's library display order over its sections (indices, every
+    /// one once), as an arranged profile's capture carries it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_display_order(mut self, order: Vec<usize>) -> Self {
+        let data = &self.data;
+        let arranged = order.iter().filter_map(|&index| data.sections.get(index))
+            .filter_map(|section| section.sid.map(|sid| (sid, section.key, section.kind))).collect();
+        self.data = Arc::new(DirectoryData {
+            sources: data.sources.clone(),
+            sections: data.sections.clone(),
+            favorites: data.favorites.clone(),
+            order,
+            arranged,
+        });
+        self
     }
 
     pub fn view(&self) -> DirectoryView<'_> {
@@ -724,12 +754,32 @@ impl<'a> DirectoryView<'a> {
     /// Press-time section, not necessarily the committed one during a page fade.
     /// Includes `section` itself even when unpinned so jumping to an unpinned library from
     /// Sort & Filter still surfaces its pill in the Library header while viewing it.
+    ///
+    /// In the profile's library display order ([`display_order`](Self::display_order)), so the
+    /// header names a profile's arranged libraries in its order.
     pub fn rows_for(self, section: usize) -> impl Iterator<Item = &'a super::SrcRow> {
-        let kind = self.sections().get(section).map(|s| s.kind);
-        self.sections()
-            .iter()
+        let sections = self.sections();
+        let kind = sections.get(section).map(|s| s.kind);
+        self.display_order()
+            .filter_map(move |index| sections.get(index))
             .filter(move |s| Some(s.kind) == kind && (s.row.pinned || s.row.section == section))
             .map(|s| &s.row)
+    }
+
+    /// Every section index in the profile's library display order: the libraries it arranged
+    /// (Settings > Libraries > Library order) in their rank, then the rest in table order; table
+    /// order itself for a profile that arranged nothing.
+    pub fn display_order(self) -> impl Iterator<Item = usize> + 'a {
+        let order = &self.0.data.order;
+        let table = if order.is_empty() { self.sections().len() } else { 0 };
+        (0..table).chain(order.iter().copied())
+    }
+
+    /// The arranged order as `(server, section key, type)`, every library a server is known for;
+    /// empty for a profile that arranged nothing. Home ranks its Recently Added shelves by
+    /// position in this list (`pms::published_order`).
+    pub fn arranged(self) -> &'a [(ServerId, i64, super::SecKind)] {
+        &self.0.data.arranged
     }
 
     /// The libraries the header names for `section`'s type, with their table indices: its favourites,

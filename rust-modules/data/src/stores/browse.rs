@@ -81,6 +81,12 @@ pub enum BrowseCmd {
     /// though it were a decision (`plex::pins::answers`). An EMPTY list is still a commit — the
     /// question was put and every default was left alone.
     ApplyPins(Vec<(usize, bool)>),
+    /// The Library order page's commit: section indices of table `epoch`, in the order the viewer
+    /// arranged them. Written through the same pin record as [`ApplyPins`](Self::ApplyPins)
+    /// (`HomePins::order`), answering no switch. A library it does not name keeps its relative
+    /// place after the named ones. Home's Recently Added shelves, the Library header's names and
+    /// a tab's first library follow the order.
+    ArrangeLibraries { epoch: u32, sections: Vec<usize> },
     RetryDiscovery,
     /// The profile/account switch: wipe everything and supersede everything in flight.
     Reset,
@@ -167,7 +173,7 @@ impl BrowseStore {
     /// discovery command is refused here, because the session it must read was never handed:
     /// those reach [`BrowseStore::run_with_session`].
     pub fn run(&mut self, cmd: BrowseCmd, keys: &ClientKeys) -> bool {
-        if matches!(cmd, BrowseCmd::ApplyPins(_) | BrowseCmd::Discovery(_)) {
+        if matches!(cmd, BrowseCmd::ApplyPins(_) | BrowseCmd::ArrangeLibraries { .. } | BrowseCmd::Discovery(_)) {
             debug_assert!(false, "a pin or discovery command reached a step handed no session");
             plx_base::eventlog::log(
                 "browse: a pin or discovery command reached a step handed no session — dropped");

@@ -1,0 +1,7 @@
+{
+  "library_order.title": "Könyvtárak sorrendje",
+  "library_order.detail": "A sorrend a Kezdőlapon és a Könyvtárban.",
+  "library_order.copy": "Válassz ki egy könyvtárat, hogy felvedd, mozgasd a Fel és Le gombbal, majd válaszd ki újra, hogy letedd. A Kezdőlap ebben a sorrendben mutatja először minden könyvtár „Nemrég hozzáadva” sorát, és a Könyvtár is így nevezi meg őket.",
+  "library_order.moving": "Mozgatás",
+  "library_order.empty": "Még nincs kedvenc könyvtár."
+}

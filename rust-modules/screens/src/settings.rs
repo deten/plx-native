@@ -480,6 +480,7 @@ fn mount_page(
         }
         SettingsPage::Favourites => Box::new(super::onboard::OnboardScreen::settings(entry, cx.views.directory)),
         SettingsPage::LibraryFavourites => Box::new(super::onboard::OnboardScreen::library(entry, cx.views.directory)),
+        SettingsPage::LibraryOrder => Box::new(library_order::LibraryOrderPage::new(entry, cx.views.directory)),
         SettingsPage::Picker(kind) => Box::new(super::preferences::PickerPage::new(entry, kind)),
         SettingsPage::PlayerHud => Box::new(super::hud_settings::HudPage::new(entry)),
     }
@@ -973,6 +974,7 @@ struct ServerMachineId(String);
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum RootId {
     Favourites,
+    LibraryOrder,
     UnderPosters,
     Playback,
     AudioSubtitles,
@@ -1011,6 +1013,7 @@ impl FormId for RootId {
             RootId::PlaybackTrace => 12,
             RootId::TraceExport => 13,
             RootId::TraceDelete => 14,
+            RootId::LibraryOrder => 15,
             // the base; `root_form` adds the position (`item_keyed`)
             RootId::Plaintext(_) => PLAINTEXT_KEY_BASE,
         })
@@ -1172,6 +1175,14 @@ fn root_form(inputs: &RootInputs) -> Form<RootId, Action, SettingsPage> {
             Row::new(plx_platform::i18n::msg::settings_libraries_title())
                 .detail(plx_platform::i18n::msg::settings_libraries_detail())
                 .value(plx_platform::i18n::msg::settings_libraries_count(inputs.library_count))
+                .chevron(true),
+        )
+        .item(
+            RootId::LibraryOrder,
+            RowKind::Nav(SettingsPage::LibraryOrder),
+            Action::Door,
+            Row::new(plx_platform::i18n::msg::library_order_title())
+                .detail(plx_platform::i18n::msg::library_order_detail())
                 .chevron(true),
         )
         .item(
@@ -1697,6 +1708,9 @@ impl Screen<InnerHost> for RootPage {
 
 #[path = "settings_under_posters.rs"]
 mod under_posters;
+
+#[path = "settings_library_order.rs"]
+mod library_order;
 pub use under_posters::caption_policy_of;
 
 #[cfg(test)]

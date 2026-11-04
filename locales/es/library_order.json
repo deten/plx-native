@@ -1,0 +1,7 @@
+{
+  "library_order.title": "Orden de las bibliotecas",
+  "library_order.detail": "El orden en Inicio y en Biblioteca.",
+  "library_order.copy": "Selecciona una biblioteca para tomarla, muévela con Arriba y Abajo y vuelve a seleccionarla para soltarla. Inicio muestra primero la fila «Añadido recientemente» de cada biblioteca en este orden, y Biblioteca las nombra en el mismo.",
+  "library_order.moving": "Moviendo",
+  "library_order.empty": "Aún no hay bibliotecas favoritas."
+}

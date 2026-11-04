@@ -165,7 +165,7 @@ fn fill_memory(session: &mut Session, users: usize, fill: Fill) {
         let libs = |base: usize| -> Vec<PinnedLib> {
             (0..4).map(|k| PinnedLib { machine_id: machine(base + k), key: i64::MIN, extensions: Default::default() }).collect()
         };
-        session.home_pins.push(HomePins { user: user.clone(), asked: true, on: libs(0), off: libs(8), extensions: Default::default() });
+        session.home_pins.push(HomePins { user: user.clone(), asked: true, on: libs(0), off: libs(8), order: Vec::new(), extensions: Default::default() });
         session.recent_searches.push(RecentSearches {
             user: user.clone(),
             terms: (0..4).map(|k| format!("{k}{}", "t".repeat(63))).collect(),

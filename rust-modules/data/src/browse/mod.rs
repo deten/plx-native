@@ -2170,10 +2170,15 @@ impl BrowseState {
         if let Some(section) = self.remembered_section(kind) {
             return Some(section);
         }
+        // A profile that arranged its libraries (Settings > Libraries > Library order) said which
+        // comes first, and that beats the household tiebreak: the tab opens on the library its
+        // header names first.
+        let record = self.recorded.as_ref().filter(|_| self.arranged());
         self.sections.iter().enumerate()
             .filter(|(_, section)| section.kind == kind && section.pinned)
-            .min_by_key(|(_, section)| {
-                !self.sources.get(section.src).map(|source| source.household).unwrap_or(false)
+            .min_by_key(|(index, section)| {
+                (record.map_or(usize::MAX, |record| self.rank_in(record, *index)),
+                    !self.sources.get(section.src).map(|source| source.household).unwrap_or(false))
             })
             .map(|(index, _)| index)
     }
@@ -2445,7 +2450,7 @@ impl BrowseState {
         -> Option<plx_plex::plex::session::HomePins> {
         self.observe_pin_write();
         let snapshot = plx_plex::plex::session::peek();
-        self.record_pins_from(asked, touched, &snapshot)
+        self.record_pins_from(asked, touched, None, &snapshot)
     }
     /// Write this profile's answer down. `touched` is indexed like the section table and marks
     /// the rows the VIEWER answered — as the editor reported them, never as a comparison against
@@ -2460,7 +2465,12 @@ impl BrowseState {
     /// `snapshot` is the session the Bridge read (`Bridge::browse_session`): its `client_id` gates the
     /// write and its record is the fallback for the previous answer. The test shim `record_pins` hands
     /// the registry as of now.
-    fn record_pins_from(&mut self, asked: bool, touched: &[bool], snapshot: &plx_plex::plex::session::Session)
+    ///
+    /// `arranged` is a new library order (the Library order page's commit, [`arrange_from`](Self::arrange_from)),
+    /// or `None` to keep the order already recorded; `plex::pins::arrange` merges either the same
+    /// way the answers are, here and again under IO.
+    fn record_pins_from(&mut self, asked: bool, touched: &[bool],
+        arranged: Option<Vec<plx_plex::plex::session::PinnedLib>>, snapshot: &plx_plex::plex::session::Session)
         -> Option<plx_plex::plex::session::HomePins> {
         let libraries = self.lib_refs();
         let on: Vec<bool> = self.sections.iter().map(|section| section.pinned).collect();
@@ -2470,6 +2480,7 @@ impl BrowseState {
         let answers = plx_plex::plex::pins::answers(&libraries, &on, touched, previous);
         let fresh = plx_plex::plex::pins::record(&user, asked, &libraries, &answers);
         let record = plx_plex::plex::pins::carry_forward(fresh, previous, &libraries);
+        let record = plx_plex::plex::pins::arrange(record, arranged.as_deref(), previous, &libraries);
         let owned: Vec<_> = libraries.iter().map(|lib|
             (lib.machine_id.to_owned(), lib.key, lib.household, lib.household_type)).collect();
         let touched = touched.to_vec();
@@ -2481,6 +2492,7 @@ impl BrowseState {
             let answers = plx_plex::plex::pins::answers(&libraries, &on, &touched, previous);
             let fresh = plx_plex::plex::pins::record(&user, asked, &libraries, &answers);
             let merged = plx_plex::plex::pins::carry_forward(fresh, previous, &libraries);
+            let merged = plx_plex::plex::pins::arrange(merged, arranged.as_deref(), previous, &libraries);
             let mut next = session.clone();
             next.set_pins_for(&user, merged);
             Some(next)
@@ -2542,7 +2554,7 @@ impl BrowseState {
                 *slot = true;
             }
         }
-        let produced = self.record_pins_from(true, &touched, session);
+        let produced = self.record_pins_from(true, &touched, None, session);
         if changed {
             self.repoint_cur(!current_had_pin);
             self.bump_sections_gen();
@@ -2560,6 +2572,96 @@ impl BrowseState {
                  and nothing was recorded",
             ),
         }
+    }
+    /// **The profile's library DISPLAY order**: every section index, the ones this profile placed
+    /// ([`HomePins::order`](plx_plex::plex::session::HomePins::order)) first in their rank, then
+    /// every other one in table order. A stable sort, so a profile that never arranged anything
+    /// reads exactly `0..len`.
+    ///
+    /// The table itself is never reordered (a section index is an address every other reader
+    /// holds), so this is a permutation the readers apply: the Library header's names
+    /// ([`DirectoryView::rows_for`](view::DirectoryView::rows_for)), a tab's first library
+    /// ([`section_of_kind`](Self::section_of_kind)), Home's Recently Added shelves (through
+    /// [`DirectoryView::arranged`](view::DirectoryView::arranged)) and the Library order page.
+    pub(crate) fn display_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.sections.len()).collect();
+        if let Some(record) = self.recorded.as_ref().filter(|record| !record.order.is_empty()) {
+            order.sort_by_key(|&index| self.rank_in(record, index));
+        }
+        order
+    }
+    /// `index`'s place in `record`'s arrangement, `usize::MAX` for a library it did not place.
+    fn rank_in(&self, record: &plx_plex::plex::session::HomePins, index: usize) -> usize {
+        let Some(section) = self.sections.get(index) else { return usize::MAX };
+        let machine = self.sources.get(section.src).map_or("", |source| source.machine_id.as_str());
+        record.rank(machine, section.key).unwrap_or(usize::MAX)
+    }
+    /// [`arrange_from`](Self::arrange_from) against the registry as of now, after the pin write
+    /// was observed, as the Bridge hands a step.
+    #[cfg(test)]
+    fn arrange(&mut self, epoch: u32, order: &[usize]) -> bool {
+        self.observe_pin_write();
+        let session = plx_plex::plex::session::peek();
+        self.arrange_from(epoch, order, &session)
+    }
+    /// Has this profile arranged its libraries at all? Until it has, every reader keeps its own
+    /// order (the household tiebreak for a tab, the server's shelf order on Home).
+    fn arranged(&self) -> bool {
+        self.recorded.as_ref().is_some_and(|record| !record.order.is_empty())
+    }
+    /// The Library order page's commit: `order` names section indices of table `epoch` in the
+    /// order the viewer arranged them. It is written through the one pin-write path
+    /// ([`record_pins_from`](Self::record_pins_from)) with no switch answered, so it can move no
+    /// favourite and freeze no default; the record it produces is reconciled at once, as
+    /// [`apply_pins_from`](Self::apply_pins_from)'s is.
+    ///
+    /// A library the list does not name keeps its place after the named ones (its current
+    /// display position decides), so a page that lists only favourites never loses the rank of a
+    /// library that is not one. A stale epoch, a list naming no section of this table, or an order
+    /// that is already the recorded one changes nothing. A commit the session refuses (no identity
+    /// yet) is logged and changes nothing either: an order that cannot be saved is not shown as if
+    /// it were.
+    fn arrange_from(&mut self, epoch: u32, order: &[usize], session: &plx_plex::plex::session::Session) -> bool {
+        if epoch != self.table_epoch() {
+            return false;
+        }
+        let mut indices: Vec<usize> = Vec::with_capacity(self.sections.len());
+        for &index in order {
+            if index < self.sections.len() && !indices.contains(&index) {
+                indices.push(index);
+            }
+        }
+        if indices.is_empty() {
+            return false;
+        }
+        for index in self.display_order() {
+            if !indices.contains(&index) {
+                indices.push(index);
+            }
+        }
+        let arranged: Vec<plx_plex::plex::session::PinnedLib> = indices.iter().filter_map(|&index| {
+            let section = self.sections.get(index)?;
+            let machine_id = self.sources.get(section.src)?.machine_id.clone();
+            (!machine_id.is_empty()).then(|| plx_plex::plex::session::PinnedLib {
+                machine_id, key: section.key, extensions: Default::default(),
+            })
+        }).collect();
+        let unchanged = self.recorded.as_ref().is_some_and(|record| record.order.iter()
+            .map(|p| (p.machine_id.as_str(), p.key))
+            .eq(arranged.iter().map(|p| (p.machine_id.as_str(), p.key))));
+        if unchanged {
+            return false;
+        }
+        // An arrangement answers no switch, so it keeps whether the first-run question was put.
+        let asked = self.recorded.as_ref().is_some_and(|record| record.asked);
+        let Some(record) = self.record_pins_from(asked, &[], Some(arranged), session) else {
+            plx_base::eventlog::log("browse: the session refused this library order — nothing was recorded");
+            return false;
+        };
+        self.reconcile_pins(Some(record));
+        self.bump_sections_gen();
+        plx_machine::idle::invalidate();
+        true
     }
     fn retry_discovery(&mut self) {
         for source in &mut self.sources {
@@ -2870,6 +2972,7 @@ impl BrowseState {
                 self.apply_pins_from(&edits, session);
                 true
             }
+            BrowseCmd::ArrangeLibraries { epoch, sections } => self.arrange_from(epoch, &sections, session),
             BrowseCmd::RetryDiscovery => {
                 self.retry_discovery();
                 true

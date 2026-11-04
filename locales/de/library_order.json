@@ -1,0 +1,7 @@
+{
+  "library_order.title": "Reihenfolge der Mediatheken",
+  "library_order.detail": "Die Reihenfolge auf Start und in der Mediathek.",
+  "library_order.copy": "Wähle eine Mediathek aus, um sie aufzunehmen, verschiebe sie mit Hoch und Runter und wähle sie dann erneut aus, um sie abzulegen. Start zeigt zuerst das Regal „Kürzlich hinzugefügt“ jeder Mediathek in dieser Reihenfolge, und die Mediathek nennt sie in derselben.",
+  "library_order.moving": "Verschieben",
+  "library_order.empty": "Noch keine Lieblingsmediatheken."
+}

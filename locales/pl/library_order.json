@@ -1,0 +1,7 @@
+{
+  "library_order.title": "Kolejność bibliotek",
+  "library_order.detail": "Kolejność na stronie Główna i w Bibliotece.",
+  "library_order.copy": "Wybierz bibliotekę, aby ją podnieść, przesuń ją przyciskami Góra i Dół, a potem wybierz ją ponownie, aby ją odłożyć. Główna najpierw pokazuje półkę „Ostatnio dodane” każdej biblioteki w tej kolejności, a Biblioteka wymienia je w tej samej.",
+  "library_order.moving": "Przenoszenie",
+  "library_order.empty": "Nie masz jeszcze ulubionych bibliotek."
+}

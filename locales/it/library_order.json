@@ -1,0 +1,7 @@
+{
+  "library_order.title": "Ordine delle librerie",
+  "library_order.detail": "L’ordine in Home e in Libreria.",
+  "library_order.copy": "Seleziona una libreria per prenderla, spostala con Su e Giù, poi selezionala di nuovo per posarla. Home mostra prima la fila «Aggiunti di recente» di ogni libreria in quest’ordine, e Libreria le nomina nello stesso.",
+  "library_order.moving": "Spostamento",
+  "library_order.empty": "Ancora nessuna libreria preferita."
+}
