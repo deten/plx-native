@@ -891,16 +891,24 @@ impl Advance {
     /// nothing the app does by itself writes. A play the viewer started therefore starts the count
     /// afresh (it began with a press), while Up Next's own advances leave it running, which is the
     /// point: the limit is time since a person last touched the remote, however many episodes have
-    /// played since. A `last_input` ahead of `now` (a replay's stamp) reads as no idle time, the
-    /// codebase's half-range wrapping idiom.
+    /// played since. The idle time is [`idle_ms`]'s.
     pub(crate) fn automatic(now: u32, last_input: u32) -> Self {
-        let idle = now.wrapping_sub(last_input);
-        Advance::Automatic { idle_ms: if idle < 0x8000_0000 { idle } else { 0 } }
+        Advance::Automatic { idle_ms: idle_ms(now, last_input) }
     }
 }
 
-/// **Passout protection's decision**, pure: whether this advance is held back. Only an automatic
-/// advance, only to a successor that exists, and only once the chosen limit has passed.
+/// **The time since the viewer's last press**, at `now`, the press having arrived at `last_input`
+/// (`App::last_input`, see [`Advance::automatic`]). A `last_input` ahead of `now` (a replay's stamp)
+/// reads as no idle time, the codebase's half-range wrapping idiom.
+pub(crate) fn idle_ms(now: u32, last_input: u32) -> u32 {
+    let idle = now.wrapping_sub(last_input);
+    if idle < 0x8000_0000 { idle } else { 0 }
+}
+
+/// **Passout protection's decision at an advance**, pure: whether this advance is held back. Only
+/// an automatic advance, only to a successor that exists, and only once the chosen limit has
+/// passed. A successor is only ever an episode (`route::UpNext` is built for episodes alone), so a
+/// movie never reaches this with one; the episode on screen is [`passout_during_playback`]'s.
 pub(crate) fn passout_holds(advance: Advance, protection: plx_plex::plex::session::PassoutProtection, has_successor: bool) -> bool {
     match advance {
         Advance::Pressed => false,
@@ -921,6 +929,112 @@ pub(crate) fn passout_holds_back(advance: Advance, ps: &plx_media::route::Playba
         log(&format!("up next: passout after {}m idle (limit {}h), not advancing", idle_ms / 60_000, protection.hours()));
     }
     true
+}
+
+/// **How much of an episode Passout protection still lets play out.** When the limit is reached
+/// while an episode plays, one with this much or less left plays to its end (where the advance is
+/// then held back, [`passout_holds_back`]), and one with more left is stopped at once. Twenty
+/// minutes is the closing stretch and credits of a typical episode: a sleeper loses nothing by
+/// letting it finish, while anything longer is a large part of an episode played to an empty room,
+/// which the resume point keeps instead. A fixed rule rather than a setting; the Settings copy
+/// (`settings.playback.passout_protection.copy`) names the same twenty minutes.
+pub(crate) const PASSOUT_FINISH_WITHIN_MS: u64 = 20 * 60_000;
+
+/// **What Passout protection makes of the item on screen**, [`passout_during_playback`]'s answer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Passout {
+    /// Nothing to do: protection Off, not a TV episode, the limit not reached yet, or the item's
+    /// length not known yet.
+    Watching,
+    /// The limit is reached with [`PASSOUT_FINISH_WITHIN_MS`] or less left: the episode plays to its
+    /// end, which then does not advance.
+    FinishEpisode,
+    /// The limit is reached with more than [`PASSOUT_FINISH_WITHIN_MS`] left, or on a paused
+    /// episode: stop now, as Back does.
+    Stop,
+}
+
+/// **Passout protection's decision while an item plays**, pure, asked every frame
+/// ([`passout_watch`]). Only a TV episode (`is_episode`: never a movie, trailer, extra or clip) is
+/// ever touched, and only once `idle_ms` reaches the chosen limit. `remaining_ms` is the time left
+/// to the item's end, `None` while its length is not known.
+///
+/// A `paused` episode is stopped at the limit whatever is left: it can never reach its end on its
+/// own, so letting it finish means leaving it paused on screen indefinitely, and the stop keeps its
+/// resume point exactly as Back would.
+pub(crate) fn passout_during_playback(
+    protection: plx_plex::plex::session::PassoutProtection,
+    idle_ms: u32,
+    is_episode: bool,
+    remaining_ms: Option<u64>,
+    paused: bool,
+) -> Passout {
+    if !is_episode || !protection.holds(idle_ms) {
+        return Passout::Watching;
+    }
+    match remaining_ms {
+        None => Passout::Watching,
+        Some(left) if paused || left > PASSOUT_FINISH_WITHIN_MS => Passout::Stop,
+        Some(_) => Passout::FinishEpisode,
+    }
+}
+
+/// **Passout protection's watch over the episode on screen**, asked once a frame by the loop's
+/// playback tick while the player page holds a live Engine. The decision is
+/// [`passout_during_playback`]'s, fed the same reads the HUD's own model takes (the playhead and
+/// length from the player, `now_playing().is_real_episode` for `is_episode`, the viewer's pause).
+///
+/// On [`Passout::Stop`] the player is left through [`exit_player`], the Back ritual: the stop
+/// reports the position, so the resume point is kept and the episode is not marked watched. On
+/// [`Passout::FinishEpisode`] nothing changes but one log line: the end of the stream and the Up
+/// Next countdown then hold their advance ([`passout_holds_back`]), since the idle time only grows
+/// until a press. `noted` keeps that line to one per stretch of idleness: it is cleared whenever the
+/// answer is [`Passout::Watching`] again (a press). Returns whether the player was left.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn passout_watch(
+    player: &mut plx_media::player::machine::Player,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    repause_at: &mut i64,
+    refresh_hubs: &mut bool,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
+    is_episode: bool,
+    idle_ms: u32,
+    noted: &mut bool,
+) -> bool {
+    let protection = plx_media::route::passout_protection();
+    let duration_ns = plx_media::player::duration_ns();
+    let remaining_ms = (duration_ns > 0)
+        .then(|| u64::try_from(duration_ns.saturating_sub(plx_media::player::playpos_ns())).unwrap_or(0) / 1_000_000);
+    let paused = super::lifecycle::viewer_paused();
+    // Built only for the line that is written: the watch runs every frame. Minutes left round up,
+    // so 20 min 30 s reads "21m left" beside "stopping".
+    let head = || format!(
+        "passout: {}m idle (limit {}h), {}m left",
+        idle_ms / 60_000,
+        protection.hours(),
+        remaining_ms.unwrap_or(0).div_ceil(60_000),
+    );
+    match passout_during_playback(protection, idle_ms, is_episode, remaining_ms, paused) {
+        Passout::Watching => {
+            *noted = false;
+            false
+        }
+        Passout::FinishEpisode => {
+            if !*noted {
+                log(&format!("{}, ending after this episode", head()));
+                *noted = true;
+            }
+            false
+        }
+        Passout::Stop => {
+            log(&format!("{}{}, stopping", head(), if paused { ", paused" } else { "" }));
+            if let Some(screen) = super::bridge::player_mut(pages) {
+                screen.up_next.cancel(); // the exit only parks the pop: don't let a countdown fire meanwhile
+            }
+            exit_player(player, pa, repause_at, refresh_hubs, pages);
+            true
+        }
+    }
 }
 
 /// **Up Next's countdown ran out**: start the queued episode on its own. When Passout protection

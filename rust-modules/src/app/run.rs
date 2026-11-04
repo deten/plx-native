@@ -2101,6 +2101,28 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
                 super::playback::Advance::automatic(fr.now, app.last_input),
             );
         }
+        // Passout protection's watch over the episode playing (`playback::passout_watch`): once
+        // nobody has pressed anything for the chosen limit, a long stretch left stops the episode
+        // now, as Back does, and a short one plays to the end that the two advances above then hold
+        // back. After them, so a frame that already left the player (its Engine stopped) is not
+        // asked again, and only over a live Engine on the player page, not a preview's or an end's.
+        if playback_may_run(app)
+            && app.adapters.player.is_live()
+            && super::bridge::player(&app.pages).is_some()
+            && !plx_media::route::is_preview(&app.player.session)
+            && !plx_media::player::ended()
+        {
+            let is_episode = app.bridge.metadata_view().now_playing().is_some_and(|n| n.is_real_episode);
+            super::playback::passout_watch(&mut app.player,
+                &mut app.adapters.player,
+                &mut app.repause_at,
+                &mut app.refresh_hubs,
+                &mut app.pages,
+                is_episode,
+                super::playback::idle_ms(fr.now, app.last_input),
+                &mut app.passout_noted,
+            );
+        }
         // The return hold (`playback::ReturnHold`): armed for an exit that reported a stop, ended
         // by a fresh key press or click. That press is NOT delivered this frame: the page that
         // would take it is still the player (input is step 2 of the frame, the dip crosses its
@@ -3788,6 +3810,7 @@ mod lifecycle_regression_tests {
         plx_media::player::SHARED.reset_session();
         let mut app = App {
             last_input: Default::default(),
+            passout_noted: false,
             loop_t: Default::default(),
             iters_ct: Default::default(),
             loop_shown: Default::default(),
@@ -9407,6 +9430,261 @@ mod lifecycle_regression_tests {
         fr.now = t + 16;
         unsafe { playback_tick(&mut rig.app, &mut fr); }
         assert!(plx_media::route::play_pending(), "the end of the stream plays the next episode");
+    }
+
+    // ---- Passout protection's watch over a playing episode: stop a long stretch, finish a short one --
+
+    const MINUTE_MS: i64 = 60_000;
+
+    /// The Info card's descriptor for what plays: a real episode, or (`episode: false`) a movie.
+    fn now_playing_for_passout(app: &mut App, episode: bool) {
+        assert!(app.bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::SetNowPlaying(Some(plx_data::metadata::NowPlaying {
+            is_episode: episode,
+            is_real_episode: episode,
+            title: "Show".into(),
+            ep_title: if episode { "First".into() } else { String::new() },
+            season: i64::from(episode),
+            index: i64::from(episode),
+            summary: String::new(),
+            year: 0,
+            dur_ms: 0,
+            rating: String::new(),
+            thumb: String::new(),
+            detail_rk: "1".into(),
+        }))));
+    }
+
+    /// The live Engine's length and playhead, in minutes.
+    fn passout_playhead(duration_min: i64, position_min: i64) {
+        plx_media::player::SHARED.duration_ns.store(duration_min * MINUTE_MS * 1_000_000, Ordering::Relaxed);
+        plx_media::player::SHARED.playpos_ns.store(position_min * MINUTE_MS * 1_000_000, Ordering::Relaxed);
+    }
+
+    /// One playback tick at `now`, the last press `idle` before it.
+    fn passout_tick(rig: &mut Rig, now: u32, idle: u32) {
+        rig.app.last_input = now.wrapping_sub(idle);
+        let mut fr = Frame::begin(&rig.app.player.session, rig.app.bridge.metadata_view());
+        fr.now = now;
+        unsafe { playback_tick(&mut rig.app, &mut fr); }
+    }
+
+    /// **Thirty-five minutes left when the limit is reached: the episode stops now**, exactly as
+    /// Back would. A real Engine over a 45-minute episode at 10 minutes, two hours without a press
+    /// under a one-hour limit: the player is left, the stop reports the playhead (the resume point)
+    /// and the episode is not marked watched, nothing is requested, and one line says why.
+    #[test]
+    fn passout_protection_stops_a_long_episode_at_once_keeping_its_resume_point() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED passout_protection_stops_a_long_episode_at_once_keeping_its_resume_point: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::Countdown);
+        let _passout = PassoutGuard::set(plx_plex::plex::session::PassoutProtection::Hours1);
+        playing_live_at(&mut rig, 10 * MINUTE_MS);
+        passout_playhead(45, 10);
+        now_playing_for_passout(&mut rig.app, true);
+        assert!(super::super::bridge::player(&rig.app.pages).is_some(), "premise: the player is up");
+        let lines = logged_lines(|| passout_tick(&mut rig, 5_000, 2 * HOUR_MS));
+        assert!(!rig.app.adapters.player.is_live(), "the episode was stopped");
+        assert!(rig.app.refresh_hubs, "the exit ritual ran (it arms the hub refresh)");
+        assert!(!plx_media::route::play_pending(), "nothing is requested");
+        let mut t = 5_000;
+        settle(&mut rig.app, &mut t);
+        assert!(super::super::bridge::player(&rig.app.pages).is_none(), "the player was left");
+
+        let (stopped, scrobbled) = e1_stop_requests(&rig);
+        let stopped = stopped.expect("E1's `stopped` report reached the server");
+        let seen = rig.requests.lock().unwrap().clone();
+        assert!(seen[stopped].contains("time=600000"), "the stop reports the playhead: {}", seen[stopped]);
+        assert!(scrobbled.is_none(), "a stopped episode is not marked watched: {seen:?}");
+        assert_eq!(lines.lines().filter(|l| l.contains("passout")).count(), 1, "one passout line:\n{lines}");
+        assert!(
+            lines.lines().any(|l| l.contains("passout: 120m idle (limit 1h), 35m left, stopping")),
+            "the passout line names the idle time, the limit and what was left:\n{lines}",
+        );
+    }
+
+    /// **The same stop leaves for the page the episode was played from**, the Back ritual's own
+    /// return: the detail page, with nothing requested.
+    #[test]
+    fn passout_protection_stopping_an_episode_returns_to_the_detail_page() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::serving(true) else {
+            eprintln!("SKIPPED passout_protection_stopping_an_episode_returns_to_the_detail_page: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _passout = PassoutGuard::set(plx_plex::plex::session::PassoutProtection::Off);
+        let mut t = product_transition(&mut rig.app);
+        settle(&mut rig.app, &mut t);
+        super::super::bridge::open_detail(&mut rig.app.pages, &mut rig.app.bridge, rig.sid, "1", None, None);
+        settle(&mut rig.app, &mut t);
+        let origin = play_with_a_landing_inside_the_dip(&mut rig, &mut t);
+        assert!(rig.app.adapters.player.is_live(), "premise: an Engine plays");
+        passout_playhead(45, 10);
+        now_playing_for_passout(&mut rig.app, true);
+        plx_media::route::restore_passout_protection(plx_plex::plex::session::PassoutProtection::Hours1);
+        t += 16;
+        passout_tick(&mut rig, t, 2 * HOUR_MS);
+        assert!(!rig.app.adapters.player.is_live(), "the episode was stopped");
+        settle(&mut rig.app, &mut t);
+        assert!(!plx_media::route::play_pending(), "nothing is requested");
+        assert!(
+            rig.app.route().same_instance(&detail_arg(rig.sid)),
+            "the stop landed on {:?}, not the detail page",
+            rig.app.route().id(),
+        );
+        assert_eq!(rig.app.pages.nav.top_page().map(|e| e.id), Some(origin));
+    }
+
+    /// **Fifteen minutes left when the limit is reached: the episode plays to its end**, with one
+    /// line saying so however many frames follow, and that end then does not advance (Next
+    /// episode: After credits, so the end is the advance).
+    #[test]
+    fn passout_protection_lets_a_nearly_done_episode_finish_and_then_holds_the_advance() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED passout_protection_lets_a_nearly_done_episode_finish_and_then_holds_the_advance: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::AfterCredits);
+        let _passout = PassoutGuard::set(plx_plex::plex::session::PassoutProtection::Hours1);
+        playing_live_at(&mut rig, 30 * MINUTE_MS);
+        passout_playhead(45, 30);
+        now_playing_for_passout(&mut rig.app, true);
+        let lines = logged_lines(|| {
+            for now in [5_000, 5_016, 5_032] {
+                passout_tick(&mut rig, now, 2 * HOUR_MS);
+                assert!(rig.app.adapters.player.is_live(), "a nearly done episode plays on");
+            }
+        });
+        assert_eq!(lines.lines().filter(|l| l.contains("passout")).count(), 1, "one passout line:\n{lines}");
+        assert!(
+            lines.lines().any(|l| l.contains("passout: 120m idle (limit 1h), 15m left, ending after this episode")),
+            "the passout line names the idle time, the limit and what is left:\n{lines}",
+        );
+        assert!(super::super::bridge::player(&rig.app.pages).is_some(), "the player is still up");
+
+        // The end of the stream, the room still quiet: the advance is held back.
+        rig.hold_answers();
+        let lines = logged_lines(|| {
+            plx_media::player::SHARED.ended.store(true, Ordering::Relaxed);
+            passout_tick(&mut rig, 5_048, 2 * HOUR_MS);
+        });
+        assert!(!plx_media::route::play_pending(), "the end must not request the successor");
+        assert!(
+            lines.lines().any(|l| l.contains("up next: passout after 120m idle (limit 1h), not advancing")),
+            "the hold line at the end:\n{lines}",
+        );
+    }
+
+    /// **Exactly twenty minutes left is still a nearly done episode**: it plays on.
+    #[test]
+    fn passout_protection_lets_an_episode_with_exactly_twenty_minutes_left_finish() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED passout_protection_lets_an_episode_with_exactly_twenty_minutes_left_finish: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _passout = PassoutGuard::set(plx_plex::plex::session::PassoutProtection::Hours1);
+        playing_live_at(&mut rig, 25 * MINUTE_MS);
+        passout_playhead(45, 25);
+        now_playing_for_passout(&mut rig.app, true);
+        let lines = logged_lines(|| passout_tick(&mut rig, 5_000, HOUR_MS));
+        assert!(rig.app.adapters.player.is_live(), "twenty minutes left plays on");
+        assert!(lines.contains("passout: 60m idle (limit 1h), 20m left, ending after this episode"), "{lines}");
+    }
+
+    /// **A movie is never stopped**, however long the room was quiet and however much is left, and
+    /// nothing is logged for it.
+    #[test]
+    fn passout_protection_never_stops_a_movie() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED passout_protection_never_stops_a_movie: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _passout = PassoutGuard::set(plx_plex::plex::session::PassoutProtection::Hours1);
+        playing_live_at(&mut rig, 10 * MINUTE_MS);
+        passout_playhead(120, 10);
+        now_playing_for_passout(&mut rig.app, false);
+        let lines = logged_lines(|| passout_tick(&mut rig, 5_000, 5 * HOUR_MS));
+        assert!(rig.app.adapters.player.is_live(), "the movie plays on");
+        assert!(!lines.contains("passout"), "nothing is logged for a movie:\n{lines}");
+    }
+
+    /// **Off never stops an episode**, after any idle time.
+    #[test]
+    fn passout_protection_off_never_stops_an_episode() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED passout_protection_off_never_stops_an_episode: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _passout = PassoutGuard::set(plx_plex::plex::session::PassoutProtection::Off);
+        playing_live_at(&mut rig, 10 * MINUTE_MS);
+        passout_playhead(45, 10);
+        now_playing_for_passout(&mut rig.app, true);
+        let lines = logged_lines(|| passout_tick(&mut rig, 5_000, 5 * HOUR_MS));
+        assert!(rig.app.adapters.player.is_live(), "Off: the episode plays on");
+        assert!(!lines.contains("passout"), "Off logs nothing:\n{lines}");
+    }
+
+    /// **A key press resets the clock for the watch too**: two quiet hours, then one real key press
+    /// through the loop's own input ingest, and a long episode plays on.
+    #[test]
+    fn a_key_press_resets_the_passout_clock_and_a_long_episode_plays_on() {
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED a_key_press_resets_the_passout_clock_and_a_long_episode_plays_on: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _passout = PassoutGuard::set(plx_plex::plex::session::PassoutProtection::Hours1);
+        playing_live_at(&mut rig, 10 * MINUTE_MS);
+        passout_playhead(45, 10);
+        now_playing_for_passout(&mut rig.app, true);
+        let t: u32 = 5_000;
+        rig.app.last_input = t.wrapping_sub(2 * HOUR_MS);
+        clock::set_replay(t);
+        let mut fr = Frame::begin(&rig.app.player.session, rig.app.bridge.metadata_view());
+        fr.now = t;
+        rig.app.ev = encode_key(plx_ui::consts::SDLK_DOWN, 0, true);
+        event(&mut rig.app, &mut fr, SDL_KEYDOWN);
+        assert_eq!(rig.app.last_input, t, "the press stamped the idle clock");
+        fr.now = t + 16;
+        unsafe { playback_tick(&mut rig.app, &mut fr); }
+        assert!(rig.app.adapters.player.is_live(), "a press a moment ago keeps the episode playing");
+    }
+
+    /// **A paused episode is stopped at the limit whatever is left**: five minutes from the end,
+    /// paused, it would never reach that end on its own.
+    #[test]
+    fn passout_protection_stops_a_paused_episode_at_the_limit() {
+        let _serial = plx_base::testlock::serial();
+        let _transport = TransportPaused::keep();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED passout_protection_stops_a_paused_episode_at_the_limit: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _passout = PassoutGuard::set(plx_plex::plex::session::PassoutProtection::Hours1);
+        playing_live_at(&mut rig, 40 * MINUTE_MS);
+        passout_playhead(45, 40);
+        now_playing_for_passout(&mut rig.app, true);
+        set_paused(true);
+        let lines = logged_lines(|| passout_tick(&mut rig, 5_000, 2 * HOUR_MS));
+        assert!(!rig.app.adapters.player.is_live(), "the paused episode was stopped");
+        assert!(lines.contains("passout: 120m idle (limit 1h), 5m left, paused, stopping"), "{lines}");
+        let (stopped, scrobbled) = e1_stop_requests(&rig);
+        assert!(stopped.is_some(), "the stop reached the server");
+        assert!(scrobbled.is_none(), "and did not mark the episode watched");
     }
 }
 

@@ -37,23 +37,41 @@ Audio passthrough remains the television's Digital Sound Output setting.
 
 ## Passout protection
 
-**Passout protection** (Off by default, or after 1, 2 or 3 hours) stops Up Next from starting the
-next episode by itself once nobody has pressed a button for that long, the way other players ask
-whether you are still watching. It is listed under Next episode on the Video & playback page.
+**Passout protection** (Off by default, or after 1, 2 or 3 hours) acts once nobody has pressed a
+button for that long, the way other players ask whether you are still watching. It is listed under
+Next episode on the Video & playback page, and it applies to TV episodes only: a movie, a trailer,
+an extra or a clip always plays to its end as it does with the setting Off.
 
-Only the player's own advances are held back: the Up Next countdown running out, and the end of the
-stream under *Up Next countdown* or *After credits*. When one is held back the episode ends and the
-player goes back to the page it was opened from, exactly as under *Next episode: Off*; a countdown
-held back ends the episode in its final credits and marks it watched, as Skip Credits on that
-segment does. The event log records one line,
-`up next: passout after <N>m idle (limit <H>h), not advancing`.
+When the limit is reached while an episode plays (the loop asks on every frame), what is left of
+it decides:
+
+- **More than 20 minutes left**: playback stops at once, exactly as Back does. The player goes back
+  to the page it was opened from, the stop reports the position so the resume point is kept, and
+  the episode is not marked watched. The event log records
+  `passout: <N>m idle (limit <H>h), <M>m left, stopping`.
+- **20 minutes or less left**: the episode plays to its end and then does not advance, as under
+  *Next episode: Off*. The event log records
+  `passout: <N>m idle (limit <H>h), <M>m left, ending after this episode` once.
+
+The 20 minutes is fixed (`PASSOUT_FINISH_WITHIN_MS`), not a setting. A paused episode is stopped at
+the limit whatever is left, since it would never reach its end on its own; once the television's
+screensaver has taken the decoder back the session is already parked with nothing playing, and it
+waits for the viewer's next press as before.
+
+The advance itself is held back at the player's own two advance points: the Up Next countdown
+running out, and the end of the stream under *Up Next countdown* or *After credits*. The player then
+goes back to the page it was opened from, exactly as under *Next episode: Off*; a countdown held
+back ends the episode in its final credits and marks it watched, as Skip Credits on that segment
+does. Each held advance records `up next: passout after <N>m idle (limit <H>h), not advancing`.
 
 The idle time runs from the viewer's last key press, click, wheel or pointer movement on any page
 (`App::last_input`, stamped only by the loop's input ingest), so nothing the app does by itself
-restarts it, and episodes that started on their own do not either. A press of *Next Episode* on the
-Up Next tile, and the transport's Next, always start the next episode. The decision is
-`app::playback::passout_holds`, asked by `passout_holds_back` from `finish_playback` and
-`countdown_elapsed`. Off changes nothing, and an unknown stored value reads as Off.
+restarts it, and episodes that started on their own do not either. Paused time counts. A press of
+*Next Episode* on the Up Next tile, and the transport's Next, always start the next episode. The
+decisions are pure: `app::playback::passout_during_playback` while an episode plays, asked once a
+frame by `passout_watch` from the loop's playback tick, and `app::playback::passout_holds` at an
+advance, asked by `passout_holds_back` from `finish_playback` and `countdown_elapsed`. Off changes
+nothing, and an unknown stored value reads as Off.
 
 ## Plex account preferences
 

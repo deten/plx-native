@@ -7,7 +7,7 @@
   "settings.playback.dolby_vision.copy": "„Automatisch“ nutzt Dolby Vision, wenn der Fernseher es unterstützt. „Aus“ spielt die HDR10-Ebene ab. Dateien ohne HDR10-Ebene konvertiert dein Plex-Server, und sie werden womöglich nicht abgespielt.",
   "settings.playback.dolby_vision.off": "Aus",
   "settings.playback.passout_protection": "Einschlafschutz",
-  "settings.playback.passout_protection.copy": "Stoppt die automatische Wiedergabe nach so langer Zeit ohne Tastendruck.",
+  "settings.playback.passout_protection.copy": "Nach so langer Zeit ohne Tastendruck läuft eine Folge mit höchstens 20 Minuten Restzeit zu Ende, jede andere stoppt sofort, und die nächste startet nicht.",
   "settings.playback.passout_protection.off": "Aus",
   "settings.playback.passout_protection.hours": {
     "one": "Nach {count} Stunde",

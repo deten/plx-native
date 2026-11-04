@@ -7,7 +7,7 @@
   "settings.playback.dolby_vision.copy": "Automático usa Dolby Vision quando o televisor o suporta. Desativado reproduz a camada HDR10. Os ficheiros sem camada HDR10 são convertidos pelo seu servidor Plex e podem não ser reproduzidos.",
   "settings.playback.dolby_vision.off": "Desativado",
   "settings.playback.passout_protection": "Proteção de inatividade",
-  "settings.playback.passout_protection.copy": "Para a reprodução automática após este tempo sem premir nenhum botão.",
+  "settings.playback.passout_protection.copy": "Após este tempo sem premir nenhum botão, um episódio com 20 minutos ou menos por ver chega ao fim, qualquer outro para de imediato e o seguinte não começa.",
   "settings.playback.passout_protection.off": "Desativada",
   "settings.playback.passout_protection.hours": {
     "one": "Após {count} hora",

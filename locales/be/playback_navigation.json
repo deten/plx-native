@@ -7,7 +7,7 @@
   "settings.playback.dolby_vision.copy": "«Аўтаматычна» выкарыстоўвае Dolby Vision, калі тэлевізар яго падтрымлівае. «Выкл.» прайгравае слой HDR10. Файлы без слоя HDR10 канвертуе сервер Plex, і яны могуць не прайгравацца.",
   "settings.playback.dolby_vision.off": "Выкл.",
   "settings.playback.passout_protection": "Ахова ад засынання",
-  "settings.playback.passout_protection.copy": "Спыняе аўтапрайграванне, калі столькі часу не націскалася ніводная кнопка.",
+  "settings.playback.passout_protection.copy": "Калі столькі часу не націскалася ніводная кнопка, серыя, да канца якой засталося 20 хвілін ці менш, дайграе да канца, любая іншая адразу спыніцца, а наступная не пачнецца.",
   "settings.playback.passout_protection.off": "Выкл.",
   "settings.playback.passout_protection.hours": {
     "one": "Праз {count} гадзіну",

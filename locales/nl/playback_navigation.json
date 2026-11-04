@@ -7,7 +7,7 @@
   "settings.playback.dolby_vision.copy": "Auto gebruikt Dolby Vision als de tv dit ondersteunt. Uit speelt de HDR10-laag af. Bestanden zonder HDR10-laag converteert je Plex-server, en ze spelen mogelijk niet af.",
   "settings.playback.dolby_vision.off": "Uit",
   "settings.playback.passout_protection": "Inslaapbeveiliging",
-  "settings.playback.passout_protection.copy": "Stopt automatisch afspelen na zo lang zonder op een knop te drukken.",
+  "settings.playback.passout_protection.copy": "Na zo lang zonder op een knop te drukken speelt een aflevering met nog 20 minuten of minder tot het einde, stopt elke andere meteen en start de volgende niet.",
   "settings.playback.passout_protection.off": "Uit",
   "settings.playback.passout_protection.hours": {
     "one": "Na {count} uur",

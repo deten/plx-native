@@ -7,7 +7,7 @@
   "settings.playback.dolby_vision.copy": "Az Automatikus a Dolby Visiont használja, ha a TV támogatja. A Ki a HDR10 réteget játssza le. A HDR10 réteg nélküli fájlokat a Plex-szerver konvertálja, és lehet, hogy nem játszhatók le.",
   "settings.playback.dolby_vision.off": "Ki",
   "settings.playback.passout_protection": "Elalvásvédelem",
-  "settings.playback.passout_protection.copy": "Leállítja az automatikus lejátszást, ha ennyi ideig nem nyomtak meg gombot.",
+  "settings.playback.passout_protection.copy": "Ha ennyi ideig nem nyomtak meg gombot, a legfeljebb 20 perccel a vége előtt járó epizód végigmegy, minden más azonnal leáll, és a következő nem indul el.",
   "settings.playback.passout_protection.off": "Ki",
   "settings.playback.passout_protection.hours": {
     "one": "{count} óra után",

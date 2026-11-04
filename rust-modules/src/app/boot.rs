@@ -2465,6 +2465,7 @@ pub(crate) unsafe fn construct(
     let hud = super::run::boot_hud(&mut bridge, controlled);
     let mut app = App {
         last_input,
+        passout_noted: false,
         loop_t,
         iters_ct,
         loop_shown,

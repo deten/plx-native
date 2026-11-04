@@ -77,11 +77,13 @@ impl DolbyVisionMode {
     }
 }
 
-/// How long without a press before Up Next stops starting the next episode by itself — one per
-/// profile, like [`InstantDpadSeeking`]. Absence is `Off`, the advance every build before the
-/// preference made. A closed set, like [`super::SkipInterval`], so a hand-edited file cannot ask
-/// for a limit of a few seconds. Only an advance nobody pressed for is held back
-/// (`app::playback::passout_holds`): a pressed Next Episode always plays.
+/// How long without a press before a TV episode is stopped (or, nearly over, let finish) and Up
+/// Next stops starting the next episode by itself — one per profile, like [`InstantDpadSeeking`].
+/// Absence is `Off`, the playback every build before the preference made. A closed set, like
+/// [`super::SkipInterval`], so a hand-edited file cannot ask for a limit of a few seconds. Movies
+/// are never touched, and only an advance nobody pressed for is held back
+/// (`app::playback::passout_during_playback` and `passout_holds`): a pressed Next Episode always
+/// plays.
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PassoutProtection {
     #[default]
@@ -128,9 +130,9 @@ impl PassoutProtection {
         }
     }
 
-    /// **The decision**, pure: whether an advance Up Next would make on its own, `idle_ms` after
-    /// the viewer's last press, is held back. `Off` never holds one; a limit holds one from the
-    /// moment the idle time reaches it.
+    /// **Whether the limit is reached**, pure: `idle_ms` after the viewer's last press, an advance
+    /// Up Next would make on its own is held back and a playing episode is stopped or let finish.
+    /// `Off` never reaches one; a limit is reached from the moment the idle time reaches it.
     pub fn holds(self, idle_ms: u32) -> bool {
         self != PassoutProtection::Off && u64::from(idle_ms) >= u64::from(self.hours()) * 3_600_000
     }

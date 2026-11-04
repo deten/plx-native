@@ -902,7 +902,8 @@ pub fn restore_next_episode_mode(mode: NextEpisodeMode) { restore_live::<NextEpi
 /// save claims nothing.
 pub fn set_next_episode_mode(mode: NextEpisodeMode) -> bool { confirm::<NextEpisodeModePref>(mode) }
 
-/// The seated profile's Passout protection. Read where Up Next would advance on its own
+/// The seated profile's Passout protection. Read by the app's watch over a playing episode
+/// (`app::playback::passout_watch`) and where Up Next would advance on its own
 /// (`app::playback::passout_holds_back`); nothing in the route or the player reads it.
 pub fn passout_protection() -> PassoutProtection { PassoutProtectionPref::live() }
 pub fn restore_passout_protection(protection: PassoutProtection) { restore_live::<PassoutProtectionPref>(protection) }

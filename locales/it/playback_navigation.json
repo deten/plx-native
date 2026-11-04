@@ -7,7 +7,7 @@
   "settings.playback.dolby_vision.copy": "Automatico usa Dolby Vision se la TV lo supporta. Disattivato riproduce il livello HDR10. Il server Plex converte i file senza livello HDR10, che potrebbero non essere riprodotti.",
   "settings.playback.dolby_vision.off": "Disattivato",
   "settings.playback.passout_protection": "Protezione inattività",
-  "settings.playback.passout_protection.copy": "Interrompe la riproduzione automatica dopo questo tempo senza premere alcun tasto.",
+  "settings.playback.passout_protection.copy": "Dopo questo tempo senza premere alcun tasto, un episodio a cui mancano 20 minuti o meno arriva alla fine, ogni altro si ferma subito e il successivo non parte.",
   "settings.playback.passout_protection.off": "Disattivata",
   "settings.playback.passout_protection.hours": {
     "one": "Dopo {count} ora",
