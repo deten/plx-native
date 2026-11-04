@@ -92,6 +92,10 @@
 //! - `RetirePlaying` → `metadata::retire_playing`, `RetirePlayingItem` → `metadata::retire_playing_item`
 //!   — see that function's doc for why the two descriptions of "what was playing" must retire
 //!   together.
+//! - `RequestShuffle{sid, rk}` → `metadata::shuffle::request_shuffle` — Shuffle Show / Shuffle
+//!   Season: emit the server's shuffled PlayQueue of the show's or season's episodes as a
+//!   `StoreJob::MetaShuffle` the owner starts; the application takes the answer with
+//!   [`MetadataStore::take_shuffle`].
 //!
 //! Two route-unconditional per-frame landings sit beside `MetadataCmd` rather than inside it,
 //! because they are PUMPS (drain a mailbox, install what has landed) rather than requests a screen
@@ -233,6 +237,11 @@ pub enum MetadataCmd {
     MarkSkipped(crate::metadata::Marker),
     RetirePlaying,
     RetirePlayingItem,
+    /// Shuffle Show / Shuffle Season: ask `sid` for a shuffled PlayQueue of every episode under the
+    /// show or season `rk`, as a job the application starts. Supersedes a Shuffle still out; the
+    /// answer is taken with [`MetadataStore::take_shuffle`] by the generation
+    /// `MetadataView::shuffle_gen` reads right after this.
+    RequestShuffle { sid: ServerId, rk: String },
     /// Install the copies resolved for `(sid, rk)` by the alt-sources worker — the Also-Available
     /// panel's own store, addressed separately from the loaded item because a resolve lands one
     /// round trip later than the page mounts (D3: `metadata::alt_install` had no `Cmd` at all
@@ -408,6 +417,13 @@ impl MetadataStore {
         let changed = crate::metadata::pump_related_pages(&mut self.state, &self.adapter);
         if changed { self.bump(); }
         changed
+    }
+
+    /// Take Shuffle request `gen`'s answer once it has landed: `Some(Some(queue))` to play,
+    /// `Some(None)` when the server made no queue, `None` while it is out or once a newer request
+    /// superseded it. An ungated mailbox take, like the Related window's.
+    pub fn take_shuffle(&mut self, gen: u32) -> Option<Option<crate::metadata::shuffle::ShuffledQueue>> {
+        crate::metadata::shuffle::take_shuffle(&self.adapter, gen)
     }
 
     /// The cross-source alt-sources resolve, scoped by the Bridge's retained Browse directory.

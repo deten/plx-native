@@ -1212,6 +1212,19 @@ class Library:
             self.items[rk] = movie
             self.extra_media_files[rk] = path
 
+    def leaves_of(self, cont):
+        """The episodes under a show or a season (the leaves a `.../children` PlayQueue expands to),
+        in (season, episode) order; anything else, itself."""
+        if cont["type"] == "show":
+            key = "grandparentRatingKey"
+        elif cont["type"] == "season":
+            key = "parentRatingKey"
+        else:
+            return [cont]
+        out = [x for x in self.items.values()
+               if x["type"] == "episode" and x.get(key) == str(cont["ratingKey"])]
+        return sorted(out, key=lambda x: (x.get("parentIndex", 0), x.get("index", 0)))
+
     def continuous_queue(self, it):
         """The rows of a `continuous=1` PlayQueue started on `it`: an episode and every episode of
         its show after it, in (season, episode) order, as PMS answers; anything else, itself."""
@@ -2764,6 +2777,7 @@ class MockPms:
         self.lock = threading.Lock()
         self.link = link_conditioner.Conditioner()  # `--link`; a no-op until a profile is set
         self.play_queues = {}  # retained snapshots for GET /playQueues/<id>?center=<item id>
+        self.next_play_queue_id = 100  # Shuffle Show / Shuffle Season queues; 1 is the ordinary one
         self.wire_log = []  # `GET /_mock/wire`: per-request arrival/finish times under the link
         self.requests = []  # (path, status) in arrival order, for the harness
         # `/:/eventsource/notifications` (the PMS SSE feed): one queue per open stream, fed by
@@ -3460,6 +3474,26 @@ class MockPms:
                         it["viewOffset"] = int(t)
                         it["lastViewedAt"] = int(time.time())
             return j(self.container())
+        if p == "/playQueues" and q.get("uri", "").endswith("/children"):
+            # Shuffle Show / Shuffle Season (docs/pms-api.md, "Shuffle a show or season"): the
+            # container's children key names every episode under it, shuffled when `shuffle=1`
+            # (seeded by the container's key, so a test can predict the order). Each such queue
+            # has an id of its own and answers a short POST window, as a long queue does, so the
+            # client must read the rest through `GET /playQueues/<id>`.
+            crk = q["uri"].rsplit("/", 2)[-2]
+            cont = lib.items.get(int(crk)) if crk.isdigit() else None
+            leaves = lib.leaves_of(cont) if cont is not None else []
+            if q.get("shuffle") == "1":
+                random.Random(int(crk)).shuffle(leaves)
+            with self.lock:
+                qid = self.next_play_queue_id
+                self.next_play_queue_id += 1
+                rows = [dict(x, playQueueItemID=qid * 1000 + n) for n, x in enumerate(leaves, start=1)]
+                self.play_queues[qid] = rows
+            return j(self.container(Metadata=rows[:3], playQueueID=qid,
+                                    playQueueSelectedItemID=rows[0]["playQueueItemID"] if rows else 0,
+                                    playQueueSelectedItemOffset=0, playQueueTotalCount=len(rows),
+                                    playQueueShuffled=q.get("shuffle") == "1", playQueueVersion=1))
         if p == "/playQueues":
             uri = q.get("uri", "")
             rk = uri.rsplit("/", 1)[-1]

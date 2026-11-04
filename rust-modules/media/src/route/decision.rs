@@ -8489,12 +8489,40 @@ pub fn request_play_queue_item(
     row: &plx_plex::plex::QueueRow,
     ctx: &str,
 ) -> bool {
+    let queue = super::queue_navigation::QueueContinuation::capture(ps, row);
+    request_queue_row(ps, meta, caps, row, ctx, queue)
+}
+
+/// Start the row a queue the server has just made selected (Shuffle Show / Shuffle Season's
+/// shuffled queue, [`QueueContinuation::of_new_queue`](super::queue_navigation::QueueContinuation::of_new_queue)),
+/// as [`request_play_queue_item`] starts a row of the playing queue: the resolve reads that queue
+/// on (`QueueContinuation::refreshed`) instead of creating a new, in-order one, so the Up Next it
+/// arms, and every Up Next or Next after it, follow the server's order.
+pub fn request_play_new_queue(
+    ps: &mut PlaybackSession,
+    meta: &mut plx_data::stores::metadata::MetadataStore,
+    caps: std::sync::Arc<plx_platform::devcaps::Caps>,
+    queue: super::queue_navigation::QueueContinuation,
+    ctx: &str,
+) -> bool {
+    let row = queue.row().clone();
+    request_queue_row(ps, meta, caps, &row, ctx, Some(queue))
+}
+
+/// The request both queue doors make for `row`, carrying `queue` into the resolve.
+fn request_queue_row(
+    ps: &mut PlaybackSession,
+    meta: &mut plx_data::stores::metadata::MetadataStore,
+    caps: std::sync::Arc<plx_platform::devcaps::Caps>,
+    row: &plx_plex::plex::QueueRow,
+    ctx: &str,
+    queue: Option<super::queue_navigation::QueueContinuation>,
+) -> bool {
     let title = if row.show_title.is_empty() {
         &row.title
     } else {
         &row.show_title
     };
-    let queue = super::queue_navigation::QueueContinuation::capture(ps, row);
     request_play_with_queue(ps, meta, caps, PlaybackRequest {
         sid: row.sid, rk: row.rk.clone(), part: row.part.clone(), vcodec: row.vcodec.clone(),
         acodec: row.acodec.clone(), title: title.clone(), ctx: ctx.into(), preview: false, version: None,

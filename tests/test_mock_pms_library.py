@@ -7,6 +7,7 @@ import json
 import hashlib
 import os
 import pathlib
+import random
 import re
 import shutil
 import socket
@@ -1731,6 +1732,57 @@ class DetailFixtures(unittest.TestCase):
 
 def first_of(lib, kind):
     return next(it for it in lib.items.values() if it["type"] == kind)
+
+
+class ShuffledQueues(unittest.TestCase):
+    """Shuffle Show / Shuffle Season (docs/pms-api.md, "Shuffle a show or season"): a queue named by a
+    container's children key holds every episode under it, shuffled on request, answers a short POST
+    window and pages the rest through `GET /playQueues/<id>`, the read the app makes for each play."""
+
+    def post(self, pms, rk, shuffle=1):
+        uri = urllib.parse.quote(f"server://m/com.plexapp.plugins.library/library/metadata/{rk}/children")
+        status, _, data = pms.handle("POST", f"/playQueues?type=video&uri={uri}&shuffle={shuffle}&repeat=0")
+        self.assertEqual(status, 200)
+        return json.loads(data)["MediaContainer"]
+
+    def read(self, pms, mc):
+        first = mc["Metadata"][0]["playQueueItemID"]
+        return get(pms, f"/playQueues/{mc['playQueueID']}?own=0&center={first}&window=50"
+                        "&includeBefore=1&includeAfter=1")["Metadata"]
+
+    def test_a_show_queue_holds_every_episode_shuffled_and_pages_the_rest(self):
+        pms = MockPms(Library(seed=1))
+        show = first_of(pms.lib, "show")
+        episodes = pms.lib.leaves_of(show)
+        self.assertGreater(len(episodes), 3, "premise: a show longer than the POST window")
+        mc = self.post(pms, show["ratingKey"])
+        self.assertEqual(mc["playQueueTotalCount"], len(episodes))
+        self.assertEqual(len(mc["Metadata"]), 3, "the POST answers a window")
+        self.assertTrue(mc["playQueueShuffled"])
+        self.assertEqual(mc["playQueueSelectedItemID"], mc["Metadata"][0]["playQueueItemID"])
+        page = self.read(pms, mc)
+        shuffled = list(episodes)
+        random.Random(int(show["ratingKey"])).shuffle(shuffled)
+        self.assertEqual([r["ratingKey"] for r in page], [e["ratingKey"] for e in shuffled],
+                         "the read holds the whole queue, in the order the POST began")
+        self.assertEqual(len({r["playQueueItemID"] for r in page}), len(page))
+
+    def test_a_season_queue_holds_only_that_season(self):
+        pms = MockPms(Library(seed=1))
+        season = first_of(pms.lib, "season")
+        mc = self.post(pms, season["ratingKey"])
+        page = self.read(pms, mc)
+        self.assertEqual(len(page), len(pms.lib.leaves_of(season)))
+        self.assertTrue(all(r["parentRatingKey"] == season["ratingKey"] for r in page))
+
+    def test_each_queue_has_its_own_id_and_without_shuffle_the_shows_own_order(self):
+        pms = MockPms(Library(seed=1))
+        show = first_of(pms.lib, "show")
+        a, b = self.post(pms, show["ratingKey"], shuffle=0), self.post(pms, show["ratingKey"])
+        self.assertNotEqual(a["playQueueID"], b["playQueueID"])
+        self.assertNotIn(a["playQueueID"], (0, 1), "the ordinary queue keeps id 1")
+        self.assertEqual([r["ratingKey"] for r in self.read(pms, a)],
+                         [e["ratingKey"] for e in pms.lib.leaves_of(show)])
 
 
 def window(path, start, size, headers=False):

@@ -79,6 +79,8 @@
   "browse.menu.remove_deck": "Retirer de la liste",
   "browse.menu.play_version": "Lire une version…",
   "browse.menu.play_version_title": "Lire une version",
+  "browse.menu.shuffle_season": "Saison en aléatoire",
+  "browse.menu.shuffle_show": "Série en aléatoire",
   "browse.login.deleted": "Données locales supprimées",
   "browse.login.deleted_detail": "Les identifiants, préférences, données de télémétrie et diagnostics locaux ont été supprimés.",
   "browse.login.partial": "Déconnecté ; la plupart des données locales supprimées",

@@ -122,6 +122,10 @@ pub enum Action {
     /// Play this leaf's version `media`, resuming as Play does. The id, never a position: the app
     /// resolves it against the item it fetches (`plx_plex::plex::Metadata::media_version`).
     PlayVersion { rk: String, media: plx_plex::plex::MediaId },
+    /// Shuffle Show / Shuffle Season: play every episode under this show or season in an order the
+    /// server shuffles. The app asks the server for the shuffled queue and plays its first row
+    /// (`app::input::apply_item_action`); Up Next and Next then follow that queue.
+    Shuffle(String),
 }
 
 impl Action {
@@ -160,7 +164,8 @@ impl Action {
             | Action::RemoveFromDeck(rk)
             | Action::GoToCatalog(rk)
             | Action::WatchlistRemove(rk)
-            | Action::ChooseVersion(rk) => rk,
+            | Action::ChooseVersion(rk)
+            | Action::Shuffle(rk) => rk,
             Action::PlayVersion { rk, .. } => rk,
             Action::PlayTrailer { rk, .. } => rk,
             // No ratingKey: the subject is a catalog id.
@@ -184,6 +189,7 @@ impl Action {
             Action::WatchlistAdd { .. } => 11,
             Action::ChooseVersion(_) => 12,
             Action::PlayVersion { .. } => 13,
+            Action::Shuffle(_) => 14,
         };
         c.u32(tag).str(self.rk());
         if let Action::WatchlistAdd { hex } = self {
@@ -255,6 +261,10 @@ pub enum ItemRow {
     PlayVersion,
     /// One version on the Play Version page, by its position in the list captured at open.
     Version(u16),
+    /// Shuffle Season (a season card, a season tab).
+    ShuffleSeason,
+    /// Shuffle Show (a show card, a season tab).
+    ShuffleShow,
 }
 
 impl ItemRow {
@@ -280,6 +290,8 @@ impl FormId for ItemRow {
             ItemRow::WatchlistRemove => 10,
             ItemRow::WatchlistAdd => 11,
             ItemRow::PlayVersion => 12,
+            ItemRow::ShuffleSeason => 13,
+            ItemRow::ShuffleShow => 14,
             ItemRow::Version(n) => VERSION_KEY_BASE + u32::from(*n),
         })
     }
@@ -402,6 +414,14 @@ fn build_card(
     if had_nav {
         sec = sec.separator();
     }
+
+    // ---- shuffle: a show's every episode, or a season's, in an order the server shuffles ----
+    // Where Plex offers Shuffle: on a show and on a season, never on a movie or one episode.
+    sec = shuffle_rows(
+        sec,
+        (m.kind == 2).then_some(m.rk.as_str()),
+        (m.kind == 1).then_some(m.rk.as_str()),
+    );
 
     // ---- state ----
     // The row set comes from the shared `widgets::row_watch_state`, over the catalog row this menu
@@ -599,9 +619,39 @@ fn build_catalog(
 /// would have to pick a leaf, which is a second decision the row does not state. Starting a season
 /// from its beginning is what the first episode's own tile does, exactly and visibly. So
 /// `leaf: false` — the same flag [`build`] passes for a show, for the same reason.
-fn build_season(rk: &str, mark: PosterMark, face: Option<&watchlist::Face>) -> ItemForm {
-    let sec = state_rows(FormSection::new(""), rk, mark, false, false, None, "");
+///
+/// A season IS a thing to shuffle, though, and so is the show the page is about (`show_rk`, the
+/// page's own show; empty when unknown): the strip offers Shuffle Season, then Shuffle Show, ahead
+/// of the state rows, as Plex's show and season pages both offer Shuffle.
+fn build_season(rk: &str, show_rk: &str, mark: PosterMark, face: Option<&watchlist::Face>) -> ItemForm {
+    let sec = shuffle_rows(FormSection::new(""), Some(rk), Some(show_rk));
+    let sec = state_rows(sec, rk, mark, false, false, None, "");
     Form::new().section(watchlist::push_face(sec, face))
+}
+
+/// The Shuffle rows: a season's episodes, then every episode of a show, each in an order the
+/// server shuffles. A row whose container is unknown (`None` or an empty key) is absent.
+fn shuffle_rows(
+    sec: FormSection<ItemRow, Action, Infallible>,
+    season_rk: Option<&str>,
+    show_rk: Option<&str>,
+) -> FormSection<ItemRow, Action, Infallible> {
+    let season_rk = season_rk.filter(|rk| !rk.is_empty());
+    let show_rk = show_rk.filter(|rk| !rk.is_empty());
+    sec.item_if(
+        season_rk.is_some(),
+        ItemRow::ShuffleSeason,
+        RowKind::Button,
+        Action::Shuffle(season_rk.unwrap_or_default().to_string()),
+        Row::new(plx_platform::i18n::msg::browse_menu_shuffle_season()).licon(Icon::Shuffle),
+    )
+    .item_if(
+        show_rk.is_some(),
+        ItemRow::ShuffleShow,
+        RowKind::Button,
+        Action::Shuffle(show_rk.unwrap_or_default().to_string()),
+        Row::new(plx_platform::i18n::msg::browse_menu_shuffle_show()).licon(Icon::Shuffle),
+    )
 }
 
 /// **The Play Version page**: the shared version list (`plx_appkit::version_list`), every row a
@@ -715,7 +765,7 @@ impl ItemMenuScreen {
                 build_card(row, *from_deck, plx_media::route::deck_press(), trailer.as_ref(), remove, self.face.as_ref())
             }
             ItemMenuKind::Episode { mark, versions } => build_episode(&self.arg.rk, *mark, versions, self.face.as_ref()),
-            ItemMenuKind::Season { mark, .. } => build_season(&self.arg.rk, *mark, self.face.as_ref()),
+            ItemMenuKind::Season { mark, show_rk, .. } => build_season(&self.arg.rk, show_rk, *mark, self.face.as_ref()),
             ItemMenuKind::Catalog { state } => {
                 let guid = self.arg.catalog.as_ref().map_or("", |c| c.guid.as_str());
                 let kind = self.arg.catalog.as_ref().map_or(plx_data::watchlist::model::Kind::Movie, |c| c.kind);
@@ -1096,7 +1146,11 @@ mod tests {
         built(super::build_episode(rk, mark, &[], None))
     }
     fn build_season(rk: &str, mark: PosterMark) -> Built {
-        built(super::build_season(rk, mark, None))
+        built(super::build_season(rk, "", mark, None))
+    }
+    /// A season tab on the page of show `show_rk`.
+    fn build_season_tab(rk: &str, show_rk: &str, mark: PosterMark) -> Built {
+        built(super::build_season(rk, show_rk, mark, None))
     }
     impl Built {
         /// The row ids in drawn order (the separator is not a row).
@@ -1330,7 +1384,7 @@ mod tests {
         let menu = build(&item(1, PosterMark::InProgress), false);
         assert_eq!(
             labels(&menu),
-            ["Go to Show", "—", "Mark as Watched", "Mark as Unwatched"]
+            ["Go to Show", "—", "Shuffle Show", "Mark as Watched", "Mark as Unwatched"]
         );
         assert_eq!(
             menu.action(ItemRow::MarkWatched).watch_write(),
@@ -1344,10 +1398,10 @@ mod tests {
         // a show whose every leaf is seen is DONE, and offering to mark it watched again was the
         // old row set's other wrong answer (it read `!unwatched`, which cannot tell the two apart)
         let menu = build(&item(1, PosterMark::Watched), false);
-        assert_eq!(labels(&menu), ["Go to Show", "—", "Mark as Unwatched"]);
+        assert_eq!(labels(&menu), ["Go to Show", "—", "Shuffle Show", "Mark as Unwatched"]);
         // …and one nobody has opened offers only the way forward
         let menu = build(&item(1, PosterMark::None), false);
-        assert_eq!(labels(&menu), ["Go to Show", "—", "Mark as Watched"]);
+        assert_eq!(labels(&menu), ["Go to Show", "—", "Shuffle Show", "Mark as Watched"]);
     }
 
     #[test]
@@ -1367,7 +1421,7 @@ mod tests {
         let mut s = item(2, PosterMark::None);
         s.show_rk.clear();
         let menu = build(&s, false);
-        assert_eq!(labels(&menu), ["Mark as Watched"]);
+        assert_eq!(labels(&menu), ["Shuffle Season", "Mark as Watched"]);
     }
 
     /// **Remove from Continue Watching** is gated on the SHELF, not on the item: only a card that
@@ -1453,7 +1507,7 @@ mod tests {
 
     /// **A menu never opens with its focus on a destructive action.** *Mark as Unwatched* throws the
     /// watch record away (and propagates to the other copies), so a watched episode's menu opens on
-    /// *Play from Start*; a watched season, whose one row it is, still opens on it. *Remove from
+    /// *Play from Start* and a watched season on *Shuffle Season*. *Remove from
     /// Deck* is last in the shelf menu and is tagged too, so no reorder can make it the opening row.
     #[test]
     fn a_menu_never_opens_on_a_destructive_row() {
@@ -1464,7 +1518,7 @@ mod tests {
         assert!(matches!(opening(build_episode("77", PosterMark::Watched)),
             Action::PlayFromStart(_)), "a watched episode opened on Mark as Unwatched");
         assert!(matches!(opening(build_season("78", PosterMark::Watched)),
-            Action::MarkUnwatched(_)), "the only row is the one on offer");
+            Action::Shuffle(_)), "a watched season opened on Mark as Unwatched");
         assert!(matches!(opening(build_episode("79", PosterMark::None)),
             Action::MarkWatched(_)));
         let menu = build(&item(3, PosterMark::None), true);
@@ -1574,17 +1628,17 @@ mod tests {
             |extra: &str| format!(r#"{{"ratingKey":"14","type":"show","leafCount":10{extra}}}"#);
         assert_eq!(
             set(&show("")),
-            ["Go to Show", "—", "Mark as Watched"],
+            ["Go to Show", "—", "Shuffle Show", "Mark as Watched"],
             "no leaf viewed"
         );
         assert_eq!(
             set(&show(r#","viewedLeafCount":3"#)),
-            ["Go to Show", "—", "Mark as Watched", "Mark as Unwatched"],
+            ["Go to Show", "—", "Shuffle Show", "Mark as Watched", "Mark as Unwatched"],
             "3 of 10: neither watched nor unwatched, so BOTH verbs — the case `viewCount > 0` misses"
         );
         assert_eq!(
             set(&show(r#","viewedLeafCount":10"#)),
-            ["Go to Show", "—", "Mark as Unwatched"],
+            ["Go to Show", "—", "Shuffle Show", "Mark as Unwatched"],
             "all 10"
         );
 
@@ -2267,6 +2321,7 @@ mod tests {
             for mark in marks {
                 menus.push((format!("episode {mark:?}"), build_episode("1", mark)));
                 menus.push((format!("season {mark:?}"), build_season("1", mark)));
+                menus.push((format!("season tab {mark:?}"), build_season_tab("1", "7", mark)));
             }
             menus
         };
@@ -2283,6 +2338,63 @@ mod tests {
             }
         }
         plx_ui::table::assert_no_fit_failures(&out);
+    }
+
+    /// **Shuffle is offered where Plex offers it**: a show card shuffles the whole show and a season
+    /// card its own season, each by its own key; a movie, an episode and the filmstrip's episode
+    /// menu offer neither. The rows lead the action group, after the navigation rows.
+    #[test]
+    fn shuffle_rows_follow_the_item_kind() {
+        let show = build(&item(1, PosterMark::None), false);
+        assert!(show.offers(ItemRow::ShuffleShow) && !show.offers(ItemRow::ShuffleSeason));
+        assert_eq!(show.action(ItemRow::ShuffleShow), Action::Shuffle("42".into()), "the show's own key");
+        assert_eq!(show.ids()[..2], [ItemRow::GoToShow, ItemRow::ShuffleShow]);
+
+        let season = build(&item(2, PosterMark::None), false);
+        assert!(season.offers(ItemRow::ShuffleSeason) && !season.offers(ItemRow::ShuffleShow));
+        assert_eq!(season.action(ItemRow::ShuffleSeason), Action::Shuffle("42".into()), "the season's own key, not its show's");
+
+        for kind in [0, 3] {
+            let leaf = build(&item(kind, PosterMark::None), false);
+            assert!(!leaf.offers(ItemRow::ShuffleShow) && !leaf.offers(ItemRow::ShuffleSeason), "kind {kind}");
+        }
+        let episode = build_episode("5", PosterMark::None);
+        assert!(!episode.offers(ItemRow::ShuffleShow) && !episode.offers(ItemRow::ShuffleSeason));
+
+        // A deck show card while OK opens the page: Play leads, Shuffle Show follows it.
+        let deck = build_deck(&item(1, PosterMark::InProgress), true, DeckPress::Details);
+        assert_eq!(deck.ids()[..2], [ItemRow::Play, ItemRow::ShuffleShow]);
+        for (id, label) in [(ItemRow::ShuffleShow, "Shuffle Show")] {
+            assert!(labels(&show).iter().any(|l| l == label), "{id:?}");
+            assert!(!show.is_destructive(id));
+        }
+    }
+
+    /// The show page's season tab offers this season, then the page's whole show, ahead of the
+    /// watch-state rows, and opens on Shuffle Season (a play, never the write below it). A tab
+    /// whose show is unknown offers the season alone.
+    #[test]
+    fn a_season_tab_offers_its_season_then_its_show() {
+        let tab = build_season_tab("78", "7", PosterMark::None);
+        assert_eq!(tab.ids()[..3], [ItemRow::ShuffleSeason, ItemRow::ShuffleShow, ItemRow::MarkWatched]);
+        assert_eq!(tab.action(ItemRow::ShuffleSeason), Action::Shuffle("78".into()));
+        assert_eq!(tab.action(ItemRow::ShuffleShow), Action::Shuffle("7".into()));
+        assert_eq!(labels(&tab)[..2], ["Shuffle Season", "Shuffle Show"]);
+        assert_eq!(tab.0.opening_key(), Some(ItemRow::ShuffleSeason.key()));
+        let alone = build_season("78", PosterMark::None);
+        assert!(alone.offers(ItemRow::ShuffleSeason) && !alone.offers(ItemRow::ShuffleShow));
+    }
+
+    /// A Shuffle row's press reports the container's key to the app and dismisses the menu, like
+    /// every other row: the menu itself asks nothing of the server.
+    #[test]
+    fn a_shuffle_press_reports_the_container_and_dismisses() {
+        let _serial = plx_base::testlock::serial();
+        let mut s = screen_with(super::build_season("78", "7", PosterMark::None, None));
+        let req = commit(&mut s, ItemRow::ShuffleShow.focus_key());
+        assert_eq!(req.act, Action::Shuffle("7".into()));
+        let mut s = screen_with(super::build_season("78", "7", PosterMark::None, None));
+        assert_eq!(commit(&mut s, ItemRow::ShuffleSeason.focus_key()).act, Action::Shuffle("78".into()));
     }
 
     fn sample_versions() -> Vec<MediaVersion> {

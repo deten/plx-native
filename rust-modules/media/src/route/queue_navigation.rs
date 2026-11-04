@@ -31,6 +31,22 @@ impl QueueContinuation {
         Some(Self { id, rows: Arc::new(rows), selected })
     }
 
+    /// A queue the server has just made (Shuffle Show / Shuffle Season's shuffled queue), started
+    /// at its row `item_id`: `rows` are the window the server answered, and each Up Next or Next
+    /// from that row reads the same queue on. `None` for a queue with no id or no row of that id.
+    pub fn of_new_queue(id: i64, rows: Vec<QueueRow>, item_id: i64) -> Option<Self> {
+        if id <= 0 {
+            return None;
+        }
+        let target = rows.iter().find(|r| item_id != 0 && r.item_id == item_id)?.clone();
+        Self::from_queue(id.to_string(), rows, &target)
+    }
+
+    /// The row this continuation starts.
+    pub fn row(&self) -> &QueueRow {
+        &self.rows[self.selected]
+    }
+
     /// The live queue is lent, not owned, so its rows are copied only once `target` is found.
     pub(super) fn capture(ps: &PlaybackSession, target: &QueueRow) -> Option<Self> {
         with_queue(ps, |rows| {
@@ -186,6 +202,40 @@ mod tests {
         // Empty/expired/wrong-item windows cannot discard the known predecessor or selection.
         assert_eq!(handoff.with_window(Vec::new()).resolve().rows.len(), 2);
         assert_eq!(handoff.with_window(rows[2..].to_vec()).resolve().item_id, "12");
+    }
+
+    /// Shuffle Show / Shuffle Season: a queue the server has just made starts at the row it
+    /// selected, and the resolve names that queue, that row and the row after it in the server's
+    /// order (not the episodes' own). A window read later in the queue moves it on from there.
+    #[test]
+    fn queue_navigation_a_new_queue_starts_at_the_servers_selection_in_its_order() {
+        let sid = ServerId::from_raw(1);
+        let row = |item_id: i64, rk: &str| QueueRow {
+            item_id,
+            sid,
+            rk: rk.into(),
+            kind: "episode".into(),
+            part: format!("/library/parts/{rk}/file.mkv"),
+            ..Default::default()
+        };
+        let window = vec![row(701, "30"), row(702, "10")];
+        let start = QueueContinuation::of_new_queue(7, window.clone(), 701).expect("the selected row is in the window");
+        assert_eq!(start.row().rk, "30");
+        assert!(start.matches(sid, "30"));
+        let landed = start.resolve();
+        assert_eq!((landed.id.as_str(), landed.item_id.as_str()), ("7", "701"));
+        assert_eq!(landed.up_next.expect("the next row is an episode").rk, "10");
+        // The read further into the queue keeps the order the server shuffled.
+        let further = vec![row(701, "30"), row(702, "10"), row(703, "40"), row(704, "20")];
+        let read = start.with_window(further).resolve();
+        assert_eq!(read.rows.iter().map(|r| r.rk.as_str()).collect::<Vec<_>>(), ["30", "10", "40", "20"]);
+        // From the second row, the next is the third: a later advance reads on the same way.
+        let second = QueueContinuation::from_queue(read.id.clone(), read.rows.clone(), &read.rows[1]).unwrap().resolve();
+        assert_eq!(second.up_next.unwrap().rk, "40");
+        // No queue id, or a selection no row carries, is no queue to start.
+        assert!(QueueContinuation::of_new_queue(0, window.clone(), 701).is_none());
+        assert!(QueueContinuation::of_new_queue(7, window.clone(), 999).is_none());
+        assert!(QueueContinuation::of_new_queue(7, window, 0).is_none());
     }
 
     #[test]

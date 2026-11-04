@@ -1014,6 +1014,37 @@ subsequent direct-play need, so the feature costs zero extra round-trips.
   show returns `playQueueTotalCount: 1`, i.e. no successor. A movie behaves the same way.
 - The POST needs an `X-Plex-Client-Identifier`; without it PMS answers with an empty body.
 
+### Shuffle a show or season (UNVERIFIED against a live server)
+
+The item menu's **Shuffle Show** (a show card, a season tab) and **Shuffle Season** (a season card,
+a season tab) ask the server for a shuffled queue of the container's episodes and play it. The
+request is the form python-plexapi's `PlayQueue.create(server, item, shuffle=1)` builds for a show
+or a season (`plexapi/playqueue.py`): the item's `key`, which for a show or season is its children
+key, with `shuffle=1`. python-plexapi names the container as `library://{section uuid}/item/{key}`;
+the app keeps the `server://{machineIdentifier}/com.plexapp.plugins.library{key}` spelling its
+per-item queues already use, so it needs no section uuid. Neither request has been measured
+against a real PMS yet.
+
+| Step | Request |
+|---|---|
+| create | `POST /playQueues?type=video&uri=server://{machineIdentifier}/com.plexapp.plugins.library/library/metadata/{rk}/children&shuffle=1&repeat=0` |
+| read on | `GET /playQueues/{playQueueID}?own=0&center={playQueueItemID}&window=50&includeBefore=1&includeAfter=1` |
+
+- `{rk}` is the show's or the season's ratingKey. The server is expected to expand the container to
+  its leaves, so a show yields every episode of every season; a queue whose selected row has no
+  `Part` (a server that answered the seasons instead) is treated as no queue, and the event log
+  names the row's `type` (`shuffle: queue id=… first=…`).
+- `continuous` is not sent: the queue already holds every episode it will play. No
+  `X-Plex-Session-Identifier` is sent with the create either (python-plexapi sends none); each play's
+  own session id rides its timeline as usual.
+- The app plays the row the answer selects (`playQueueSelectedItemID`) and keeps the queue: that
+  row's resolve, and every Up Next or Next after it, reads the queue on from the row it plays (the
+  `GET` above, the same read Previous and Next make for any queue, `plex/src/plex/queue_window.rs`)
+  instead of creating a new, in-order queue, so the shuffle holds past the POST's own window.
+  Playing anything from outside the queue creates an ordinary queue for it, which ends the shuffle.
+- `tests/mock_pms.py` serves such queues: shuffled, seeded by the container's key, a three-row POST
+  window and the rest through the `GET`.
+
 ### Show chain (verified against a show, ratingKey 1857)
 
 ```

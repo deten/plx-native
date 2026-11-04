@@ -5956,6 +5956,122 @@ mod lifecycle_regression_tests {
         );
     }
 
+    /// The four episodes of the invented show 4300 in the order `shuffle_fixture`'s server shuffled
+    /// them: `(ratingKey, playQueueItemID)`. Their own order (S1 E1..E4) is the rating keys'.
+    const SHUFFLED: [(&str, i64); 4] = [("3", 703), ("1", 701), ("4", 704), ("2", 702)];
+
+    /// One of show 4300's episodes, as a queue row and as its own page.
+    fn shuffled_episode(rk: &str, item: i64) -> String {
+        format!(
+            r#"{{"ratingKey":"{rk}","playQueueItemID":{item},"type":"episode","title":"Episode {rk}",
+            "grandparentTitle":"Invented Show","grandparentRatingKey":"4300","parentIndex":1,"index":{rk},
+            "duration":60000,"Media":[{{"videoCodec":"h264","audioCodec":"aac","width":1280,"height":720,
+            "Part":[{{"id":{rk},"key":"/library/parts/{rk}/file.mkv","Stream":[
+            {{"id":{item}1,"streamType":1,"codec":"h264"}},
+            {{"id":{item}2,"streamType":2,"codec":"aac","selected":true}}]}}]}}]}}"#
+        )
+    }
+
+    /// A PMS for Shuffle Show on show 4300: `POST /playQueues` naming the show's children answers a
+    /// two-row window of a four-row shuffled queue (id 7, its first row selected), `GET /playQueues/7`
+    /// the whole queue, `/library/metadata/<rk>` the episode and `/decision` direct-plays. Any other
+    /// `POST /playQueues` (an ordinary play) is the in-order queue id 1 of [`queue_body`].
+    fn shuffle_fixture(request: &str) -> String {
+        let path = request.split_whitespace().nth(1).unwrap_or("").split('?').next().unwrap_or("");
+        let rows = |n: usize| SHUFFLED[..n].iter().map(|(rk, item)| shuffled_episode(rk, *item)).collect::<Vec<_>>().join(",");
+        if request.contains("/decision?") {
+            queue_body(request, true).to_owned()
+        } else if request.starts_with("POST ") && path == "/playQueues" && request.contains("%2Fchildren") {
+            format!(r#"{{"MediaContainer":{{"size":2,"playQueueID":7,"playQueueSelectedItemID":703,
+                "playQueueSelectedItemOffset":0,"playQueueTotalCount":4,"playQueueShuffled":true,"Metadata":[{}]}}}}"#, rows(2))
+        } else if request.starts_with("POST ") && path == "/playQueues" {
+            queue_body(request, true).to_owned()
+        } else if request.starts_with("GET ") && path == "/playQueues/7" {
+            format!(r#"{{"MediaContainer":{{"size":4,"playQueueID":7,"playQueueSelectedItemID":703,
+                "playQueueTotalCount":4,"Metadata":[{}]}}}}"#, rows(4))
+        } else if let Some((rk, item)) = SHUFFLED.iter().find(|(rk, _)| request.starts_with("GET ") && path == format!("/library/metadata/{rk}")) {
+            format!(r#"{{"MediaContainer":{{"size":1,"Metadata":[{}]}}}}"#, shuffled_episode(rk, *item))
+        } else {
+            r#"{"MediaContainer":{"size":0}}"#.to_owned()
+        }
+    }
+
+    /// Wait for the playback request in flight to land, and return what the session then plays:
+    /// `(ratingKey, playQueueID, playQueueItemID, the Up Next ratingKey)`.
+    fn landed(rig: &mut Rig, what: &str) -> (String, String, String, Option<String>) {
+        poll_until(&format!("{what}: the plan did not land"), || {
+            plx_media::route::pump_play(&mut rig.app.player.session, rig.app.bridge.metadata_mut()).is_some()
+        });
+        let ps = &rig.app.player.session;
+        (plx_media::route::cur_rk(ps), plx_media::route::pq_id(ps), plx_media::route::pq_item_id(ps),
+            plx_media::route::up_next(ps).map(|u| u.rk.clone()))
+    }
+
+    /// **Shuffle Show, end to end.** The item menu's press asks the server for the show's shuffled
+    /// queue (one POST with the show's children key and `shuffle=1`, a job the store runner
+    /// starts); its landing plays the row the server selected, and the resolve reads that queue on
+    /// (`GET /playQueues/7`) instead of creating an in-order one. Up Next is the shuffled queue's
+    /// next row, the countdown's advance and the transport's Next each step through the server's
+    /// order, and an ordinary play afterwards starts an ordinary queue, which ends the shuffle.
+    #[test]
+    fn a_shuffle_plays_the_servers_first_row_and_up_next_and_next_follow_its_order() {
+        use plx_appkit::player_hud::command::HudCommand;
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::serving_with(shuffle_fixture) else {
+            eprintln!("SKIPPED a_shuffle_plays_the_servers_first_row_and_up_next_and_next_follow_its_order: no fixture worker thread");
+            return;
+        };
+        let sid = rig.sid;
+        let mut wait = None;
+        let press = plx_screens::registry::ItemMenuReq {
+            act: plx_screens::item_menu::Action::Shuffle("4300".into()),
+            sid, item: None, season: None, loaded_episode: false, from_home: false,
+        };
+        unsafe {
+            super::super::input::apply_item_action(&mut rig.app.player.session, &mut rig.app.adapters.player, press,
+                &mut rig.app.pages, &mut rig.app.bridge, &mut super::playback::LivePlaybackResources, &mut wait, 0);
+        }
+        assert!(wait.is_some() && !plx_media::route::play_pending(), "the press asks; nothing plays yet");
+        // The POST is the Metadata store's job, parked by the test runner: run it. The fixture holds
+        // its first request until released.
+        rig.release.send(()).unwrap();
+        assert_eq!(rig.app.bridge.run_held_store_jobs_of_for_test(plx_data::stores::StoreId::Metadata), 1);
+        unsafe {
+            super::super::input::menu_play_tick(&mut rig.app.player.session, &mut rig.app.adapters.player,
+                &mut rig.app.pages, &mut rig.app.bridge, &mut wait, 16);
+        }
+        assert!(wait.is_none(), "the landing ended the wait");
+        assert_eq!(landed(&mut rig, "the first row"), ("3".into(), "7".into(), "703".into(), Some("1".into())),
+            "the server's selected row plays, as an item of queue 7, with the queue's next row up next");
+        frame(&mut rig.app, 32);
+
+        // The Up Next countdown runs out: the advance is the shuffled queue's next row, and ITS Up
+        // Next is a row the POST's two-row window never held, read from the server's queue.
+        let mut fr = rig.expire_countdown_on_mounted_player();
+        unsafe { playback_tick(&mut rig.app, &mut fr) };
+        assert_eq!(landed(&mut rig, "the Up Next advance"), ("1".into(), "7".into(), "701".into(), Some("4".into())));
+        // The transport's Next steps the same queue.
+        perform_on_a_mounted_player(&mut rig.app, HudCommand::Next, 100);
+        assert_eq!(landed(&mut rig, "Next"), ("4".into(), "7".into(), "704".into(), Some("2".into())));
+
+        let requests = rig.requests.lock().unwrap().clone();
+        let posts: Vec<_> = requests.iter().filter(|l| l.starts_with("POST /playQueues")).collect();
+        assert_eq!(posts.len(), 1, "one queue was made, and every play reused it: {posts:?}");
+        assert!(posts[0].contains("uri=server%3A%2F%2Flifecycle-fixture%2Fcom.plexapp.plugins.library%2Flibrary%2Fmetadata%2F4300%2Fchildren")
+            && posts[0].contains("shuffle=1") && !posts[0].contains("continuous"), "{}", posts[0]);
+        let reads = requests.iter().filter(|l| l.starts_with("GET /playQueues/7?")).count();
+        assert_eq!(reads, 3, "each play read the queue on from its own row: {requests:?}");
+
+        // Anything played from outside the queue starts an ordinary queue: the shuffle is over.
+        plx_media::player::stop_bufferfeed(&mut rig.app.player.session, &mut rig.app.adapters.player);
+        assert!(plx_media::route::request_play(&mut rig.app.player.session, rig.app.bridge.metadata_mut(),
+            plx_platform::devcaps::caps(), sid, "1", "/library/parts/1/file.mkv", "h264", "aac", "Invented Show", "", None));
+        let (rk, queue, _, next) = landed(&mut rig, "an ordinary play");
+        assert_eq!((rk.as_str(), queue.as_str(), next.as_deref()), ("1", "1", Some("2")), "an in-order queue of its own");
+        let posts = rig.requests.lock().unwrap().iter().filter(|l| l.starts_with("POST /playQueues")).count();
+        assert_eq!(posts, 2);
+    }
+
     /// **The GL-while-backgrounded audit (S12a), as far as a host can run it.** One iteration of
     /// `run`'s loop from the playback tick to the end of `present_and_swap`, the way `step` runs
     /// its first half, and then the two phases `step` leaves out. With the gate closed

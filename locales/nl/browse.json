@@ -79,6 +79,8 @@
   "browse.menu.remove_deck": "Verwijderen uit Verder kijken",
   "browse.menu.play_version": "Versie afspelen…",
   "browse.menu.play_version_title": "Versie afspelen",
+  "browse.menu.shuffle_season": "Seizoen willekeurig afspelen",
+  "browse.menu.shuffle_show": "Serie willekeurig afspelen",
   "browse.login.deleted": "Lokale gegevens gewist",
   "browse.login.deleted_detail": "Inloggegevens, voorkeuren, telemetrie en lokale diagnosegegevens zijn verwijderd.",
   "browse.login.partial": "Uitgelogd en de meeste lokale gegevens gewist",

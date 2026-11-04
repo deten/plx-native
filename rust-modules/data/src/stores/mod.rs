@@ -789,6 +789,15 @@ pub enum StoreJob {
     /// runner resolves the loaded item's server to its client at the launch; a server with none
     /// answers the failure without a GET. Not on the tape.
     MetaRelated(plx_machine::job::Job<crate::metadata::MetaRelatedReq>, crate::metadata::MetaRelatedPort),
+    /// One Shuffle Show / Shuffle Season (`MetadataCmd::RequestShuffle`): the POST that makes the
+    /// server's shuffled PlayQueue of the container's episodes, addressed by the request's
+    /// generation. A newer request supersedes it. The runner resolves the container's server to its
+    /// client at the launch; a server with none answers the failure without a request. Not on the
+    /// tape.
+    MetaShuffle(
+        plx_machine::job::Job<crate::metadata::shuffle::MetaShuffleReq>,
+        crate::metadata::shuffle::MetaShufflePort,
+    ),
 }
 
 /// How the runner admits a job before it starts it: the policy a job kind belongs to, stated on
@@ -844,12 +853,16 @@ impl StoreJob {
             // metadata command"), so no controlled run or replay emits one and the launch is the
             // whole decision (as for the season switch and the episode pages beside it).
             Self::MetaRelated(..) => Admission::Direct,
+            // A Shuffle is asked for by `MetadataCmd::RequestShuffle`, which `bootstrap/effects.rs`
+            // has no arm for either, so the launch is the whole decision.
+            Self::MetaShuffle(..) => Admission::Direct,
         }
     }
 
     pub fn store(&self) -> StoreId {
         match self {
-            Self::Detail(..) | Self::MetaSeason(..) | Self::MetaEpisodes(..) | Self::MetaRelated(..) => StoreId::Metadata,
+            Self::Detail(..) | Self::MetaSeason(..) | Self::MetaEpisodes(..) | Self::MetaRelated(..)
+            | Self::MetaShuffle(..) => StoreId::Metadata,
             Self::Collection(..) => StoreId::Collection,
             Self::Person(..) => StoreId::Person,
             Self::Catalog(..) => StoreId::Catalog,

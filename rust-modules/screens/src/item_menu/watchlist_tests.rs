@@ -75,7 +75,7 @@ fn an_unreachable_service_omits_the_row() {
         let m = card(kind, None);
         assert!(!m.offers(ItemRow::WatchlistAdd) && !m.offers(ItemRow::WatchlistRemove), "kind {kind}");
     }
-    for m in [menu(build_episode("1", PosterMark::None, &[], None)), menu(build_season("1", PosterMark::None, None))] {
+    for m in [menu(build_episode("1", PosterMark::None, &[], None)), menu(build_season("1", "", PosterMark::None, None))] {
         assert!(!m.offers(ItemRow::WatchlistAdd) && !m.offers(ItemRow::WatchlistRemove));
     }
 }
@@ -89,7 +89,7 @@ fn an_episode_names_the_show() {
     assert_eq!(on.action(ItemRow::WatchlistRemove), Action::WatchlistRemove(guid_of(Kind::Show, &HEX)));
     let ep_card = card(3, Some(&face(Membership::Off, Kind::Show, true)));
     assert_eq!(ep_card.label(ItemRow::WatchlistAdd), "Add Show to Watchlist");
-    let season = menu(build_season("9", PosterMark::None, Some(&face(Membership::Off, Kind::Show, true))));
+    let season = menu(build_season("9", "", PosterMark::None, Some(&face(Membership::Off, Kind::Show, true))));
     assert!(season.offers(ItemRow::WatchlistAdd));
 }
 

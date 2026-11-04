@@ -86,6 +86,32 @@ impl Client {
             rating_key,
         ))
     }
+
+    /// POST /playQueues for every episode of a show or of one season, in an order the server
+    /// shuffles (Shuffle Show / Shuffle Season). The server picks the first row, which is the
+    /// queue's selected item. Best-effort, like [`Client::create_play_queue`]: None on failure.
+    ///
+    /// The container is named by its children key, `/library/metadata/{rk}/children`, the key
+    /// python-plexapi's `PlayQueue.create` puts in the uri for a show or a season; the server
+    /// expands it to the leaves under it. `continuous` is left out: the queue already holds every
+    /// episode it will play. NOT yet verified against a live server (`docs/pms-api.md`, "Shuffle a
+    /// show or season").
+    pub fn create_shuffled_play_queue(&self, machine_id: &str, container_rk: &str) -> Option<PlayQueueResult> {
+        let q = self.playback_identity(shuffled_queue_query(machine_id, container_rk));
+        Some(PlayQueueResult::of(self.post_json(&q.build())?, self.id(), ""))
+    }
+}
+
+/// The request [`Client::create_shuffled_play_queue`] posts, before the client's identity.
+fn shuffled_queue_query(machine_id: &str, container_rk: &str) -> QueryBuilder {
+    let uri = format!(
+        "server://{machine_id}/com.plexapp.plugins.library/library/metadata/{container_rk}/children"
+    );
+    QueryBuilder::new("/playQueues")
+        .str("type", "video")
+        .str("uri", &uri)
+        .int("shuffle", 1)
+        .int("repeat", 0)
 }
 
 /// One retained row of the play queue: everything a queue list draws, plus everything
@@ -238,6 +264,35 @@ mod tests {
     }
     fn rks(items: &[QueueRow]) -> Vec<&str> {
         items.iter().map(|r| r.rk.as_str()).collect()
+    }
+
+    /// Shuffle Show / Shuffle Season: the container's children key in the uri, `shuffle=1`, and
+    /// no `continuous` (the queue already holds every episode).
+    #[test]
+    fn a_shuffled_queue_names_the_containers_children_and_asks_for_a_shuffle() {
+        let query = shuffled_queue_query("machine-a", "100").build();
+        assert_eq!(
+            query,
+            "/playQueues?type=video&uri=server%3A%2F%2Fmachine-a%2Fcom.plexapp.plugins.library%2Flibrary%2Fmetadata%2F100%2Fchildren&shuffle=1&repeat=0"
+        );
+        assert!(!query.contains("continuous"));
+    }
+
+    /// The POST's answer maps like any queue's: the selected row is the server's first pick, found
+    /// by its `playQueueItemID` (there is no ratingKey to fall back on), and the rows keep the
+    /// server's order.
+    #[test]
+    fn a_shuffled_queues_selected_row_is_found_by_its_item_id() {
+        let q = result(
+            r#"{"MediaContainer":{"playQueueID":7,"playQueueSelectedItemID":702,
+            "playQueueSelectedItemOffset":0,"playQueueTotalCount":4,"playQueueShuffled":true,"Metadata":[
+            {"playQueueItemID":702,"ratingKey":"30","type":"episode"},
+            {"playQueueItemID":703,"ratingKey":"10","type":"episode"}]}}"#,
+            "",
+        );
+        assert_eq!((q.id, q.selected_item_id, q.remaining), (7, 702, 3));
+        assert_eq!(rks(&q.items), ["30", "10"]);
+        assert_eq!(q.next.map(|r| r.rk), Some("10".to_string()));
     }
 
     #[test]

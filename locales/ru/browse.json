@@ -79,6 +79,8 @@
   "browse.menu.remove_deck": "Убрать из «Продолжить просмотр»",
   "browse.menu.play_version": "Смотреть версию…",
   "browse.menu.play_version_title": "Смотреть версию",
+  "browse.menu.shuffle_season": "Перемешать сезон",
+  "browse.menu.shuffle_show": "Перемешать сериал",
   "browse.login.deleted": "Локальные данные удалены",
   "browse.login.deleted_detail": "Данные входа, настройки, телеметрия и локальная диагностика удалены.",
   "browse.login.partial": "Вы вышли, большая часть локальных данных удалена",

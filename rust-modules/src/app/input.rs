@@ -309,10 +309,14 @@ pub(crate) struct MenuPlayAwait {
     stay_on_miss: bool,
 }
 
-/// Which asynchronous load a [`MenuPlayAwait`] is waiting on. Both phases are polled by the one
+/// Which asynchronous load a [`MenuPlayAwait`] is waiting on. Every phase is polled by the one
 /// [`menu_play_tick`] and bounded by the one `deadline`.
 #[derive(Clone, Copy)]
 enum MenuPlayPhase {
+    /// The item menu's Shuffle Show / Shuffle Season: the server's shuffled queue of `expect`'s
+    /// episodes (`expect` is the show or the season) was asked for as `MetadataCmd::RequestShuffle`,
+    /// and `gen` is `shuffle_gen` read right after it. Its first row plays once it lands.
+    Shuffle { gen: u32 },
     /// The parent detail request `activate_card` issued.
     Detail,
     /// A SEASON press whose requested season's episodes were not the listed ones: the parent has
@@ -336,6 +340,12 @@ impl MenuPlayAwait {
     /// The wait for a launch link's item (`app::deeplink`), its detail request just issued.
     pub(crate) fn for_link(sid: plx_plex::plex::ServerId, rk: String, open: bool, now: u32) -> Self {
         Self { open, stay_on_miss: true, ..Self::new(sid, rk, None, plx_screens::player::input::HUD_LINGER_MS, now) }
+    }
+
+    /// The wait for an item menu's Shuffle of the show or season `container_rk`, its request `gen`
+    /// just sent.
+    fn for_shuffle(sid: plx_plex::plex::ServerId, container_rk: String, gen: u32, hud_ms: u32, now: u32) -> Self {
+        Self { phase: MenuPlayPhase::Shuffle { gen }, ..Self::new(sid, container_rk, None, hud_ms, now) }
     }
 }
 
@@ -490,6 +500,10 @@ pub(crate) unsafe fn menu_play_tick(
         return;
     }
     let expired = now.wrapping_sub(deadline) < u32::MAX / 2;
+    if let MenuPlayPhase::Shuffle { gen } = phase {
+        shuffle_tick(ps, pa, pages, bridge, menu_play_await, expect, gen, hud_ms, expired);
+        return;
+    }
     if let MenuPlayPhase::Season { gen, idx } = phase {
         // The season fetch is still ours only while its generation stands and the item it hangs
         // off is still the loaded one: another season press, a new detail request or a page's
@@ -627,6 +641,61 @@ unsafe fn play_loaded_hero(
     } else {
         super::bridge::open_detail(pages, bridge, sid, expect, None, None);
     }
+}
+
+/// The Shuffle phase of a [`MenuPlayAwait`]: once the server's shuffled queue of `container_rk` has
+/// landed, play the row the server selected as the start of that queue
+/// (`playback::play_new_queue`), so Up Next and the transport's Next follow the server's order.
+/// The play goes through the door every Play from a page goes through
+/// (`content::clear_engine_for_play`), asked again next frame while a preview still holds the
+/// engine. A newer Shuffle, a queue the server did not make and the wait's ceiling each end the
+/// wait with a log line and leave the page as it is: there is no page of a season to land on.
+#[allow(clippy::too_many_arguments)]
+fn shuffle_tick(
+    ps: &mut plx_media::route::PlaybackSession,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
+    bridge: &mut super::bridge::Bridge,
+    menu_play_await: &mut Option<MenuPlayAwait>,
+    container_rk: &str,
+    gen: u32,
+    hud_ms: u32,
+    expired: bool,
+) {
+    if bridge.metadata_view().shuffle_gen() != gen {
+        *menu_play_await = None;
+        return;
+    }
+    match bridge.metadata_view().shuffle_answered(gen) {
+        None => {
+            if expired {
+                *menu_play_await = None;
+                plx_base::eventlog::log(&format!("shuffle: not played, rk={container_rk} (timed out)"));
+            }
+            return;
+        }
+        Some(false) => {
+            *menu_play_await = None;
+            let _ = bridge.metadata_mut().take_shuffle(gen);
+            plx_base::eventlog::log(&format!("shuffle: not played, rk={container_rk} (the server made no queue)"));
+            return;
+        }
+        Some(true) => {}
+    }
+    if !super::content::clear_engine_for_play(ps, pa, super::bridge::player(pages).is_some()) {
+        if expired {
+            *menu_play_await = None;
+            plx_base::eventlog::log(&format!("shuffle: not played, rk={container_rk} (engine busy)"));
+        }
+        return;
+    }
+    *menu_play_await = None;
+    let Some(Some(queue)) = bridge.metadata_mut().take_shuffle(gen) else { return };
+    let Some(start) = plx_media::route::QueueContinuation::of_new_queue(queue.id, queue.rows, queue.selected_item_id) else {
+        plx_base::eventlog::log(&format!("shuffle: not played, rk={container_rk} (no selected row)"));
+        return;
+    };
+    super::playback::play_new_queue(ps, pa, start, hud_ms, pages, bridge);
 }
 
 /// **D7 — reproduced against the historical (pre-fix) tree, not merely simulated.** Before this
@@ -788,6 +857,65 @@ mod activate_card_tests {
         assert!(menu_play_await.is_none(), "a collection must not arm playback");
         assert!(!plx_data::metadata::detail_loading(bridge.metadata_mut().adapter_ref()),
             "a collection must not request movie metadata");
+    }
+
+    /// **The item menu's Shuffle asks, and only asks.** The press leaves the shuffled queue's POST
+    /// as the Metadata store's job, on the captured server and the container's key, and arms the
+    /// Shuffle wait; nothing plays and nothing navigates on the press frame. A queue the server
+    /// did not make ends the wait the frame it lands, without touching the engine or the page; a
+    /// newer Shuffle supersedes the wait it replaced; and with no answer the wait gives up at its
+    /// ceiling, leaving the page as it is.
+    #[test]
+    fn a_shuffle_press_asks_for_the_queue_and_its_wait_ends_without_a_queue() {
+        use plx_machine::job::Port;
+        use plx_screens::item_menu::Action;
+        let _guard = plx_base::testlock::serial();
+        let mut ps = plx_media::route::PlaybackSession::default();
+        let mt = unsafe { plx_base::task::MainThread::assume() };
+        let mut pa = plx_media::player::adapter::PlayerAdapter::new(mt);
+        let mut pages = plx_ui::dispatch::Dispatcher::<super::bridge::AppHost>::new();
+        let mut bridge = super::bridge::Bridge::for_test(|| 0);
+        let sid = plx_plex::plex::ServerId::from_raw(5);
+        let press = |rk: &str| plx_screens::registry::ItemMenuReq {
+            act: Action::Shuffle(rk.into()), sid, item: None, season: None, loaded_episode: false, from_home: false };
+        let mut wait = None;
+        let mut shuffle = |bridge: &mut super::bridge::Bridge, wait: &mut Option<MenuPlayAwait>, rk: &str, now: u32| {
+            unsafe { apply_item_action(&mut ps, &mut pa, press(rk), &mut pages, bridge,
+                &mut crate::app::playback::LivePlaybackResources, wait, now); }
+        };
+        shuffle(&mut bridge, &mut wait, "4300", 7);
+        let armed = wait.clone().expect("the press arms the wait");
+        assert_eq!((armed.sid, armed.expect.as_str(), armed.deadline), (sid, "4300", 7u32.wrapping_add(12_000)));
+        assert!(matches!(armed.phase, MenuPlayPhase::Shuffle { gen } if gen == bridge.metadata_view().shuffle_gen()));
+        let mut held = bridge.take_held_store_jobs_for_test();
+        assert_eq!(held.len(), 1, "one job: the queue's POST");
+        let plx_data::stores::StoreJob::MetaShuffle(job, port) = held.remove(0) else { panic!("a Shuffle job") };
+        assert_eq!((job.req.sid, job.req.container_rk.as_str()), (sid, "4300"));
+        assert!(!plx_media::route::play_pending(), "nothing plays on the press frame");
+
+        // The server made no queue: the wait ends the frame it lands, and nothing moved.
+        port.done(job.addr, None);
+        let mut ps2 = plx_media::route::PlaybackSession::default();
+        let mut pa2 = plx_media::player::adapter::PlayerAdapter::new(unsafe { plx_base::task::MainThread::assume() });
+        let mut pages2 = plx_ui::dispatch::Dispatcher::<super::bridge::AppHost>::new();
+        unsafe { menu_play_tick(&mut ps2, &mut pa2, &mut pages2, &mut bridge, &mut wait, 16); }
+        assert!(wait.is_none(), "a queue the server did not make ends the wait");
+        assert!(!pages2.has_pending_navigation() && !plx_media::route::play_pending());
+
+        // A second press supersedes the first: the first's wait is moot.
+        shuffle(&mut bridge, &mut wait, "4300", 20);
+        let first = wait.clone();
+        shuffle(&mut bridge, &mut wait, "4301", 21);
+        let _ = bridge.take_held_store_jobs_for_test();
+        let mut stale = first;
+        unsafe { menu_play_tick(&mut ps2, &mut pa2, &mut pages2, &mut bridge, &mut stale, 22); }
+        assert!(stale.is_none(), "a superseded wait ends");
+        // With no answer, the live wait waits, then gives up at its ceiling with the page as it is.
+        unsafe { menu_play_tick(&mut ps2, &mut pa2, &mut pages2, &mut bridge, &mut wait, 30); }
+        assert!(wait.is_some(), "still out");
+        unsafe { menu_play_tick(&mut ps2, &mut pa2, &mut pages2, &mut bridge, &mut wait, 21 + 12_001); }
+        assert!(wait.is_none(), "the ceiling ends the wait");
+        assert!(!pages2.has_pending_navigation() && !plx_media::route::play_pending());
     }
 }
 
@@ -1026,6 +1154,14 @@ pub(super) unsafe fn apply_item_action<R: super::playback::PlaybackResources>(
         }
         // The menu turns itself into the version list; this never arrives (`ItemMenuScreen::activate`).
         Action::ChooseVersion(_) => {}
+        // Shuffle Show / Shuffle Season: ask the item's server for a shuffled queue of the show's or
+        // season's episodes (a job the Bridge starts in this call), and play its first row once it
+        // lands (`menu_play_tick`'s Shuffle phase). Up Next and Next then follow that queue.
+        Action::Shuffle(rk) => {
+            bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::RequestShuffle { sid, rk: rk.clone() });
+            let gen = bridge.metadata_view().shuffle_gen();
+            *menu_play_await = Some(MenuPlayAwait::for_shuffle(sid, rk, gen, HUD_LINGER_MS, now));
+        }
         // A picked version plays like Play: the filmstrip's leaf through the loaded season, a card
         // through the row the menu captured, resuming where it left off.
         Action::PlayVersion { rk, media } => {

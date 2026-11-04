@@ -319,6 +319,14 @@
     "value": "Play Version",
     "description": "Heading of the list of a movie's or episode's versions (files), opened from the Play Version… row. Each row below it is one version, e.g. \"25.2 Mbps · 4K\"; choosing one plays it."
   },
+  "browse.menu.shuffle_season": {
+    "value": "Shuffle Season",
+    "description": "Item context menu row on a season (a season card, or a season tab on the show's page). Plays every episode of that season in a random order the server picks."
+  },
+  "browse.menu.shuffle_show": {
+    "value": "Shuffle Show",
+    "description": "Item context menu row on a TV show (a show card, or a season tab on the show's page). Plays every episode of the show, across all its seasons, in a random order the server picks."
+  },
   "browse.login.deleted": {
     "value": "Local data deleted",
     "description": "browse login deleted"

@@ -34,21 +34,13 @@ pub(super) fn play(
     // The row is owned before the outgoing queue or engine can be retired. Its server identity
     // follows it across the handoff, independent of the server being browsed behind the player.
     let resume = plx_data::metadata::resume_ns(row.resume_ms, row.dur_ms);
-    let context = if row.kind == "episode" {
-        plx_ui::fmt::episode_kicker(row.season, row.index, &row.title)
-    } else {
-        String::new()
-    };
+    let context = context_of(&row);
     close_player_overlays(pages);
     plx_media::player::stop_bufferfeed(ps, pa);
     let requested = plx_media::route::request_play_queue_item(ps, bridge.metadata_mut(), start_caps(), &row, &context);
     bridge.start_store_jobs();
     if !requested { return false; }
-    bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::RetirePlaying);
-    bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::RequestDetail {
-            sid: row.sid,
-            rk: row.rk,
-        });
+    describe(bridge, row);
     start_playback(
         ps,
         pa,
@@ -60,4 +52,48 @@ pub(super) fn play(
         bridge,
     );
     true
+}
+
+/// The first row of a queue the server has just made for the item menu's Shuffle Show / Shuffle
+/// Season: [`play`]'s request and description, started from the page the menu was on
+/// (`Origin::Here`). Nothing is playing to stop: the caller has cleared the engine through
+/// `content::clear_engine_for_play`, the door every Play from a page goes through. Every Up Next
+/// and Next after it is [`play`] of the next row of the same queue.
+pub(super) fn start(
+    ps: &mut plx_media::route::PlaybackSession,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    queue: plx_media::route::QueueContinuation,
+    hud_ms: u32,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::super::bridge::AppHost>,
+    bridge: &mut super::super::bridge::Bridge,
+) -> bool {
+    let row = queue.row().clone();
+    let resume = plx_data::metadata::resume_ns(row.resume_ms, row.dur_ms);
+    let context = context_of(&row);
+    log(&format!("queue transport: start rk={}", row.rk));
+    let requested = plx_media::route::request_play_new_queue(ps, bridge.metadata_mut(), start_caps(), queue, &context);
+    bridge.start_store_jobs();
+    if !requested { return false; }
+    describe(bridge, row);
+    start_playback(ps, pa, resume, Origin::Here, hud_ms, None, pages, bridge);
+    true
+}
+
+/// The HUD's context line for a queue row: an episode's kicker, nothing for anything else.
+fn context_of(row: &QueueRow) -> String {
+    if row.kind == "episode" {
+        plx_ui::fmt::episode_kicker(row.season, row.index, &row.title)
+    } else {
+        String::new()
+    }
+}
+
+/// Retire the outgoing item's descriptor and ask for the row's own, which the HUD caption and
+/// Info card read once it lands.
+fn describe(bridge: &mut super::super::bridge::Bridge, row: QueueRow) {
+    bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::RetirePlaying);
+    bridge.metadata_run(plx_data::stores::metadata::MetadataCmd::RequestDetail {
+            sid: row.sid,
+            rk: row.rk,
+        });
 }

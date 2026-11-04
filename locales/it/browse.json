@@ -79,6 +79,8 @@
   "browse.menu.remove_deck": "Rimuovi da In coda",
   "browse.menu.play_version": "Riproduci versione…",
   "browse.menu.play_version_title": "Riproduci versione",
+  "browse.menu.shuffle_season": "Stagione in ordine casuale",
+  "browse.menu.shuffle_show": "Serie in ordine casuale",
   "browse.login.deleted": "Dati locali eliminati",
   "browse.login.deleted_detail": "Credenziali, preferenze, telemetria e dati diagnostici locali rimossi.",
   "browse.login.partial": "Disconnesso; gran parte dei dati locali eliminata",

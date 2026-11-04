@@ -143,6 +143,11 @@ pub enum Icon {
     /// [`Icon::Restart`] before reconciling them — they were reconciled once, on 2026-08-21, and it
     /// was wrong.
     PlayStart,
+    /// Two crossing arrows: play in an order the server shuffles (the item menu's Shuffle Show and
+    /// Shuffle Season rows). ONE stroked `<path>`, `sort.svg`'s construction: the line passing under
+    /// the crossing is two subpaths with a gap where the other runs over it, and each arrowhead is a
+    /// subpath meeting its line's end.
+    Shuffle,
     /// An X — "remove this" (the item menu's Remove from Continue Watching row).
     Close,
     /// A horizontal ellipsis — "more options". The player transport's third control disc, which
@@ -345,6 +350,7 @@ fn src(id: Icon) -> &'static str {
         Icon::Previous => include_str!("../../../assets/icons/previous.svg"),
         Icon::Next => include_str!("../../../assets/icons/next.svg"),
         Icon::PlayStart => include_str!("../../../assets/icons/play-start.svg"),
+        Icon::Shuffle => include_str!("../../../assets/icons/shuffle.svg"),
         Icon::Close => include_str!("../../../assets/icons/close.svg"),
         Icon::More => include_str!("../../../assets/icons/more.svg"),
         Icon::Search => include_str!("../../../assets/icons/search.svg"),
@@ -674,6 +680,33 @@ mod ink_tests {
             // is wider for the top bar than the middle, and for the middle than the bottom.
             let ink_in_row = |unit: f32| (0..px).filter(|&x| alpha(x, (unit / 24.0 * px as f32) as i32) > 127).count();
             assert!(ink_in_row(7.0) > ink_in_row(12.0) && ink_in_row(12.0) > ink_in_row(17.0));
+        }
+    }
+
+    /// The shuffle mark is one stroked path (no composite seam can form) and rasterizes clean at the
+    /// item menu's row size and at 4x: full opacity reached, no ink on the border, both arrowheads
+    /// inked at the right edge, and the under-line's gap at the crossing left open, so the two
+    /// lines read as one passing over the other.
+    #[test]
+    fn the_shuffle_mark_is_one_path_and_rasterizes_clean() {
+        let svg = src(Icon::Shuffle);
+        assert_eq!(svg.matches("<path").count(), 1, "one path: subpaths union without a seam");
+        assert!(svg.contains(r#"stroke-width="2.2""#) && svg.contains(r#"stroke-linecap="round""#));
+        for px in [26, 104] {
+            let px = icon_raster_px(px);
+            let rgba = plx_gfx::svg::rasterize(svg, px, px).expect("the shuffle mark rasterizes");
+            assert_eq!(rgba.len(), (px * px * 4) as usize);
+            let alpha = |x: i32, y: i32| rgba[((y * px + x) * 4 + 3) as usize];
+            let at = |ux: f32, uy: f32| alpha((ux / 24.0 * px as f32) as i32, (uy / 24.0 * px as f32) as i32);
+            assert_eq!((0..px).flat_map(|y| (0..px).map(move |x| alpha(x, y))).max(), Some(255), "never full at {px}px");
+            for i in 0..px {
+                for (x, y) in [(i, 0), (i, px - 1), (0, i), (px - 1, i)] {
+                    assert_eq!(alpha(x, y), 0, "ink on the border at {px}px ({x},{y})");
+                }
+            }
+            assert!(at(20.3, 7.0) > 127 && at(20.3, 17.0) > 127, "both arrowheads at {px}px");
+            assert!(at(11.25, 12.0) > 127, "the over-line through the crossing at {px}px");
+            assert!(at(10.2, 13.5) < 128 && at(12.3, 10.5) < 128, "the under-line's gap at {px}px");
         }
     }
 

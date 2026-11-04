@@ -79,6 +79,8 @@
   "browse.menu.remove_deck": "Aus „Als Nächstes“ entfernen",
   "browse.menu.play_version": "Version abspielen…",
   "browse.menu.play_version_title": "Version abspielen",
+  "browse.menu.shuffle_season": "Staffel zufällig abspielen",
+  "browse.menu.shuffle_show": "Serie zufällig abspielen",
   "browse.login.deleted": "Lokale Daten gelöscht",
   "browse.login.deleted_detail": "Anmeldedaten, Einstellungen, Telemetrie und lokale Diagnosedaten wurden entfernt.",
   "browse.login.partial": "Abgemeldet, die meisten lokalen Daten gelöscht",

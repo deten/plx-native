@@ -67,6 +67,7 @@ use plx_data::metadata::{
     fetch_full, finish_detail_fetch, finish_episodes_job, finish_related_job, finish_season_job, DetailPort,
     DetailReq, MetaEpisodesPort, MetaEpisodesReq, MetaRelatedPort, MetaRelatedReq, MetaSeasonPort, MetaSeasonReq,
 };
+use plx_data::metadata::shuffle::{finish_shuffle_job, MetaShufflePort, MetaShuffleReq};
 use plx_data::person::{finish_person_job, PersonPort, PersonReq};
 use plx_data::stores::catalog::{finish_catalog_job, CatalogPort, CatalogReq};
 use plx_data::stores::viewreconcile::{finish_reconcile_job, ReconcilePort, ReconcileReq};
@@ -271,6 +272,7 @@ impl StoreRunner {
             StoreJob::MetaSeason(job, port) => self.start_meta_season(job, port),
             StoreJob::MetaEpisodes(job, port) => self.start_meta_episodes(job, port),
             StoreJob::MetaRelated(job, port) => self.start_meta_related(job, port),
+            StoreJob::MetaShuffle(job, port) => self.start_meta_shuffle(job, port),
         }
     }
 
@@ -322,7 +324,8 @@ impl StoreRunner {
                 | StoreJob::ViewWrite(..)
                 | StoreJob::MetaSeason(..)
                 | StoreJob::MetaEpisodes(..)
-                | StoreJob::MetaRelated(..)) => self.start(other),
+                | StoreJob::MetaRelated(..)
+                | StoreJob::MetaShuffle(..)) => self.start(other),
         }
     }
 
@@ -420,6 +423,7 @@ impl StoreRunner {
                     | StoreJob::MetaSeason(..)
                     | StoreJob::MetaEpisodes(..)
                     | StoreJob::MetaRelated(..)
+                    | StoreJob::MetaShuffle(..)
                 ) => held.push(kept),
             }
         }
@@ -717,6 +721,35 @@ impl StoreRunner {
             #[cfg(test)]
             Self::Held { parked, .. } => {
                 parked.push(StoreJob::MetaRelated(job, port));
+                true
+            }
+        }
+    }
+
+    /// A Shuffle (the POST that makes a shuffled PlayQueue) is not on the tape either. A launch that
+    /// did not happen is refused, which answers the request as a queue the server did not make, so
+    /// the wait for it ends.
+    fn start_meta_shuffle(&mut self, job: Job<MetaShuffleReq>, port: MetaShufflePort) {
+        let addr = job.addr;
+        let refusal = port.clone();
+        if !self.launch_meta_shuffle(job, port) {
+            refusal.refused(addr);
+        }
+    }
+
+    /// Start the POST on a worker through the client resolved here, once, for the container's
+    /// server. A server the registry holds none for still launches, and its worker answers the
+    /// failure without a request.
+    fn launch_meta_shuffle(&mut self, job: Job<MetaShuffleReq>, port: MetaShufflePort) -> bool {
+        match self {
+            Self::Live => {
+                let client = plx_plex::plex::client_for(job.req.sid);
+                let Job { addr, req } = job;
+                plx_base::task::spawn_small("shuffle", move || finish_shuffle_job(&port, addr, client, req))
+            }
+            #[cfg(test)]
+            Self::Held { parked, .. } => {
+                parked.push(StoreJob::MetaShuffle(job, port));
                 true
             }
         }
@@ -1099,6 +1132,9 @@ impl StoreRunner {
                 }
                 StoreJob::MetaRelated(job, port) => {
                     finish_related_job(&port, job.addr, plx_plex::plex::client_for(job.req.sid), job.req);
+                }
+                StoreJob::MetaShuffle(job, port) => {
+                    finish_shuffle_job(&port, job.addr, plx_plex::plex::client_for(job.req.sid), job.req);
                 }
             }
         }

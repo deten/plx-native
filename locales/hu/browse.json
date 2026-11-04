@@ -79,6 +79,8 @@
   "browse.menu.remove_deck": "Eltávolítás a listából",
   "browse.menu.play_version": "Verzió lejátszása…",
   "browse.menu.play_version_title": "Verzió lejátszása",
+  "browse.menu.shuffle_season": "Évad véletlen sorrendben",
+  "browse.menu.shuffle_show": "Sorozat véletlen sorrendben",
   "browse.login.deleted": "Helyi adatok törölve",
   "browse.login.deleted_detail": "A hitelesítő adatok, a beállítások, a telemetria és a helyi diagnosztika törölve.",
   "browse.login.partial": "Kijelentkezve, a legtöbb helyi adat törölve",

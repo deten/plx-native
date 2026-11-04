@@ -240,8 +240,10 @@ worker start and the `client_for` read inside that worker are gone too. The hous
   `plx_data::browse::listing_jobs::{BrowseDirectoryReq, BrowseDirectoryPort}`,
   `plx_data::browse::listing_jobs::{BrowsePageReq, BrowsePagePort}`,
   `plx_data::browse::discovery_job::{BrowseDiscoveryReq, BrowseDiscoveryPort}` (`BrowseStore::take_jobs`) and
-  `plx_data::metadata::{MetaSeasonReq, MetaSeasonPort, MetaEpisodesReq, MetaEpisodesPort}` and
-  `plx_data::metadata::{MetaRelatedReq, MetaRelatedPort}`. The app's `StoreRunner`
+  `plx_data::metadata::{MetaSeasonReq, MetaSeasonPort, MetaEpisodesReq, MetaEpisodesPort}`,
+  `plx_data::metadata::{MetaRelatedReq, MetaRelatedPort}` and
+  `plx_data::metadata::shuffle::{MetaShuffleReq, MetaShufflePort}` (Shuffle Show / Shuffle
+  Season's POST, `Direct`). The app's `StoreRunner`
   (`app/adapters/stores.rs`) executes a job and owns what `data/` must not: the tape's admission
   record, the thread and the `client_for` read. It is `Live` or `Held` (a test parks the job and
   runs it on the test thread), chosen when the `Bridge` is constructed; a newer Detail request

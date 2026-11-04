@@ -79,6 +79,8 @@
   "browse.menu.remove_deck": "Usuń z kolejki",
   "browse.menu.play_version": "Odtwórz wersję…",
   "browse.menu.play_version_title": "Odtwórz wersję",
+  "browse.menu.shuffle_season": "Sezon w losowej kolejności",
+  "browse.menu.shuffle_show": "Serial w losowej kolejności",
   "browse.login.deleted": "Dane lokalne usunięte",
   "browse.login.deleted_detail": "Usunięto dane logowania, preferencje, telemetrię i lokalne dane diagnostyczne.",
   "browse.login.partial": "Wylogowano i usunięto większość danych lokalnych",

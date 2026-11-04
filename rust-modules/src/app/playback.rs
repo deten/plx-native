@@ -1026,6 +1026,21 @@ pub(crate) fn play_up_next(
     }, hud_ms, pages, bridge)
 }
 
+/// Start a queue the server has just made, at the row it selected: the item menu's Shuffle Show /
+/// Shuffle Season, once its shuffled queue lands (`input::menu_play_tick`). The resolve reads that
+/// queue on rather than creating an in-order one, so [`play_up_next`] and the transport's Next
+/// follow the shuffle; playing anything else starts an ordinary queue and so ends it.
+pub(crate) fn play_new_queue(
+    ps: &mut plx_media::route::PlaybackSession,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    queue: plx_media::route::QueueContinuation,
+    hud_ms: u32,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
+    bridge: &mut super::bridge::Bridge,
+) -> bool {
+    queue_transport::start(ps, pa, queue, hud_ms, pages, bridge)
+}
+
 /// Direct-play a LEAF catalog item (movie or episode) — the hero-pill / Continue-Watching
 /// "play now" ritual: route cfg + streams metadata + the shared start ritual.
 /// `from_start` ignores the item's resume point — the item menu's "Play from Start", which is

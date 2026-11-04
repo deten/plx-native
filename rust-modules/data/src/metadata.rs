@@ -6,6 +6,7 @@
 use std::os::raw::c_int;
 pub mod episode_list;
 pub mod record;
+pub mod shuffle;
 pub mod sub_layout;
 pub mod track_label;
 pub mod track_names;
@@ -87,6 +88,17 @@ impl<'a> MetadataView<'a> {
     pub fn detail_request_status(&self, sid: plx_plex::plex::ServerId, rk: &str) -> Option<bool> {
         detail_request_status(self.adapter, sid, rk)
     }
+    /// Generation of the most recent Shuffle request (`MetadataCmd::RequestShuffle`): what a caller
+    /// that awaits ITS answer reads right after sending it.
+    pub fn shuffle_gen(&self) -> u32 {
+        shuffle::shuffle_gen(self.adapter)
+    }
+    /// Has Shuffle request `gen` answered, while it is still the latest: `Some(true)` with a queue
+    /// to play, `Some(false)` with none, `None` while it is out. The answer itself is taken with
+    /// `MetadataStore::take_shuffle`.
+    pub fn shuffle_answered(&self, gen: u32) -> Option<bool> {
+        shuffle::shuffle_answered(self.adapter, gen)
+    }
     /// See [`detail_generation`] (free fn) for why a bare terminal `bool` is not enough identity.
     pub fn detail_generation(&self) -> u32 {
         detail_generation(self.adapter)
@@ -165,8 +177,9 @@ pub struct MetadataState {
     /// The IO this owner has asked the application to start and the application has not yet taken
     /// (`MetadataStore::take_jobs`): one [`crate::stores::StoreJob::Detail`] per accepted detail
     /// request, one [`crate::stores::StoreJob::MetaSeason`] per season switch, one
-    /// [`crate::stores::StoreJob::MetaEpisodes`] per episode-page window and one
-    /// [`crate::stores::StoreJob::MetaRelated`] per Related tail window. The owner never starts
+    /// [`crate::stores::StoreJob::MetaEpisodes`] per episode-page window, one
+    /// [`crate::stores::StoreJob::MetaRelated`] per Related tail window and one
+    /// [`crate::stores::StoreJob::MetaShuffle`] per Shuffle Show / Shuffle Season. The owner never starts
     /// the work itself, so no thread, clock or network read happens in the step that asks. A job
     /// taken is a job owed to its runner: the application's `Bridge` starts each one in the same
     /// call that stepped the store (`app::adapters::stores`).
@@ -197,6 +210,8 @@ pub struct MetadataAdapter {
     ep_pages: std::sync::Mutex<EpPages>,
     /// The Related tail window read in flight and landed ([`want_related`]).
     rel_pages: std::sync::Mutex<RelPages>,
+    /// The latest Shuffle Show / Shuffle Season request and its answer ([`shuffle`]).
+    shuffle: std::sync::Mutex<shuffle::ShuffleSlot>,
     tracker: std::sync::Mutex<record::Tracker>,
 }
 
@@ -217,6 +232,7 @@ impl Default for MetadataAdapter {
             season_result: std::sync::Mutex::new(None),
             ep_pages: std::sync::Mutex::new(EpPages::default()),
             rel_pages: std::sync::Mutex::new(RelPages::default()),
+            shuffle: std::sync::Mutex::new(shuffle::ShuffleSlot::default()),
             tracker: std::sync::Mutex::new(record::Tracker::new(false)),
         }
     }
@@ -4155,6 +4171,7 @@ pub fn run(state: &mut MetadataState, adapter: &std::sync::Arc<MetadataAdapter>,
             retire_playing_item(state);
             true
         }
+        MetadataCmd::RequestShuffle { sid, rk } => shuffle::request_shuffle(state, adapter, sid, rk),
         #[cfg(any(test, feature = "test-support"))]
         MetadataCmd::AltInstall { sid, rk, copies } => alt_install(state, sid, &rk, copies),
         #[cfg(any(test, feature = "test-support"))]
