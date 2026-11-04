@@ -122,6 +122,7 @@ fn the_shared_fixture_resolves_the_defaults_over_a_recorded_answer() {
                     asked: true,
                     on: vec![lib("mac-mini", 2)],
                     off: vec![lib("mac-mini", 1), lib("nas-home", 1), lib("nas-home", 2)],
+                    order: Vec::new(),
                     extensions: Default::default(),
                 },
             );
@@ -258,6 +259,7 @@ fn a_commit_leaves_the_table_showing_what_it_saved() {
                     asked: true,
                     on: vec![lib("laptop", 1)],
                     off: vec![lib("mac-mini", 1), lib("study-nas", 1)],
+                    order: Vec::new(),
                     extensions: Default::default(),
                 },
             );
@@ -1562,4 +1564,118 @@ fn ending_a_library_visit_forgets_only_its_transient_choice_and_rejects_old_epoc
     assert_eq!(browse.state.remembered_section(SecKind::Movie), Some(0));
     assert!(browse.state.visited.iter().any(|(kind, _, _)| *kind == SecKind::Show));
     assert!(browse.jobs.is_empty(), "ending a visit performs no IO");
+}
+
+/// **A library arrangement is a permutation its readers apply, never a reorder of the table.**
+/// Section indices are addresses (the listing, the pins and a pending press all hold one), so
+/// `arrange_from` leaves `sections` where they were and only `display_order`, the directory's
+/// `rows_for` and `arranged`, and a tab's first library see the new order. A library the commit
+/// does not name keeps its relative place after the named ones, a stale epoch is refused, and the
+/// order is written into the profile's Favorite libraries record, by (machine id, key), where a
+/// fresh table reads it back as the same order.
+#[test]
+fn an_arrangement_reorders_the_display_never_the_table() {
+    let _g = plx_base::testlock::serial();
+    let t = TempPins::new("library-order");
+    t.watching("u-owner");
+    let mut browse = TestBrowse::default();
+    seed_two_servers(&mut browse);
+    browse.state.apply_pins(&[(2, true)]);
+    plx_base::storage_worker::drain_for_test();
+    // 0 Movies (mac-mini 1), 1 TV Shows (mac-mini 2), 2 Film Club (nas-home 1)
+    assert_eq!(browse.state.display_order(), vec![0, 1, 2], "nothing arranged is table order");
+    assert_eq!(browse.state.section_of_kind(SecKind::Movie), Some(0), "the household's films open the tab");
+
+    let epoch = browse.state.table_epoch();
+    assert!(!browse.state.arrange(epoch.wrapping_add(1), &[2, 0]), "a stale epoch changes nothing");
+    let generation = browse.state.sections_gen();
+    assert!(browse.state.arrange(epoch, &[2, 0]));
+    assert_ne!(browse.state.sections_gen(), generation, "an arrangement must re-capture and re-merge");
+    assert_eq!(browse.state.display_order(), vec![2, 0, 1], "the unnamed library keeps its place after");
+    assert_eq!(browse.state.sections[2].title, "Film Club", "the table itself never moves");
+    assert!(!browse.state.arrange(epoch, &[2, 0, 1]), "the same order again writes nothing");
+    assert_eq!(browse.state.section_of_kind(SecKind::Movie), Some(2),
+        "the arranged order beats the household tiebreak for a tab's first library");
+    assert!((0..3).all(|i| browse.pinned(i)), "an arrangement moves no favorite");
+
+    let mut directory = super::view::DirectorySnapshot::default();
+    directory.capture_from(&mut browse.state);
+    let view = directory.view();
+    assert_eq!(view.sections()[0].row.title, "Movies", "the directory keeps table order");
+    assert_eq!(view.display_order().collect::<Vec<_>>(), vec![2, 0, 1]);
+    let movies: Vec<&str> = view.rows_for(0).map(|row| row.title.as_str()).collect();
+    assert_eq!(movies, ["Film Club", "Movies"], "the header names follow the order");
+    assert_eq!(view.rows_for(1).count(), 1, "each type is its own filtered list");
+    let (mine, theirs) = (browse.state.sources()[0].sid, browse.state.sources()[1].sid);
+    assert_eq!(view.arranged(), &[(theirs, 1, SecKind::Movie), (mine, 1, SecKind::Movie), (mine, 2, SecKind::Show)]);
+
+    plx_base::storage_worker::drain_for_test();
+    let session = plx_plex::plex::session::peek();
+    let user = plx_plex::plex::session::current_profile_key();
+    let record = session.pins_for(&user).expect("recorded");
+    let stored: Vec<(String, i64)> = record.order.iter().map(|lib| (lib.machine_id.clone(), lib.key)).collect();
+    assert_eq!(stored, [("nas-home".to_string(), 1), ("mac-mini".to_string(), 1), ("mac-mini".to_string(), 2)]);
+    assert!(record.asked, "the record keeps the first-run answer");
+    assert_eq!(record.answer("nas-home", 1), Some(true), "…and the switch answered before it");
+
+    let mut reloaded = TestBrowse::default();
+    seed_two_servers(&mut reloaded);
+    assert_eq!(reloaded.state.display_order(), vec![2, 0, 1], "a fresh table reads the same order");
+
+    // a switch commit afterwards keeps the arrangement
+    reloaded.state.apply_pins(&[(1, false)]);
+    plx_base::storage_worker::drain_for_test();
+    let session = plx_plex::plex::session::peek();
+    let kept: Vec<(String, i64)> = session.pins_for(&user).expect("recorded").order.iter()
+        .map(|lib| (lib.machine_id.clone(), lib.key)).collect();
+    assert_eq!(kept, stored, "flipping a favorite never reshuffles the order");
+    assert_eq!(reloaded.state.display_order(), vec![2, 0, 1]);
+}
+
+/// **A queued arrangement is not undone by a session snapshot older than it.** A roster landing
+/// re-resolves the pins from whatever session the Bridge read; until this run's own write has
+/// been saved, that snapshot cannot know the order, and the pending record stands, exactly as a
+/// pending favorite does.
+#[test]
+fn a_pending_arrangement_survives_an_older_snapshot() {
+    let _serial = plx_base::testlock::serial();
+    let t = TempPins::new("library-order-pending");
+    t.watching("u-owner");
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let _blocker = plx_base::storage_worker::submit(move || {
+        entered_tx.send(()).unwrap();
+        let _ = release_rx.recv();
+    }).unwrap();
+    entered_rx.recv().unwrap();
+    let mut browse = TestBrowse::default();
+    seed_two_servers(&mut browse);
+    let epoch = browse.state.table_epoch();
+    assert!(browse.state.arrange(epoch, &[1, 0]));
+    browse.state.resolve_pins();
+    assert_eq!(browse.state.display_order(), vec![1, 0, 2], "the queued order stands");
+    release_tx.send(()).unwrap();
+    plx_base::storage_worker::drain_for_test();
+    browse.state.resolve_pins();
+    assert_eq!(browse.state.display_order(), vec![1, 0, 2], "and is what the session says once saved");
+}
+
+/// Another profile on the same television has its own order, and a profile that never arranged
+/// anything keeps the table's.
+#[test]
+fn an_arrangement_belongs_to_the_profile_that_made_it() {
+    let _g = plx_base::testlock::serial();
+    let t = TempPins::new("library-order-profiles");
+    t.watching("u-dad");
+    let mut browse = TestBrowse::default();
+    seed_two_servers(&mut browse);
+    let epoch = browse.state.table_epoch();
+    assert!(browse.state.arrange(epoch, &[1]));
+    plx_base::storage_worker::drain_for_test();
+    assert_eq!(browse.state.display_order(), vec![1, 0, 2]);
+
+    t.watching("u-kid");
+    let mut kid = TestBrowse::default();
+    seed_two_servers(&mut kid);
+    assert_eq!(kid.state.display_order(), vec![0, 1, 2], "the kid never arranged anything");
 }

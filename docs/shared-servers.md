@@ -755,6 +755,19 @@ is `browse::apply_pins_from`. First run stages the choices until `Start watching
 and contextual Library editors send `ApplyPins` on each switch, so Back and Done both retain the
 changes. `toggle_pin`, the old direct mutator, remains a test-only fixture.
 
+**The same record carries the profile's library ORDER** (`HomePins::order`, Settings > Libraries >
+Library order): position is rank, one list across every library type, empty until the profile
+arranges anything. It is written by `BrowseCmd::ArrangeLibraries` through the same
+`record_pins_from` write with no switch answered, so it can move no favourite and freeze no
+default, and `pins::arrange` merges it the way `carry_forward` merges the answers: an entry on a
+server the table cannot see keeps its place. A switch commit keeps the order as it stands. The
+order is a permutation its readers apply, never a reorder of the section table: the Library
+header's names (`DirectoryView::rows_for`), a tab's first library (`section_of_kind`, ahead of the
+household tiebreak) and Home, where each arranged library's Recently Added shelf comes first in that
+order and every other shelf follows in roster order (`pms::published_order`, the one order the merge
+and the ring share). A shelf's library is read from its identity, never its cards, so a released
+row keeps its place.
+
 ### Where the implementation reinterprets the canvas
 
 Four places, all recorded so the next reader does not "fix" them back:

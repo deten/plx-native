@@ -177,8 +177,8 @@ fn every_root_detail_line_fits_a_known_good_width() {
         }
     }
     assert_eq!(
-        checked, 12,
-        "expected a detail line on exactly Favorite libraries, Under posters, Video & playback, \
+        checked, 13,
+        "expected a detail line on exactly Favorite libraries, Library order, Under posters, Video & playback, \
          Audio & subtitles, Language, Automatically Sign In, Play trailers automatically, Privacy & \
          data, Legal notices, Record playback diagnostics, Save diagnostic log, and About PlxNative (this host is not webOS 1-3, so no Interface \
          resolution row; its fit is `settings_text_fit_tests`) — got {checked}; \

@@ -1,0 +1,7 @@
+{
+  "library_order.title": "Ordre des bibliothèques",
+  "library_order.detail": "L’ordre dans Accueil et dans Bibliothèque.",
+  "library_order.copy": "Sélectionnez une bibliothèque pour la prendre, déplacez-la avec Haut et Bas, puis sélectionnez-la à nouveau pour la poser. Accueil affiche d’abord la rangée « Ajouts récents » de chaque bibliothèque dans cet ordre, et Bibliothèque les nomme dans le même.",
+  "library_order.moving": "Déplacement",
+  "library_order.empty": "Aucune bibliothèque favorite pour l’instant."
+}

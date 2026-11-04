@@ -2265,12 +2265,37 @@ pub struct HomePins {
     pub on: Vec<PinnedLib>,
     /// … and the ones it turned OFF. See the type doc: absent from both is "never answered for".
     pub off: Vec<PinnedLib>,
+    /// **The order this profile arranged its libraries in** (Settings > Libraries > Library
+    /// order): position is rank. Home's Recently Added shelves, the Library header's library
+    /// names and a tab's first library follow it (`browse::BrowseState::display_order`,
+    /// `pms::published_order`). Empty until the profile arranges anything, and then everything
+    /// keeps the table's own order; a library missing from a non-empty list (one that arrived
+    /// since) follows every listed one, in table order. One list across every library type, so
+    /// moving a library moves it everywhere that reads the order.
+    ///
+    /// A field of this record rather than a list beside it because it is the same profile's say
+    /// over the same libraries, written by the same commit path (`browse::record_pins_from`), so
+    /// one write can never pair one profile's switches with another's order. Omitted while empty,
+    /// so a record that was never arranged serializes as it did before the field existed; an
+    /// older build keeps it in `extensions` and writes it back untouched.
+    #[serde(deserialize_with = "de_soft_vec", skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<PinnedLib>,
     #[serde(flatten, default, skip_serializing_if = "OpaqueExtensions::is_empty")]
     pub extensions: OpaqueExtensions,
 
 }
 
 impl HomePins {
+    /// This profile's rank for one library in its arranged [`order`](Self::order): `None` for a
+    /// library it did not place (or one with no machine id, which can never have been written),
+    /// which the caller sorts after every ranked one.
+    pub fn rank(&self, machine_id: &str, key: i64) -> Option<usize> {
+        if machine_id.is_empty() {
+            return None;
+        }
+        self.order.iter().position(|p| p.machine_id == machine_id && p.key == key)
+    }
+
     /// This profile's recorded answer for one library: `Some(on)`, or `None` when the question was
     /// never put about *this* library and the caller owes it a default.
     pub fn answer(&self, machine_id: &str, key: i64) -> Option<bool> {

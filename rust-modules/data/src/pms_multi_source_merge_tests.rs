@@ -907,6 +907,7 @@ fn an_unpinned_library_publishes_nothing() {
     let scope = BrowseScope {
         sections_gen: 0,
         pins: vec![(sid(0), 1, true), (sid(1), 1, false)],
+        arranged: &[],
         clients: Default::default(),
     };
     let (items, hubs, _) = merge_with_scope(&srcs, &scope);
@@ -1191,7 +1192,7 @@ fn an_unpinned_roster_first_copy_does_not_hide_the_pinned_one() {
         ready(h[0].0, "", vec![card(h[0].0, "own", "Estudios sociales", Some(4), 2, true, 100)]),
         ready(h[1].0, "friend", vec![card(h[1].0, "theirs", "Social Studies", Some(4), 1, true, 900)]),
     ]);
-    let scope = BrowseScope { sections_gen: 1, pins: vec![(h[0].0, 2, false), (h[1].0, 1, true)], clients: Default::default() };
+    let scope = BrowseScope { sections_gen: 1, pins: vec![(h[0].0, 2, false), (h[1].0, 1, true)], arranged: &[], clients: Default::default() };
     let (cat, hubs, _) = merge_with_scope(&o.state.srcs, &scope);
     let deck: Vec<_> = cat[hubs[0].start..hubs[0].start + hubs[0].len].iter().map(|m| m.rk.clone()).collect();
     assert_eq!(deck, ["theirs"], "the show does not vanish");
@@ -1351,4 +1352,59 @@ fn only_a_failing_deck_read_makes_a_source_ineligible() {
     assert_eq!(deck, ["theirs"], "a failing deck read yields to the server that answered");
     reset(&mut o.state, &o.adapter);
     plx_plex::plex::reset_servers_for_test();
+}
+
+/// **Home under the profile's library arrangement**: Continue Watching, then one Recently Added
+/// shelf per library in that order (across servers and types), then any Recently Added shelf of a
+/// library the arrangement cannot place, then every other shelf in the household's own order.
+/// Each shelf's library is read from its identity alone (a per-library identifier, its key's
+/// `sectionID=`, or a whole-server hub standing for its server's only library of that type), so a
+/// row that gave its cards up to the ring keeps its place. With no arrangement nothing moves, and
+/// a new order is part of the scope's identity, so Home re-merges.
+#[test]
+fn recently_added_shelves_follow_the_library_arrangement() {
+    use crate::browse::SecKind::{Movie, Show};
+    let top_rated = shelf_in(0, 1, "Top Rated", "movie.toprated", &["r1"]);
+    let movies = shelf_in(0, 1, "Recently Added Movies", "home.movies.recent", &["m1"]);
+    let mut tv = shelf_in(0, 2, "Recently Added in TV", "home.television.recent", &["t1"]);
+    tv.key = "/hubs/home/recentlyAdded?type=2&sectionID=2".into();
+    let mut tv_hdr = shelf_in(0, 3, "Recently Added in TV HDR", "home.television.recent", &["t2"]);
+    tv_hdr.key = "/hubs/home/recentlyAdded?type=2&sectionID=3".into();
+    let elsewhere = shelf_in(1, 9, "Recently Added in Elsewhere", "movie.recentlyadded.9", &["e1"]);
+    let kids = shelf_in(1, 7, "Recently Added in Kids", "movie.recentlyadded.7", &["k1"]);
+    let srcs = [
+        src(0, "", HubState::Ready, Some(built(0, &[(5, "cw")], vec![top_rated, movies, tv, tv_hdr]))),
+        src(1, "friend", HubState::Ready, Some(built(1, &[], vec![elsewhere, kids]))),
+    ];
+    let titles = |scope: &BrowseScope| {
+        let (_, hubs, _) = merge_with_scope(&srcs, scope);
+        hubs.iter().map(|hub| hub.title.clone()).collect::<Vec<_>>()
+    };
+    let deck = plx_platform::i18n::msg::browse_home_continue_watching();
+    let household = [deck, "Top Rated", "Recently Added Movies", "Recently Added in TV", "Recently Added in TV HDR",
+        "Recently Added in Elsewhere", "Recently Added in Kids"];
+    assert_eq!(titles(&BrowseScope::standalone()), household, "nothing arranged: the household's own order");
+
+    // the friend's 9 is not arranged; the household's one film library is what its
+    // whole-server hub stands for
+    let arranged = [(sid(1), 7, Movie), (sid(0), 3, Show), (sid(0), 2, Show), (sid(0), 1, Movie)];
+    let scope = BrowseScope { sections_gen: 0, pins: vec![(sid(0), 1, true)], arranged: &arranged, clients: Default::default() };
+    assert_eq!(titles(&scope),
+        [deck, "Recently Added in Kids", "Recently Added in TV HDR", "Recently Added in TV", "Recently Added Movies",
+         "Recently Added in Elsewhere", "Top Rated"]);
+    let plain = BrowseScope { sections_gen: 0, pins: vec![(sid(0), 1, true)], arranged: &[], clients: Default::default() };
+    assert_eq!(titles(&plain), household, "an empty arrangement is the household's order");
+
+    let moved = [(sid(0), 1, Movie), (sid(0), 2, Show), (sid(0), 3, Show), (sid(1), 7, Movie)];
+    let rescope = BrowseScope { sections_gen: 0, pins: vec![(sid(0), 1, true)], arranged: &moved, clients: Default::default() };
+    assert_eq!(titles(&rescope)[1..5], ["Recently Added Movies", "Recently Added in TV", "Recently Added in TV HDR", "Recently Added in Kids"]);
+    assert_ne!(scope.cache_key(), rescope.cache_key(), "a new order moves the scope, so Home re-merges");
+    assert_ne!(plain.cache_key(), scope.cache_key());
+
+    // a server with two film libraries and no section in its whole-server hub's key: unplaced
+    let two_films = [(sid(0), 1, Movie), (sid(0), 4, Movie)];
+    let shelf = shelf_in(0, 1, "Recently Added Movies", "home.movies.recent", &[]);
+    assert_eq!(arranged_rank(&two_films, sid(0), &shelf), (1, 0));
+    assert_eq!(arranged_rank(&two_films, sid(1), &shelf), (1, 0), "nothing of that server is arranged");
+    assert_eq!(arranged_rank(&arranged, sid(0), &shelf), (0, 3), "a released row (no cards) keeps its rank");
 }

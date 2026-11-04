@@ -1,0 +1,7 @@
+{
+  "library_order.title": "Ordem das bibliotecas",
+  "library_order.detail": "A ordem no Início e na Biblioteca.",
+  "library_order.copy": "Selecione uma biblioteca para a pegar, mova-a com Cima e Baixo e selecione-a de novo para a largar. O Início mostra primeiro a fila «Adicionados recentemente» de cada biblioteca por esta ordem, e a Biblioteca nomeia-as pela mesma.",
+  "library_order.moving": "A mover",
+  "library_order.empty": "Ainda não há bibliotecas favoritas."
+}

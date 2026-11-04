@@ -1,0 +1,22 @@
+{
+  "library_order.title": {
+    "value": "Library order",
+    "description": "Settings > Libraries row and page title: the page where a profile arranges its favorite libraries into the order Home and the Library follow. Row label, short."
+  },
+  "library_order.detail": {
+    "value": "The order on Home and in the Library.",
+    "description": "Detail line under the Library order row on the Settings root. One short sentence: the arranged order is what Home and the Library screen follow."
+  },
+  "library_order.copy": {
+    "value": "Select a library to pick it up, move it with Up and Down, then select it again to put it down. Home shows each library's Recently Added shelf first, in this order, and the Library names them in it.",
+    "description": "Narrative copy beside the Library order page: how to move a library with the remote (OK picks it up, Up and Down move it, OK puts it down) and what follows the order (Home's Recently Added shelves, the Library's library names)."
+  },
+  "library_order.moving": {
+    "value": "Moving",
+    "description": "Value shown at the right of the library row the viewer has picked up on the Library order page, while Up and Down move it. One short word."
+  },
+  "library_order.empty": {
+    "value": "No favorite libraries yet.",
+    "description": "Note on the Library order page when the profile has no favorite library to arrange."
+  }
+}

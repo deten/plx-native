@@ -238,6 +238,7 @@ pub fn record(
         asked,
         on: Vec::new(),
         off: Vec::new(),
+        order: Vec::new(),
         extensions: Default::default(),
     };
     for (i, l) in libs.iter().enumerate() {
@@ -287,6 +288,53 @@ pub fn carry_forward(
     };
     rec.on.extend(prev.on.iter().filter(absent).cloned());
     rec.off.extend(prev.off.iter().filter(absent).cloned());
+    rec
+}
+
+/// **The library order a commit writes** ([`HomePins::order`]).
+///
+/// `arranged` is the viewer's new arrangement of the libraries the table holds, or `None` for a
+/// commit that only answers switches: that one keeps `prev`'s order exactly as it stands, so
+/// flipping a favourite never reshuffles anything.
+///
+/// A new arrangement can only name what the table holds, so it is merged with `prev` at the
+/// [`carry_forward`] grain: an entry `prev` placed on a server the table cannot see right now
+/// keeps its place, directly after the entry it followed (first, when it led), rather than
+/// being dropped because its server was asleep while the viewer arranged the rest. An entry on a
+/// server the table DOES hold and the arrangement leaves out is a library that server no longer
+/// has, and is dropped. A nameless entry can never be written, as in [`record`].
+pub fn arrange(
+    mut rec: HomePins,
+    arranged: Option<&[PinnedLib]>,
+    prev: Option<&HomePins>,
+    libs: &[LibRef<'_>],
+) -> HomePins {
+    let Some(arranged) = arranged else {
+        rec.order = prev.map(|p| p.order.clone()).unwrap_or_default();
+        return rec;
+    };
+    let mut order: Vec<PinnedLib> = Vec::with_capacity(arranged.len());
+    for lib in arranged {
+        let seen = order.iter().any(|o| o.machine_id == lib.machine_id && o.key == lib.key);
+        if !lib.machine_id.is_empty() && !seen {
+            order.push(lib.clone());
+        }
+    }
+    if let Some(prev) = prev {
+        // where the last entry of `prev` seen so far sits in `order`
+        let mut after: Option<usize> = None;
+        for p in &prev.order {
+            let unseen = !p.machine_id.is_empty() && !libs.iter().any(|l| l.machine_id == p.machine_id);
+            if unseen {
+                let at = after.map_or(0, |a| a + 1);
+                order.insert(at, p.clone());
+                after = Some(at);
+            } else if let Some(at) = order.iter().position(|o| o.machine_id == p.machine_id && o.key == p.key) {
+                after = Some(at);
+            }
+        }
+    }
+    rec.order = order;
     rec
 }
 
@@ -664,5 +712,83 @@ mod tests {
         // and with nothing recorded before, there is nothing to carry
         let fresh = record("u-7", true, &awake, &chosen(&[true, true]));
         assert_eq!(carry_forward(fresh.clone(), None, &awake), fresh);
+    }
+
+    fn placed(entries: &[(&str, i64)]) -> Vec<PinnedLib> {
+        entries.iter().map(|&(machine_id, key)|
+            PinnedLib { machine_id: machine_id.into(), key, extensions: Default::default() }).collect()
+    }
+
+    fn names(rec: &HomePins) -> Vec<(String, i64)> {
+        rec.order.iter().map(|p| (p.machine_id.clone(), p.key)).collect()
+    }
+
+    /// A commit that only answers switches keeps the order the profile arranged, untouched.
+    #[test]
+    fn a_switch_commit_keeps_the_arranged_order() {
+        let prev = HomePins { order: placed(&[("theirs", 1), ("mine", 2), ("mine", 1)]), ..Default::default() };
+        let fresh = record("u-7", true, &roster(), &chosen(&[true, false, true]));
+        let written = arrange(fresh, None, Some(&prev), &roster());
+        assert_eq!(written.order, prev.order);
+        assert_eq!(written.answer("mine", 2), Some(false), "the switches are the commit's own");
+        assert!(arrange(HomePins::default(), None, None, &roster()).order.is_empty());
+    }
+
+    /// **A server asleep while the viewer arranged the rest keeps its place.** Its libraries were
+    /// placed before; the table cannot name them now, so they stay directly after the entry they
+    /// followed, and the libraries the table holds take the new order around them.
+    #[test]
+    fn an_arrangement_keeps_an_unseen_servers_places() {
+        let prev = HomePins {
+            order: placed(&[("mine", 1), ("away", 7), ("away", 8), ("mine", 2), ("theirs", 1)]),
+            ..Default::default()
+        };
+        let written = arrange(HomePins::default(), Some(&placed(&[("mine", 2), ("theirs", 1), ("mine", 1)])),
+            Some(&prev), &roster());
+        let want: Vec<(String, i64)> = [("mine", 2), ("theirs", 1), ("mine", 1), ("away", 7), ("away", 8)]
+            .iter().map(|&(m, k)| (m.to_string(), k)).collect();
+        assert_eq!(names(&written), want);
+
+        // an entry that LED keeps leading
+        let prev = HomePins { order: placed(&[("away", 7), ("mine", 1), ("mine", 2)]), ..Default::default() };
+        let written = arrange(HomePins::default(), Some(&placed(&[("mine", 2), ("mine", 1)])), Some(&prev), &roster());
+        assert_eq!(names(&written)[0], ("away".to_string(), 7));
+    }
+
+    /// A library its (visible) server no longer has is dropped, a nameless entry is never written,
+    /// and a repeated one is written once.
+    #[test]
+    fn an_arrangement_drops_what_it_cannot_keep() {
+        let prev = HomePins { order: placed(&[("mine", 9), ("mine", 1)]), ..Default::default() };
+        let written = arrange(HomePins::default(), Some(&placed(&[("", 4), ("mine", 1), ("mine", 1), ("mine", 2)])),
+            Some(&prev), &roster());
+        let want: Vec<(String, i64)> = vec![("mine".into(), 1), ("mine".into(), 2)];
+        assert_eq!(names(&written), want);
+    }
+
+    /// The rank reads position, and an unnamed machine never matches an entry.
+    #[test]
+    fn the_rank_is_the_position_in_the_order() {
+        let rec = HomePins { order: placed(&[("theirs", 1), ("mine", 2)]), ..Default::default() };
+        assert_eq!(rec.rank("theirs", 1), Some(0));
+        assert_eq!(rec.rank("mine", 2), Some(1));
+        assert_eq!(rec.rank("mine", 1), None);
+        let nameless = HomePins { order: placed(&[("", 1)]), ..Default::default() };
+        assert_eq!(nameless.rank("", 1), None);
+    }
+
+    /// The record round-trips its order, a record never arranged serializes without the field,
+    /// and one hand-edited entry costs that entry, not the record.
+    #[test]
+    fn the_order_round_trips_and_is_absent_until_arranged() {
+        let plain = record("u-7", true, &roster(), &chosen(&[true, true, false]));
+        assert!(!serde_json::to_string(&plain).unwrap().contains("\"order\""));
+        let arranged = HomePins { order: placed(&[("theirs", 1), ("mine", 1)]), ..plain };
+        let back: HomePins = serde_json::from_str(&serde_json::to_string(&arranged).unwrap()).unwrap();
+        assert_eq!(back, arranged);
+        let soft: HomePins = serde_json::from_str(
+            r#"{"user":"u-7","asked":true,"order":[{"machine_id":"mine","key":2},{"machine_id":"mine","key":"x"}]}"#)
+            .unwrap();
+        assert_eq!(names(&soft), vec![("mine".to_string(), 2)]);
     }
 }
