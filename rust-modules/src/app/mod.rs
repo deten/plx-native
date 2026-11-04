@@ -234,6 +234,9 @@ pub(crate) struct Adapters {
 /// Nothing here becomes `pub` — only as wide as the crate.
 pub(crate) struct App {
     last_input: u32,
+    /// Passout protection has logged, for the stretch of idleness now running, that the episode on
+    /// screen plays to its end and then does not advance (`playback::passout_watch`'s `noted`).
+    passout_noted: bool,
     loop_t: u32,
     iters_ct: i32,
     loop_shown: i32,

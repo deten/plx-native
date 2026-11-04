@@ -34,11 +34,11 @@
 //! * **No `extensions`**: a field a later build adds is not carried by this one.
 use super::{
     Fallback, Parse, ProfileKeyed, ProfileRecords, Preferences, Row, Scope, Setting, SettingsWrite,
-    IntroSkipPref, CreditsSkipPref, DolbyVisionModePref, InstantDpadSeekingPref, AudioEnhancementsPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref, SkipIntervalPref,
+    IntroSkipPref, CreditsSkipPref, DolbyVisionModePref, InstantDpadSeekingPref, AudioEnhancementsPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, PassoutProtectionPref, QualityPref, SkipIntervalPref,
     HudSelectionPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UnderPostersPref,
 };
 use crate::plex::session::{
-    MarkerSkipMode, DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, NextEpisodeMode, PlaybackQuality, Seat, Session, SkipInterval, SubtitlePosition,
+    MarkerSkipMode, DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, NextEpisodeMode, PassoutProtection, PlaybackQuality, Seat, Session, SkipInterval, SubtitlePosition,
     SubtitleSize, SubtitleTone, UnderPosters,
 };
 use crate::plex::AudioEnhancements;
@@ -62,6 +62,8 @@ pub struct ProfilePrefs {
     pub hdr_overlay_brightness: Option<HdrOverlayBrightness>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub next_episode_mode: Option<NextEpisodeMode>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
+    pub passout_protection: Option<PassoutProtection>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub skip_interval: Option<SkipInterval>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
@@ -164,6 +166,7 @@ profile_setting!(
     SubtitlePositionPref = subtitle_position,
     HdrOverlayBrightnessPref = hdr_overlay_brightness,
     NextEpisodeModePref = next_episode_mode,
+    PassoutProtectionPref = passout_protection,
     SkipIntervalPref = skip_interval,
     InstantDpadSeekingPref = instant_dpad_seeking,
     DolbyVisionModePref = dolby_vision_mode,

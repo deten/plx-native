@@ -38,7 +38,7 @@ use super::plan::{supported_quality, Quality, QUALITY_LADDER};
 use plx_plex::plex::session::{
     MarkerSkipMode, IntroSkipPref, CreditsSkipPref, DolbyVisionMode, DolbyVisionModePref, InstantDpadSeeking, InstantDpadSeekingPref, effective, own_prefs, persist_profile_pref, AudioEnhancementsPref, DeckPress, DeckPressPref, DirectPlayMode,
     DirectPlayModePref, HdrOverlayBrightness, HdrOverlayBrightnessPref, NextEpisodeMode, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsRecord,
-    ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitlePosition,
+    PassoutProtection, PassoutProtectionPref, ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitlePosition,
     SubtitlePositionPref, SubtitleSize, SubtitleSizePref, SubtitleTone, SubtitleTonePref, TrailerAutoplayPref, UnderPosters,
     UnderPostersPref,
 };
@@ -142,7 +142,7 @@ macro_rules! packed_by_index {
         }
     )*};
 }
-packed_by_index!(MarkerSkipMode = 1, DolbyVisionMode = 0, InstantDpadSeeking = 0, NextEpisodeMode = 0, SkipInterval = 1, DeckPress = 0, SubtitleSize = 1, SubtitlePosition = 0, SubtitleTone = 0, HdrOverlayBrightness = 1);
+packed_by_index!(MarkerSkipMode = 1, DolbyVisionMode = 0, PassoutProtection = 0, InstantDpadSeeking = 0, NextEpisodeMode = 0, SkipInterval = 1, DeckPress = 0, SubtitleSize = 1, SubtitlePosition = 0, SubtitleTone = 0, HdrOverlayBrightness = 1);
 
 impl Packed for DirectPlayMode {
     const SEED: u8 = 0;
@@ -234,6 +234,7 @@ live_cell!(pub(super) INSTANT_DPAD_SEEKING: InstantDpadSeeking, "instant D-pad s
 live_cell!(pub(super) INTRO_SKIP: MarkerSkipMode, "intro skip");
 live_cell!(pub(super) CREDITS_SKIP: MarkerSkipMode, "credits skip");
 live_cell!(pub(super) DOLBY_VISION_MODE: DolbyVisionMode, "Dolby Vision mode");
+live_cell!(pub(super) PASSOUT_PROTECTION: PassoutProtection, "passout protection");
 
 // ---- the cells ------------------------------------------------------------------------------
 
@@ -346,6 +347,13 @@ live_setting!(NextEpisodeModePref, NEXT_EPISODE_MODE, "next episode mode",
         });
     }
 );
+live_setting!(PassoutProtectionPref, PASSOUT_PROTECTION, "passout protection",
+    fn after_saved(protection: PassoutProtection) {
+        plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
+            feature: plx_telemetry::diag::schema::Feature::PassoutProtection(protection),
+        });
+    }
+);
 live_setting!(SkipIntervalPref, SKIP_INTERVAL, "skip interval",
     fn after_saved(interval: SkipInterval) {
         plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
@@ -389,6 +397,7 @@ pub const LIVE_ROWS: &[LiveRow] = &[
     LiveRow::of::<SubtitlePositionPref>(),
     LiveRow::of::<HdrOverlayBrightnessPref>(),
     LiveRow::of::<NextEpisodeModePref>(),
+    LiveRow::of::<PassoutProtectionPref>(),
     LiveRow::of::<SkipIntervalPref>(),
     LiveRow::of::<InstantDpadSeekingPref>(),
     LiveRow::of::<DolbyVisionModePref>(),
@@ -776,6 +785,7 @@ choices! {
     Quality => QualityPref,
     DirectPlay => DirectPlayModePref,
     NextEpisode => NextEpisodeModePref,
+    PassoutProtection => PassoutProtectionPref,
     SkipInterval => SkipIntervalPref,
     InstantDpadSeeking => InstantDpadSeekingPref,
     DolbyVision => DolbyVisionModePref,
@@ -899,6 +909,14 @@ pub fn restore_next_episode_mode(mode: NextEpisodeMode) { restore_live::<NextEpi
 /// Blocking persistence seam. The live value changes only once the write is durable, so a failed
 /// save claims nothing.
 pub fn set_next_episode_mode(mode: NextEpisodeMode) -> bool { confirm::<NextEpisodeModePref>(mode) }
+
+/// The seated profile's Passout protection. Read by the app's watch over a playing episode
+/// (`app::playback::passout_watch`) and where Up Next would advance on its own
+/// (`app::playback::passout_holds_back`); nothing in the route or the player reads it.
+pub fn passout_protection() -> PassoutProtection { PassoutProtectionPref::live() }
+pub fn restore_passout_protection(protection: PassoutProtection) { restore_live::<PassoutProtectionPref>(protection) }
+/// Blocking persistence seam, as [`set_next_episode_mode`].
+pub fn set_passout_protection(protection: PassoutProtection) -> bool { confirm::<PassoutProtectionPref>(protection) }
 
 pub fn instant_dpad_seeking() -> InstantDpadSeeking { InstantDpadSeekingPref::live() }
 pub fn restore_instant_dpad_seeking(seeking: InstantDpadSeeking) { restore_live::<InstantDpadSeekingPref>(seeking) }

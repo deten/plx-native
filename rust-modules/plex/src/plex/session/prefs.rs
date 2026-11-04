@@ -37,7 +37,7 @@
 //! ([`SubtitleOffsetsPref`]).
 use super::{
     MarkerSkipMode, DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
-    PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
+    PassoutProtection, PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
     SubtitleSize, SubtitleTone, UiResolution, UnderPosters,
 };
 use serde::de::DeserializeOwned;
@@ -116,6 +116,10 @@ pub struct Preferences {
     /// it did before.
     #[serde(default, deserialize_with = "de_soft_next_episode_mode", skip_serializing_if = "is_default_next_episode_mode")]
     pub next_episode_mode: NextEpisodeMode,
+    /// How long without a press before Up Next stops advancing on its own (see
+    /// [`PassoutProtection`]); `Off` by default.
+    #[serde(default, deserialize_with = "de_soft_passout_protection", skip_serializing_if = "PassoutProtection::is_default")]
+    pub passout_protection: PassoutProtection,
     /// **How far one Left/Right press jumps in the player** — see [`SkipInterval`]. A frozen
     /// fallback like [`Preferences::playback_quality`], one value for both directions. Absence is 10 s, the
     /// hop every build before the field made. Skipped at the default so a session predating this
@@ -520,6 +524,8 @@ setting!(DirectPlayModePref: DirectPlayMode = direct_play_mode, "direct_play_mod
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(NextEpisodeModePref: NextEpisodeMode = next_episode_mode, "next_episode_mode", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
+setting!(PassoutProtectionPref: PassoutProtection = passout_protection, "passout_protection", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(InstantDpadSeekingPref: InstantDpadSeeking = instant_dpad_seeking, "instant_dpad_seeking", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(IntroSkipPref: MarkerSkipMode = intro_skip, "intro_skip", Profile fallback LegacyInstallKey,
@@ -656,6 +662,7 @@ pub const DESCRIPTORS: &[Descriptor] = &[
     Descriptor::of::<SubtitlePositionPref>(),
     Descriptor::of::<HdrOverlayBrightnessPref>(),
     Descriptor::of::<NextEpisodeModePref>(),
+    Descriptor::of::<PassoutProtectionPref>(),
     Descriptor::of::<SkipIntervalPref>(),
     Descriptor::of::<InstantDpadSeekingPref>(),
     Descriptor::of::<DolbyVisionModePref>(),
@@ -1386,6 +1393,17 @@ where
         return Ok(DolbyVisionMode::default());
     };
     Ok(serde_json::from_value::<DolbyVisionMode>(v).unwrap_or_default())
+}
+
+/// Passout protection is a preference too: a spelling this build does not know degrades to Off.
+fn de_soft_passout_protection<'de, D>(d: D) -> Result<PassoutProtection, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(PassoutProtection::default());
+    };
+    Ok(serde_json::from_value::<PassoutProtection>(v).unwrap_or_default())
 }
 
 /// The deck-press mode is a preference too: a spelling this build does not know degrades to Details.

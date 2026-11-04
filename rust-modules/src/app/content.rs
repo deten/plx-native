@@ -496,6 +496,7 @@ pub(crate) fn content_requests(app: &mut App, fr: &mut Frame) {
             &mut app.repause_at,
             player_reqs,
             fr.now,
+            app.last_input,
             &mut app.refresh_hubs,
             &mut app.pages,
             &mut app.bridge,

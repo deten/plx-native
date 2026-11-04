@@ -5,5 +5,13 @@
   "settings.playback.instant_dpad_seeking.on": "Activados",
   "settings.playback.dolby_vision": "Dolby Vision",
   "settings.playback.dolby_vision.copy": "Automático usa Dolby Vision si el televisor lo admite. Desactivado reproduce la capa HDR10. Tu servidor Plex convierte los archivos sin capa HDR10, y puede que no se reproduzcan.",
-  "settings.playback.dolby_vision.off": "Desactivado"
+  "settings.playback.dolby_vision.off": "Desactivado",
+  "settings.playback.passout_protection": "Protección por inactividad",
+  "settings.playback.passout_protection.copy": "Tras este tiempo sin pulsar ningún botón, un episodio al que le queden 20 minutos o menos se reproduce hasta el final, cualquier otro se detiene al momento y el siguiente no empieza.",
+  "settings.playback.passout_protection.off": "Desactivada",
+  "settings.playback.passout_protection.hours": {
+    "one": "Tras {count} hora",
+    "many": "Tras {count} horas",
+    "other": "Tras {count} horas"
+  }
 }
