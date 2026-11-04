@@ -402,13 +402,15 @@ pub fn commit_forced_only_pick(
 /// `commit_track` hands the menu's `TrackCommit::Subtitle` here field by field (the route cannot name
 /// the track menu above it). `sidecar_key` is `Some` for an EXTERNAL text subtitle the client can
 /// draw on direct play, `sidecar_codec` is its codec (it preserves ASS/SSA on download), and `None`
-/// (Off, or an embedded track) deselects any sidecar.
+/// (Off, or an embedded track) deselects any sidecar. `sidecar_auto_sync` is the picked sidecar's
+/// `metadata::Stream::can_auto_sync` (the server can re-time it to the dialogue).
 pub fn commit_subtitle_and_sidecar(
     ps: &mut PlaybackSession,
     render_ordinal: i32,
     stream_id: i64,
     sidecar_key: Option<String>,
     sidecar_codec: String,
+    sidecar_auto_sync: bool,
     memo: Option<SubtitleMemo>,
 ) {
     // What the client can draw itself — an embedded ordinal or an external sidecar — is
@@ -421,8 +423,23 @@ pub fn commit_subtitle_and_sidecar(
     // is silenced for as long as that is true, so selecting here is harmless and means
     // the line survives the playback going BACK to direct play.
     match sidecar_key {
-        Some(key) => crate::player::sidecar::select(cur_sid(ps), stream_id, key, sidecar_codec),
+        Some(key) => crate::player::sidecar::select(cur_sid(ps), stream_id, key, sidecar_codec, sidecar_auto_sync),
         None => crate::player::sidecar::deselect(),
+    }
+}
+
+/// **The Subtitles menu's Auto-sync toggle**: the viewer's new preference
+/// (`player::set_subtitle_auto_sync`, which fetches the selected sidecar again as the other copy:
+/// the server's re-timed one, or the file as it is). The timing offset on screen was tuned against
+/// the copy being replaced, so it is cleared, live and in this item's remembered entry
+/// ([`persist_subtitle_offset`] of 0 forgets it). Otherwise the offset composes with whichever copy
+/// is drawn, as with any file: a later correction on top of a synced copy is remembered as usual.
+pub fn commit_subtitle_auto_sync(ps: &PlaybackSession, v: plx_plex::plex::session::SubtitleAutoSync) {
+    crate::player::set_subtitle_auto_sync(v);
+    if crate::player::subtitle_offset_ms() != 0 {
+        crate::player::log("sidecar: auto-sync changed, the timing offset tuned against the other copy is cleared");
+        crate::player::set_subtitle_offset(0);
+        persist_subtitle_offset(ps, 0);
     }
 }
 

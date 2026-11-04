@@ -37,7 +37,7 @@
 //! ([`SubtitleOffsetsPref`]).
 use super::{
     MarkerSkipMode, DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
-    PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
+    PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleAutoSync, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
     SubtitleSize, SubtitleTone, UiResolution, UnderPosters,
 };
 use serde::de::DeserializeOwned;
@@ -132,6 +132,10 @@ pub struct Preferences {
     pub intro_skip: MarkerSkipMode,
     #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "MarkerSkipMode::is_default")]
     pub credits_skip: MarkerSkipMode,
+    /// Plex Pass subtitle auto-sync (`Off` or `On`, see [`SubtitleAutoSync`]); `Off` by default. A
+    /// frozen fallback like [`Preferences::subtitle_tone`], which no build has written.
+    #[serde(default, deserialize_with = "de_soft_subtitle_auto_sync", skip_serializing_if = "SubtitleAutoSync::is_default")]
+    pub subtitle_auto_sync: SubtitleAutoSync,
     /// **What OK does on a Continue Watching card** — see [`DeckPress`]. A frozen fallback like
     /// [`Preferences::playback_quality`]: each profile keeps its own pick in `profile_prefs`, and a
     /// profile that has not picked reads this top-level key. Absence is Details, so a session written
@@ -545,6 +549,8 @@ setting!(SubtitleTonePref: SubtitleTone = subtitle_tone, "subtitle_tone", Profil
     account false, live true, settings None, parse Soft);
 setting!(AudioEnhancementsPref: crate::plex::AudioEnhancements = audio_enhancements,
     "audio_enhancements", Profile fallback LegacyInstallKey, account false, live true, settings None, parse Soft);
+setting!(SubtitleAutoSyncPref: SubtitleAutoSync = subtitle_auto_sync, "subtitle_auto_sync", Profile fallback LegacyInstallKey,
+    account false, live true, settings None, parse Soft);
 
 /// The chosen player HUD (PR10): a per-profile [`Row`] whose value is a package id, a `String`, so not a
 /// [`Setting`] (`Setting::Value` is `Copy`). It declares the same facts as the `LegacyInstallKey` settings;
@@ -664,6 +670,7 @@ pub const DESCRIPTORS: &[Descriptor] = &[
     Descriptor::of::<DeckPressPref>(),
     Descriptor::of::<UnderPostersPref>(),
     Descriptor::of::<AudioEnhancementsPref>(),
+    Descriptor::of::<SubtitleAutoSyncPref>(),
     Descriptor::of::<HudSelectionPref>(),
     // A5: the remaining keys.
     Descriptor::of::<AutoSignInPref>(),
@@ -1386,6 +1393,17 @@ where
         return Ok(DolbyVisionMode::default());
     };
     Ok(serde_json::from_value::<DolbyVisionMode>(v).unwrap_or_default())
+}
+
+/// Subtitle auto-sync is a preference too: a spelling this build does not know degrades to Off.
+fn de_soft_subtitle_auto_sync<'de, D>(d: D) -> Result<SubtitleAutoSync, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(SubtitleAutoSync::default());
+    };
+    Ok(serde_json::from_value::<SubtitleAutoSync>(v).unwrap_or_default())
 }
 
 /// The deck-press mode is a preference too: a spelling this build does not know degrades to Details.

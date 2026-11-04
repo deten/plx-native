@@ -17,7 +17,11 @@ because the overlay's state shape changed on purpose.
 
 - **Subtitles root:** a Subtitles section (Off, Forced only, and the single-track languages), one section per
   multi-track language of `yours`, an "Other languages N" row, then Timing (a value row, no
-  chevron; it hands off to the timing capsule) and Style. **Other languages:** one row per
+  chevron; it hands off to the timing capsule) and Style. While the selected subtitle is an
+  external file the app draws and the server can re-time it to the dialogue (Plex Pass,
+  `docs/pms-api.md` §8a), an **Auto-sync** switch follows, with a one-line note once the file is
+  in: the server's re-timed copy is in use, or the server did not sync it and the file is shown as
+  it is. **Other languages:** one row per
   language A-Z; a single-track language is a direct pick row, a multi-track one is a "French, 3
   tracks" drill-in. **Language page:** Full / SDH / Forced / Commentary ranked, identical ones
   numbered. **Style:** Size, Position and Color drill into picker pages with checkmarks. When
@@ -56,6 +60,15 @@ because the overlay's state shape changed on purpose.
 - Per active renderer: image -> Size and Position dim and inert ("Image subtitles keep their own
   size and position."); native ASS/SSA -> the same ("Styled subtitles keep ..."); Color stays live in
   both, since the subtitle ink tints bitmaps and ASS.
+- Auto-sync is offered only for a sidecar the app draws whose stream says `canAutoSync` and whose
+  version says `hasVoiceActivity` (`metadata::Stream::can_auto_sync`), on a server known to have
+  Plex Pass; under a server burn, for an embedded track and when the server cannot sync, there is
+  no row at all. The pick is the seated
+  profile's (`SubtitleAutoSyncPref`, off until chosen; written like the tone, `route::choose` with
+  `How::Optimistic`), OK keeps the panel open, and the selected sidecar is fetched again as the other
+  copy. Because the timing offset on screen was tuned against the copy being replaced, the flip
+  clears it, live and in the item's remembered entry (`route::commit_subtitle_auto_sync`); any
+  correction made after that composes with the copy drawn and is remembered as usual.
 - A dim row is focusable so the viewer can read why, and it is INERT at the form layer
   (`FormTable::activate` answers `None` for OK and RIGHT alike), not by a guard in each caller.
 
@@ -73,11 +86,11 @@ state, not panel state).
 ## Focus identity
 
 Each page declares rows with semantic ids, one alphabet for every page: `appkit::track_menu::TrackRow`
-(`Audio(i)`, `Boost`, `Loudness`, `SubOff`, `SubForcedOnly`, `Sub(i)`, `Timing`, `Style`, `OpenField(field)`,
+(`Audio(i)`, `Boost`, `Loudness`, `SubOff`, `SubForcedOnly`, `Sub(i)`, `Timing`, `Style`, `AutoSync`, `OpenField(field)`,
 `Choice(field, rung)`, `OpenOther`, `OpenLang(lang)`). Selection and saved openers
 are stored by id. `RowKey` is a hand-assigned family base plus a STABLE ordinal (the track's index
 in the item's list, never a list position): `0x0001_0000` Audio, `0x0002_0000` the DSP pair,
-`0x0003_0000` Off (`0x0003_0001` Forced only), `0x0004_0000` tracks, `0x0005_0000` Timing/Style, `0x0006_0000` the Style
+`0x0003_0000` Off (`0x0003_0001` Forced only), `0x0004_0000` tracks, `0x0005_0000` Timing/Style/Auto-sync, `0x0006_0000` the Style
 page's drill-ins, `0x0007_0000` picker rungs (one 256-wide block per field), `0x0008_0000` the Other languages
 drill-in and `0x0009_0000 +` a language's drill-in, which uses its slot on the Other page instead of
 a track index. `OpenLang` carries the language's `LangId`, the stream id of its first track in the

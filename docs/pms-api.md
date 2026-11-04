@@ -1538,6 +1538,71 @@ is immediate; the real one is asynchronous, as above. It also models the discard
 (`discard_deselected_downloads`: the stream leaves the part, its `/library/streams/<id>` is a 404, selecting
 it is a 400).
 
+## 8a. Subtitle auto-sync — `autoAdjustSubtitle=1` (UNVERIFIED against a live server)
+
+**Not yet sent to a real server by this project.** Everything below is read from
+`docs/plex-openapi.json` and from Plex Web, and is modelled by the mock; a Plex Pass server and a
+television check are owed (what to look for is at the end of this section).
+
+A Plex Pass server can re-time a subtitle to the film's dialogue, against the voice-activity data it
+extracts from the audio. A client asks for it with one query flag on the ordinary sidecar request:
+
+```
+GET /library/streams/{streamId}[.{ext}]?encoding=utf-8&format=srt&autoAdjustSubtitle=1
+```
+
+`plex-openapi.json` documents the flag on that operation (`libraryGetStreamsStream`,
+`/library/streams/{streamId}.{ext}`): `autoAdjustSubtitle`, integer `0`/`1`, "Whether the server
+should attempt to automatically adjust the subtitle timestamps to match the media". The same
+parameter (`components/parameters`, "Indicates if the server should adjust subtitles based on Voice
+Activity Data") rides the universal transcoder's `decision`, `start.*` and `subtitles` operations;
+this app does not send it there. The documented answers for the stream are `200` (the stream in the
+requested format), `403`, `404` and `501` ("The stream is not a sidecar subtitle"). The answer is
+the subtitle itself: there is no job to poll and no new stream id.
+
+When it can work, as the server reports it:
+
+- `Media.hasVoiceActivity` (`components/schemas/media`, boolean): the server has analysed this
+  version's speech. `PUT /library/metadata/{ids}/voiceActivity` (admin) starts that analysis; this
+  app never calls it.
+- `Stream.canAutoSync` (`components/schemas/stream`, boolean): "For subtitle streams only. If `true`
+  then the server can attempt to automatically sync the subtitle timestamps with the video." Seen
+  `false` on the subtitle search rows in §8.
+- Plex Web is reported (from its 4.162.1 bundle, `main-8792-e21a32ad76ad9fa8dc08-plex-4.162.1-87b128e.js`,
+  not re-read for this change) to offer its "Auto Sync Subtitles" switch only while both of the
+  above are true, to require the `auto-sub-offsets` account and server-owner feature, to hide it on
+  a cloud server and on Live TV, and to default its `autoSyncSubtitles` preference to on.
+
+What this app does with it (`plex::library::sidecar_attempts`, `player::sidecar`):
+
+- A subtitle is offered for auto-sync when the stream says `canAutoSync` AND its version says
+  `hasVoiceActivity` (`metadata::Stream::can_auto_sync`, folded at the wire copy) AND the server is
+  known to have Plex Pass (`serverinfo::subscription_of` is `Yes`, as for the audio DSP in §6a). The
+  app does not read the feature ids itself; it relies on those answers, and a server that ignores
+  the flag answers the file as it is.
+- Only a sidecar the app draws (direct play, or over a remux) is ever synced. Embedded text tracks
+  and anything the server burns into a transcode are not.
+- The viewer opts in per profile (the Subtitles menu's Auto-sync row, off by default). With it on, the
+  fetch asks ONCE with the flag on the ladder's first rung (`format=srt` for text, plain UTF-8 for
+  ASS/SSA) and then runs the ordinary ladder, so a refusal or a transport failure costs one request
+  and still yields the file as it is. A re-timed answer the renderer cannot use (a styled script
+  answered as SubRip, an empty file) is replaced by the file as it is, too.
+- Whether the server actually moved any cue cannot be told from a `200`: the menu's note says the
+  re-timed copy is in use when the flagged request answered, and that it is not when the fallback did.
+
+`tests/mock_pms.py --subtitle-auto-sync` models it (every version reads as analysed, every external
+subtitle as syncable, and a flagged request answers the file `AUTO_SYNC_SHIFT_MS` later);
+`--refuse-subtitle-auto-sync` keeps the flags and answers the flagged request `500`.
+
+**To verify on a Plex Pass server.** Pick a movie whose version reports `hasVoiceActivity` and that
+has an EXTERNAL text subtitle (an `.srt` beside the file, or one added with Search subtitles) whose
+stream reports `canAutoSync`. Play it direct, select that subtitle, open the Subtitles menu and turn
+Auto-sync on. The log should read `sidecar: fetching stream <id> (auto-sync asked)` and then either
+`sidecar: stream <id> auto-sync answered by the server` (the flagged request answered) or
+`... not answered, drawing the file as it is` (with the per-attempt reasons on a `sidecar: fetch
+failed` line only if every rung failed). Record which answer the server gave, whether the cues
+visibly moved, and how long the flagged request took.
+
 ---
 
 ## 9. Notifications (SSE) — `/:/eventsource/notifications` (measured on PMS 1.43.4, Guest token; ON for owned servers)

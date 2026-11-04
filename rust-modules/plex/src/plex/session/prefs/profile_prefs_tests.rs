@@ -63,6 +63,7 @@ fn the_record_has_one_field_for_each_setting_with_a_legacy_fallback() {
         deck_press: Some(DeckPress::Play),
         under_posters: Some(UnderPosters { title: true, details: UnderPostersDetails::Video, sort_value: false }),
         audio_enhancements: Some(AudioEnhancements { boost_dialog: true, normalize_loudness: true }),
+        subtitle_auto_sync: Some(crate::plex::session::SubtitleAutoSync::On),
         trailer_autoplay: Some(false),
         hud_selection: Some("com.example.hud".into()),
     };
@@ -72,7 +73,7 @@ fn the_record_has_one_field_for_each_setting_with_a_legacy_fallback() {
         .filter(|d| d.fallback == Fallback::LegacyInstallKey)
         .map(|d| d.key.to_string())
         .collect();
-    assert_eq!(rows.len(), 17, "every per-profile setting has a legacy fallback");
+    assert_eq!(rows.len(), 18, "every per-profile setting has a legacy fallback");
     assert_eq!(fields, rows, "ProfilePrefs and the rows with a legacy fallback drifted");
     assert!(DESCRIPTORS.iter().filter(|d| d.fallback == Fallback::LegacyInstallKey).all(|d| d.scope == Scope::Profile));
 }

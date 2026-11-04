@@ -214,6 +214,16 @@ direct-play probe (`directPlay=1`) is answered as ever. It is how the app's last
 audio decode after every conversion was refused, S4) is reached on a television; flippable live
 through `POST /_mock/config` (`{"refuse_conversions": true}`).
 
+Subtitle auto-sync (Plex Pass, docs/pms-api.md "Subtitle auto-sync"; off by default, so every
+existing response stays byte-identical): `--subtitle-auto-sync`, `serve(subtitle_auto_sync=True)`
+or `POST /_mock/config {"subtitle_auto_sync": true}` makes every version read as analysed for voice
+activity (`Media.hasVoiceActivity=1`) and every external subtitle stream as syncable
+(`canAutoSync: true`), and answers `GET /library/streams/<id>?...&autoAdjustSubtitle=1` with the
+SubRip file moved `AUTO_SYNC_SHIFT_MS` later, so a client can tell the re-timed copy from the file
+as it is. `--refuse-subtitle-auto-sync` (or `{"refuse_subtitle_auto_sync": true}`) keeps the
+capability flags but answers that request `500` with an empty body, the refusal a client must fall
+back from.
+
 Five fixed fixture movies (own section id 3, so ordinary section/rail counts and hashes over
 sections 1/2 are untouched, but each is reachable directly at its ratingKey) exercise the offering
 and fallback rules:
@@ -283,6 +293,8 @@ VERIFY_SIDECAR_ID = 901009
 # Subtitle search (`MockPms.subtitle_search`): candidate and installed stream ids live in their own
 # bands so neither can collide with a generated or verification stream.
 SUB_CANDIDATE_BASE, SUB_INSTALLED_BASE = 8_100_000, 8_200_000
+# How far the mock's auto-synced subtitle copy moves every cue (module doc, "Subtitle auto-sync").
+AUTO_SYNC_SHIFT_MS = 1000
 # The languages the mock agent "finds" subtitles in: 2-letter query -> (languageCode, language).
 # Any other well-formed code is an empty answer — the not-found case, which is not a failure.
 SUB_SEARCH_LANGS = {"en": ("eng", "English"), "nl": ("nld", "Nederlands"), "es": ("spa", "Español")}
@@ -2311,6 +2323,21 @@ def plaintext_only_lan_resources(lib, ip, http_port, fail_port, access_token):
 
 # ---------------------------------------------------------------- the server ----------------
 
+_SRT_TIME = re.compile(rb"(\d{2}):(\d{2}):(\d{2}),(\d{3})")
+
+
+def shift_srt(data, shift_ms):
+    """Every SubRip timestamp in `data` moved `shift_ms` later (never below zero)."""
+    def moved(match):
+        h, m, s, ms = (int(g) for g in match.groups())
+        total = max(0, ((h * 60 + m) * 60 + s) * 1000 + ms + shift_ms)
+        h, rest = divmod(total, 3_600_000)
+        m, rest = divmod(rest, 60_000)
+        s, ms = divmod(rest, 1000)
+        return b"%02d:%02d:%02d,%03d" % (h, m, s, ms)
+    return _SRT_TIME.sub(moved, data)
+
+
 # ---------------------------------------------------------------- Discover -----------------
 
 # The boot line `account::announce_discover` writes (a `devtriggers` build): which Discover this boot's
@@ -2802,6 +2829,9 @@ class MockPms:
         # `--refuse-conversions`: every /decision asking the server to convert (`directPlay=0`) is
         # refused with generalDecisionCode=2000; a direct-play probe is unaffected.
         self.refuse_conversions = False
+        # Subtitle auto-sync (module doc). Runtime-togglable through `POST /_mock/config`.
+        self.subtitle_auto_sync = False
+        self.refuse_subtitle_auto_sync = False
         # `--transcode-fixture PATH`: serve this file (Range/206 supported) for every
         # /video/:/transcode/universal/start* request instead of the plain 404.
         self.transcode_fixture = None
@@ -2964,6 +2994,43 @@ class MockPms:
 
     def handle(self, method, path, body=b"", headers=None):
         """Returns (status, content_type, bytes)."""
+        result = self._handle(method, path, body, headers)
+        if not (self.subtitle_auto_sync or self.refuse_subtitle_auto_sync):
+            return result
+        return self._with_auto_sync(path, result)
+
+    def _with_auto_sync(self, path, result):
+        """Subtitle auto-sync on (module doc): mark versions and external subtitles as syncable on
+        every JSON answer, and answer a sidecar asked for with `autoAdjustSubtitle=1` re-timed (or
+        refused)."""
+        status, content_type, data = result
+        u = urllib.parse.urlsplit(path)
+        q = urllib.parse.parse_qs(u.query)
+        segs = [s for s in u.path.split("/") if s]
+        if (status == 200 and len(segs) == 3 and segs[:2] == ["library", "streams"]
+                and q.get("autoAdjustSubtitle", [""])[-1] == "1"):
+            if self.refuse_subtitle_auto_sync:
+                return (500, "text/plain", b"")
+            return (status, content_type, shift_srt(data, AUTO_SYNC_SHIFT_MS))
+        if status != 200 or content_type != "application/json":
+            return result
+        doc = json.loads(data)
+
+        def mark(node):
+            if isinstance(node, dict):
+                if "Part" in node:
+                    node["hasVoiceActivity"] = 1
+                if node.get("streamType") == 3 and node.get("key"):
+                    node["canAutoSync"] = True
+                for value in node.values():
+                    mark(value)
+            elif isinstance(node, list):
+                for value in node:
+                    mark(value)
+        mark(doc)
+        return (status, content_type, json.dumps(doc).encode())
+
+    def _handle(self, method, path, body=b"", headers=None):
         u = urllib.parse.urlsplit(path)
         p = u.path
         q = {k: v[-1] for k, v in urllib.parse.parse_qs(u.query, keep_blank_values=True).items()}
@@ -3083,7 +3150,8 @@ class MockPms:
                 return j({"error": "invalid JSON body"}, 400)
             if not isinstance(patch, dict):
                 return j({"error": "body must be a JSON object"}, 400)
-            allowed = {"refuse_enhancements", "ignore_enhancements", "refuse_conversions", "plex_pass", "viewer_intro_skip", "viewer_credits_skip"}
+            allowed = {"refuse_enhancements", "ignore_enhancements", "refuse_conversions", "plex_pass", "viewer_intro_skip", "viewer_credits_skip",
+                       "subtitle_auto_sync", "refuse_subtitle_auto_sync"}
             unknown = set(patch) - allowed
             if unknown:
                 return j({"error": f"unknown config key(s): {sorted(unknown)}"}, 400)
@@ -3945,7 +4013,8 @@ def serve(port, seed=1, host="127.0.0.1", verbose=False, movies=48, rail_fixture
           home_users=1, second_account=False, link=(), link_faults=(), shows=6, seasons=2, episodes=6,
           resume_fixture=False, media_next_episode=False, next_episode_remux=False,
           media_forced_subtitle=False, smart_collections=False,
-          caption_edge_cases=False, multi_version=False, band_fixture=False):
+          caption_edge_cases=False, multi_version=False, band_fixture=False,
+          subtitle_auto_sync=False, refuse_subtitle_auto_sync=False):
     """Start a mock PMS in a daemon thread; returns (server, pms). Loopback only by default: the
     app on the simulator is on this machine, and a LAN-facing listener would be one more thing
     the outbound guard has to reason about. `catalog` serves the demo library instead of a seed.
@@ -4011,6 +4080,8 @@ def serve(port, seed=1, host="127.0.0.1", verbose=False, movies=48, rail_fixture
     pms.refuse_enhancements = refuse_enhancements
     pms.ignore_enhancements = ignore_enhancements
     pms.refuse_conversions = refuse_conversions
+    pms.subtitle_auto_sync = subtitle_auto_sync
+    pms.refuse_subtitle_auto_sync = refuse_subtitle_auto_sync
     pms.transcode_fixture = pathlib.Path(transcode_fixture) if transcode_fixture else None
     pms.cut_part_after = cut_part_after
     pms.part_range_answers_200 = part_range_answers_200
@@ -4896,6 +4967,13 @@ def main():
                     help="#266: a live boostDialog=1/normalizeLoudness=1 is accepted but the "
                          "audio decision stays \"copy\" — an old server that does not act on the "
                          "params; also flippable live via POST /_mock/config")
+    ap.add_argument("--subtitle-auto-sync", action="store_true",
+                    help="versions read as analysed for voice activity, external subtitles as "
+                         "syncable, and autoAdjustSubtitle=1 answers a re-timed copy; also "
+                         "flippable live via POST /_mock/config")
+    ap.add_argument("--refuse-subtitle-auto-sync", action="store_true",
+                    help="as --subtitle-auto-sync, but autoAdjustSubtitle=1 is answered 500; also "
+                         "flippable live via POST /_mock/config")
     ap.add_argument("--transcode-fixture", type=pathlib.Path,
                     help="#266: serve this file (Range/206 supported) for every "
                          "/video/:/transcode/universal/start* request instead of the plain 404")
@@ -5010,6 +5088,8 @@ def main():
                          refuse_enhancements=a.refuse_enhancements,
                          ignore_enhancements=a.ignore_enhancements,
                          refuse_conversions=a.refuse_conversions,
+                         subtitle_auto_sync=a.subtitle_auto_sync,
+                         refuse_subtitle_auto_sync=a.refuse_subtitle_auto_sync,
                          transcode_fixture=a.transcode_fixture,
                          cut_part_after=a.cut_part_after,
                          part_range_answers_200=a.part_range_answers_200, home_hubs=a.home_hubs,

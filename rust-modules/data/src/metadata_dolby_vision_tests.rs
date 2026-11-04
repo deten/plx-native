@@ -16,7 +16,7 @@ use super::*;
 fn a_dolby_vision_record_is_not_erased_by_a_later_video_stream() {
     let p5 = video_stream(Some((5, 0, 0)));
     let cover = video_stream(None);
-    let dovi = convert_streams(&[p5, cover]).dovi;
+    let dovi = convert_streams(&[p5, cover], false).dovi;
     assert!(
         dovi.present,
         "the P5 record must outlive a second video stream"
@@ -45,7 +45,7 @@ fn a_dolby_vision_record_is_not_erased_by_a_later_video_stream() {
 /// record that refuses nothing.
 #[test]
 fn a_part_with_no_dolby_vision_reports_no_record() {
-    let s = convert_streams(&[video_stream(None)]);
+    let s = convert_streams(&[video_stream(None)], false);
     let (hdr, dovi) = (s.hdr, s.dovi);
     assert_eq!(dovi, Dovi::default());
     assert!(!dovi.base_layer_unusable());

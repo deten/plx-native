@@ -2318,6 +2318,37 @@ pub fn restore_subtitle_tone(tone: plx_plex::plex::session::SubtitleTone) {
     SUBTITLE_TONE.set(tone);
 }
 
+/// **Plex Pass subtitle auto-sync**, the seated profile's [`SubtitleAutoSync`] pick — a PREFERENCE
+/// like [`SUBTITLE_TONE`], so it outlives a playback. Read where a sidecar is selected
+/// ([`sidecar::select`]); it reaches the wire only as `autoAdjustSubtitle=1` on that file's fetch,
+/// and only for a track the server says it can sync (`metadata::Stream::can_auto_sync`). Restored by
+/// `route::restore_profile_rows`, written through the one write door ([`set_subtitle_auto_sync`]).
+///
+/// [`SubtitleAutoSync`]: plx_plex::plex::session::SubtitleAutoSync
+pub(crate) static SUBTITLE_AUTO_SYNC: crate::route::LiveCell<plx_plex::plex::session::SubtitleAutoSync> =
+    crate::route::LiveCell::new("subtitle auto-sync preference");
+
+/// The current preference (see [`SUBTITLE_AUTO_SYNC`]).
+pub fn subtitle_auto_sync() -> plx_plex::plex::session::SubtitleAutoSync {
+    SUBTITLE_AUTO_SYNC.get()
+}
+
+/// Restore the persisted preference without writing it back, for tests that need a known value.
+#[cfg(any(test, feature = "test-support"))]
+pub fn restore_subtitle_auto_sync(v: plx_plex::plex::session::SubtitleAutoSync) {
+    SUBTITLE_AUTO_SYNC.set(v);
+}
+
+/// **The Subtitles menu's Auto-sync row lands here**: publish and persist the pick through the one
+/// write door (`route::choose`, `How::Optimistic`, like [`set_subtitle_tone`]), then select the
+/// current sidecar again under it ([`sidecar::reapply_auto_sync`]) so the change is seen on this
+/// film, not the next. MAIN THREAD.
+pub fn set_subtitle_auto_sync(v: plx_plex::plex::session::SubtitleAutoSync) {
+    crate::route::choose::<plx_plex::plex::session::SubtitleAutoSyncPref>(v, crate::route::How::Optimistic(None));
+    sidecar::reapply_auto_sync();
+    plx_machine::idle::invalidate();
+}
+
 /// Select a tone on the main thread and retain its persistence work for the shared worker
 /// (`route::choose`, `How::Optimistic`). Takes effect on the next drawn frame — the draws read the
 /// cell — so there is nothing to reload and no cue store to touch.

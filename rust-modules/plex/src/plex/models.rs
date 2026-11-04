@@ -645,6 +645,12 @@ pub struct Media {
     /// reads it, and the profile that matters to the decoder rides the Load payload's own fields.
     #[serde(rename = "videoProfile", default)]
     pub video_profile: String,
+    /// The server has analysed this version's audio for VOICE ACTIVITY, the data subtitle
+    /// auto-sync re-times a subtitle against (`autoAdjustSubtitle=1`, docs/pms-api.md "Subtitle
+    /// auto-sync"). Only together with the subtitle stream's own [`Stream::can_auto_sync`] does
+    /// the client ask for a re-timed copy. Lenient: PMS's bool-likes arrive as `1`/`"1"`/`true`.
+    #[serde(rename = "hasVoiceActivity", default, deserialize_with = "de_bool")]
+    pub has_voice_activity: bool,
     #[serde(rename = "Part", default)]
     pub part: Vec<MediaPart>,
 }
@@ -876,8 +882,10 @@ pub struct Stream {
     /// OpenSubtitles)"`. A result row's detail line, never a track label.
     #[serde(rename = "extendedDisplayTitle", default, deserialize_with = "de_str")]
     pub extended_display_title: String,
-    /// Subtitle search only: the server offers to auto-sync this candidate's timings. Recorded
-    /// because the search answers it; no client path acts on it yet.
+    /// Subtitle streams: the server can re-time this subtitle against the media's voice-activity
+    /// data (`autoAdjustSubtitle=1`, docs/pms-api.md "Subtitle auto-sync"). Seen on subtitle-search
+    /// candidates and documented for library streams. Together with [`Media::has_voice_activity`]
+    /// it decides whether the client may ask for a re-timed sidecar (`metadata::Stream::can_auto_sync`).
     #[serde(rename = "canAutoSync", default, deserialize_with = "de_bool")]
     pub can_auto_sync: bool,
 }
@@ -1264,6 +1272,19 @@ mod tests {
         assert_eq!(mc.metadata[0].show_guid_hex(), Some(BYTES));
         assert_eq!(mc.metadata[1].guid_hex(), Some(BYTES));
         assert_eq!(mc.metadata[1].show_guid_hex(), None, "a movie has no show");
+    }
+
+    /// The two auto-sync gates are PMS bool-likes: every spelling reads, and an absent field is off.
+    #[test]
+    fn voice_activity_and_auto_sync_read_every_bool_like_spelling() {
+        for (wire, want) in [("1", true), ("true", true), ("\"1\"", true), ("0", false), ("false", false)] {
+            let m: super::Media = serde_json::from_str(&format!("{{\"hasVoiceActivity\":{wire}}}")).unwrap();
+            assert_eq!(m.has_voice_activity, want, "{wire}");
+            let s: super::Stream = serde_json::from_str(&format!("{{\"canAutoSync\":{wire}}}")).unwrap();
+            assert_eq!(s.can_auto_sync, want, "{wire}");
+        }
+        let m: super::Media = serde_json::from_str("{}").unwrap();
+        assert!(!m.has_voice_activity);
     }
 
     fn listing(json: &str) -> super::ListingFacts {

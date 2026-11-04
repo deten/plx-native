@@ -552,8 +552,10 @@ pub(crate) fn commit_track(
         TrackCommit::AudioEnhancement(a) => plx_media::player::request_audio_enhancement(ps, a),
         // The route commits the pick and performs the sidecar half of it too
         // (`route::commit_subtitle_and_sidecar`): the sidecar policy lives beside the track memory's.
-        TrackCommit::Subtitle { render_ordinal, stream_id, sidecar_key, sidecar_codec, memo } => {
-            plx_media::route::commit_subtitle_and_sidecar(ps, render_ordinal, stream_id, sidecar_key, sidecar_codec, memo);
+        TrackCommit::Subtitle { render_ordinal, stream_id, sidecar_key, sidecar_codec, sidecar_auto_sync, memo } => {
+            plx_media::route::commit_subtitle_and_sidecar(
+                ps, render_ordinal, stream_id, sidecar_key, sidecar_codec, sidecar_auto_sync, memo,
+            );
         }
         // Forced only (FO): the panel matched the forced track for the playing audio (or nothing),
         // the route holds the mode and remembers `ForcedOnly { lang }` when it changed, and drops
@@ -562,6 +564,8 @@ pub(crate) fn commit_track(
             plx_media::route::commit_forced_only_and_sidecar(ps, render_ordinal, stream_id, &lang, changed);
         }
         TrackCommit::SubtitleTone(tone) => plx_media::player::set_subtitle_tone(tone),
+        // the preference, the refetch of the selected sidecar and the offset it invalidates
+        TrackCommit::SubtitleAutoSync(v) => plx_media::route::commit_subtitle_auto_sync(ps, v),
         // live first, persisted after, nothing republished on completion (`route::select_subtitle_size`)
         TrackCommit::SubtitleSize(size) => plx_media::route::select_subtitle_size(size, None),
         TrackCommit::SubtitlePosition(position) => plx_media::route::select_subtitle_position(position, None),

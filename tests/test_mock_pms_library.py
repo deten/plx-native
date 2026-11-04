@@ -1515,7 +1515,8 @@ class Enhancement266(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {
             "refuse_enhancements": True, "ignore_enhancements": False, "refuse_conversions": False,
-            "plex_pass": True, "viewer_intro_skip": True, "viewer_credits_skip": True})
+            "plex_pass": True, "viewer_intro_skip": True, "viewer_credits_skip": True,
+            "subtitle_auto_sync": False, "refuse_subtitle_auto_sync": False})
         self.assertIs(pms.refuse_enhancements, True)
         self.assertIs(pms.ignore_enhancements, False)
 
@@ -1580,6 +1581,59 @@ class Enhancement266(unittest.TestCase):
     def test_missing_transcode_fixture_file_is_rejected(self):
         with self.assertRaises(ValueError):
             serve(0, movies=0, transcode_fixture=pathlib.Path("/no/such/fixture.mkv"))
+
+
+class SubtitleAutoSync(unittest.TestCase):
+    """The opt-in subtitle auto-sync mode: off changes nothing; on marks versions and external
+    subtitles as syncable and answers the autoAdjustSubtitle=1 sidecar re-timed, or refused."""
+
+    SRT = b"1\n00:00:01,000 --> 00:00:04,000\nHI\n"
+
+    def _external(self, pms):
+        item = get(pms, f"/library/metadata/{ENHANCEMENT_EXTERNAL_SRT_RK}")["Metadata"][0]
+        media = item["Media"][0]
+        stream = next(s for s in media["Part"][0]["Stream"] if s.get("streamType") == 3 and s.get("key"))
+        return media, stream
+
+    def _pms_with_sidecar(self):
+        pms = MockPms(Library(seed=1))
+        _, stream = self._external(pms)
+        if getattr(pms.lib, "sidecars", None) is None:
+            pms.lib.sidecars = {}
+        pms.lib.sidecars[stream["id"]] = self.SRT
+        return pms, stream["key"]
+
+    def test_off_by_default_and_byte_identical(self):
+        pms = MockPms(Library(seed=1))
+        path = f"/library/metadata/{ENHANCEMENT_EXTERNAL_SRT_RK}"
+        before = pms.handle("GET", path)
+        media, stream = self._external(pms)
+        self.assertNotIn("hasVoiceActivity", media)
+        self.assertNotIn("canAutoSync", stream)
+        pms.subtitle_auto_sync = True
+        pms.subtitle_auto_sync = False
+        self.assertEqual(pms.handle("GET", path), before)
+
+    def test_on_marks_versions_and_streams_and_re_times_only_the_synced_copy(self):
+        pms, key = self._pms_with_sidecar()
+        status, _, data = pms.handle("POST", "/_mock/config", json.dumps({"subtitle_auto_sync": True}).encode())
+        self.assertEqual(status, 200)
+        self.assertIs(json.loads(data)["subtitle_auto_sync"], True)
+        media, stream = self._external(pms)
+        self.assertEqual(media["hasVoiceActivity"], 1)
+        self.assertIs(stream["canAutoSync"], True)
+        _, _, plain = pms.handle("GET", key + "?encoding=utf-8&format=srt")
+        _, _, synced = pms.handle("GET", key + "?encoding=utf-8&format=srt&autoAdjustSubtitle=1")
+        self.assertEqual(plain, self.SRT)
+        self.assertEqual(synced, b"1\n00:00:02,000 --> 00:00:05,000\nHI\n")
+
+    def test_refusal_keeps_the_flags_and_answers_500_to_the_synced_request_only(self):
+        pms, key = self._pms_with_sidecar()
+        pms.handle("POST", "/_mock/config", json.dumps({"refuse_subtitle_auto_sync": True}).encode())
+        _, stream = self._external(pms)
+        self.assertIs(stream["canAutoSync"], True)
+        self.assertEqual(pms.handle("GET", key + "?encoding=utf-8&format=srt&autoAdjustSubtitle=1")[0], 500)
+        self.assertEqual(pms.handle("GET", key + "?encoding=utf-8&format=srt")[2], self.SRT)
 
 
 # The fields the detail page draws that the demo catalog can supply (docs: the S1a stage of the

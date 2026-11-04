@@ -149,6 +149,10 @@ pub enum TrackRow {
     Timing,
     /// The Style drill-in on the Subtitles root ([`TrackPage::Style`]).
     Style,
+    /// The Auto-sync toggle on the Subtitles root (Plex Pass subtitle auto-sync): present only while
+    /// the selected subtitle is an external file the app draws and the server says it can re-time
+    /// it (`player::sidecar::auto_sync_status`).
+    AutoSync,
     /// The Other languages drill-in on the Subtitles root ([`TrackPage::OtherLanguages`]).
     OpenOther,
     /// Other languages page: a multi-track language's drill-in ([`TrackPage::Language`]). Carries
@@ -304,6 +308,7 @@ impl FormId for TrackRow {
             TrackRow::Sub(i) => 0x0004_0000 + i as u32,
             TrackRow::Timing => 0x0005_0000,
             TrackRow::Style => 0x0005_0001,
+            TrackRow::AutoSync => 0x0005_0002,
             TrackRow::OpenField(f) => 0x0006_0000 + f.ordinal(),
             TrackRow::Choice(f, i) => rung(f, i),
             TrackRow::OpenOther => 0x0008_0000,
@@ -429,6 +434,9 @@ struct SubSig {
     /// ([`sub_layout::forced_only_readout`]); `None` off the mode. The row's check, the single
     /// checkmark and the read-out all follow it, and the language moves with the playing audio.
     forced_only: Option<String>,
+    /// The selected sidecar's auto-sync state (`player::sidecar::auto_sync_status`): whether the
+    /// Auto-sync row is offered, where it stands and the note under it.
+    auto_sync: Option<plx_media::player::sidecar::AutoSyncStatus>,
 }
 
 impl SubSig {
@@ -610,6 +618,9 @@ pub enum TrackCommit {
         stream_id: i64,
         sidecar_key: Option<String>,
         sidecar_codec: String,
+        /// The picked sidecar's `metadata::Stream::can_auto_sync` (false for anything else):
+        /// `player::sidecar` asks for the server's re-timed copy when the viewer's preference is on.
+        sidecar_auto_sync: bool,
         memo: Option<plx_plex::plex::session::prefs::SubtitleMemo>,
     },
     /// **Forced only** (FO): the panel matched the forced track in the
@@ -625,6 +636,10 @@ pub enum TrackCommit {
     /// loop that performs it (`player::set_subtitle_tone` saves through the one write door, `route::choose`),
     /// like the two above.
     SubtitleTone(SubtitleTone),
+    /// The Subtitles root's Auto-sync toggle: the viewer's new preference
+    /// (`route::commit_subtitle_auto_sync`, which also clears a timing offset tuned against the
+    /// other copy of the file).
+    SubtitleAutoSync(plx_plex::plex::session::SubtitleAutoSync),
     /// The caption's size, picked on the Style > Size page: the loop publishes it live and
     /// persists it (`route::select_subtitle_size`).
     SubtitleSize(SubtitleSize),
@@ -1067,6 +1082,7 @@ impl TrackMenuState {
             effect,
             memory_note: plx_media::route::cur_memory_note(ps),
             forced_only,
+            auto_sync: plx_media::player::sidecar::auto_sync_status(),
         }
     }
 
@@ -1258,6 +1274,7 @@ impl TrackMenuState {
             // no rebuild) must make the next OK on Timing open the capsule.
             TrackRow::Timing if self.active_sub >= 0 => TrackOk::OpenTiming,
             TrackRow::Timing => TrackOk::Inert, // dim and inert while subtitles are Off
+            TrackRow::AutoSync => self.toggle_auto_sync(),
             TrackRow::SubOff => self.commit_sub(-1, meta),
             TrackRow::SubForcedOnly => self.commit_forced_only(meta),
             TrackRow::Sub(i) => self.commit_sub(i as c_int, meta),
@@ -1310,6 +1327,7 @@ impl TrackMenuState {
                 stream_id: self.sub_stream_id(meta),
                 sidecar_key: sidecar.map(|s| s.key.clone()),
                 sidecar_codec: sidecar.map(|s| s.codec.clone()).unwrap_or_default(),
+                sidecar_auto_sync: sidecar.is_some_and(|s| s.can_auto_sync),
                 // Off is a choice of its own, remembered as Off; a track is remembered by what it
                 // IS. A row with no stream behind it remembers nothing, and neither does a pick
                 // that changed nothing.
@@ -1324,6 +1342,22 @@ impl TrackMenuState {
                 },
             },
             keep_open: false,
+        }
+    }
+
+    /// **OK on Auto-sync**: flip the viewer's preference. The switch moves at once and the panel
+    /// stays, as for the Audio tab's toggles; the Timing row reads 0 from here, because the commit
+    /// clears an offset tuned against the other copy of the file (`route::commit_subtitle_auto_sync`).
+    fn toggle_auto_sync(&mut self) -> TrackOk {
+        let on = !plx_media::player::subtitle_auto_sync().is_on();
+        let sel = self.form.table.sel;
+        if let Some(row) = self.form.table.row_mut(sel) {
+            row.toggle = Some(on);
+        }
+        self.offset_ms = 0;
+        TrackOk::Commit {
+            commit: TrackCommit::SubtitleAutoSync(plx_plex::plex::session::SubtitleAutoSync::of(on)),
+            keep_open: true,
         }
     }
 
@@ -1663,6 +1697,7 @@ impl TrackMenuState {
             sdh: picked.is_some_and(|h| h.hearing_impaired),
             forced: picked.is_some_and(|h| h.forced),
             external: true,
+            can_auto_sync: stream.can_auto_sync,
             ..Default::default()
         };
         let sidecar = sub.sidecar_renderable();
@@ -1671,6 +1706,7 @@ impl TrackMenuState {
             stream_id: stream.id,
             sidecar_key: sidecar.then(|| stream.key.clone()),
             sidecar_codec: if sidecar { stream.codec.clone() } else { String::new() },
+            sidecar_auto_sync: sidecar && stream.can_auto_sync,
             // A subtitle the viewer fetched is the viewer's pick too: remembered by what it is.
             memo: Some(plx_media::route::memo_of_subtitle(&sub)),
         };
@@ -2010,6 +2046,13 @@ impl TrackMenuState {
             plx_media::route::cur_memory_note(ps),
             forced,
         );
+        // Auto-sync applies to a sidecar the app draws: under a server burn the text is in the
+        // picture already, and the server is not asked to re-time what it burns.
+        if burn.is_none() {
+            if let Some(section) = auto_sync_section(plx_media::player::sidecar::auto_sync_status()) {
+                form = form.section(section);
+            }
+        }
         if self.search.is_some() {
             // offered on direct play AND during a transcode: a downloaded sidecar is drawn by the
             // client on one and burned by the server on the other, so it reaches the picture either way
@@ -2666,6 +2709,28 @@ fn table_form(
     })
 }
 
+/// The Subtitles root's Auto-sync toggle and the one-line note under it, for the selected sidecar's
+/// auto-sync state. `None` (no section at all) when no sidecar is selected or the server cannot
+/// re-time it, so the menu never offers a switch that would do nothing.
+fn auto_sync_section(
+    status: Option<plx_media::player::sidecar::AutoSyncStatus>,
+) -> Option<FormSection<TrackRow, (), TrackPage>> {
+    use plx_media::player::sidecar::AutoSyncStatus;
+    use plx_platform::i18n::msg;
+    let status = status?;
+    let section = FormSection::new("").item(
+        TrackRow::AutoSync,
+        RowKind::Toggle,
+        (),
+        Row::new(msg::widgets_tracks_auto_sync()).toggle(status != AutoSyncStatus::Off),
+    );
+    Some(match status {
+        AutoSyncStatus::Synced => section.note(msg::widgets_tracks_auto_sync_note_synced()),
+        AutoSyncStatus::NotSynced => section.note(msg::widgets_tracks_auto_sync_note_not_synced()),
+        AutoSyncStatus::Off | AutoSyncStatus::Pending => section,
+    })
+}
+
 /// The panel at its WIDEST ([`plx_ui::table::MENU_MAX_W`], the shared cap — either tab may hug
 /// up to it) and TALLEST, for the overscan audit ([`plx_ui::consts::SAFE`]) — placed by the
 /// same placer as the live panel, beside the anchor of the compiled classic (`player_hud::audit_geometry`), with the height of the whole room (the
@@ -3107,6 +3172,7 @@ mod tests {
                     stream_id: 42,
                     sidecar_key: Some("/library/streams/42.srt".into()),
                     sidecar_codec: "srt".into(),
+                    sidecar_auto_sync: false,
                     memo: Some(plx_plex::plex::session::prefs::SubtitleMemo::Track(
                         plx_plex::plex::session::prefs::SubtitleTrackMemo {
                             lang: "fre".into(),
@@ -7154,7 +7220,8 @@ mod motion_tests {
     fn an_installed_download_commits_once_as_a_sidecar_pick() {
         let _g = plx_base::testlock::serial();
         let installed = DownloadPhase::Installed { hit: 0, stream: plx_data::subsearch::InstalledStream {
-            id: 1929519, key: "/library/streams/1929519".into(), codec: "srt".into(), language_code: "nld".into() } };
+            id: 1929519, key: "/library/streams/1929519".into(), codec: "srt".into(), language_code: "nld".into(),
+            can_auto_sync: false } };
         let waiting = DownloadPhase::Waiting { hit: 0, before: vec![1], attempts: 0 };
         let (mut menu, _store) = on_search_page(snap(SearchStatus::Ready, None, vec![hit("rel")], waiting));
         assert!(menu.take_search_commit().is_none(), "nothing installed yet");
@@ -7162,6 +7229,7 @@ mod motion_tests {
         let (stream, commit) = menu.take_search_commit().expect("the install is handed over");
         assert_eq!(commit, TrackCommit::Subtitle { render_ordinal: -1, stream_id: 1929519,
             sidecar_key: Some("/library/streams/1929519".into()), sidecar_codec: "srt".into(),
+            sidecar_auto_sync: false,
             // remembered by what it IS: the dutch sidecar's language, kind and title, as the hit
             // read it (the `hit("rel")` helper's own badges are not forced and not SDH)
             memo: Some(plx_plex::plex::session::prefs::SubtitleMemo::Track(
@@ -7182,7 +7250,8 @@ mod motion_tests {
     fn a_panel_opened_after_the_install_never_auto_selects_it_again() {
         let _g = plx_base::testlock::serial();
         let installed = DownloadPhase::Installed { hit: 0, stream: plx_data::subsearch::InstalledStream {
-            id: 1929519, key: "/library/streams/1929519".into(), codec: "srt".into(), language_code: "nld".into() } };
+            id: 1929519, key: "/library/streams/1929519".into(), codec: "srt".into(), language_code: "nld".into(),
+            can_auto_sync: false } };
         let ps = plx_media::route::PlaybackSession::IDLE;
         let store = store_with(vec![metadata::Stream { id: 1, index: 0, lang: "English".into(),
             lang_code: "eng".into(), codec: "srt".into(), ..Default::default() }]);
@@ -7202,7 +7271,8 @@ mod motion_tests {
         let flagged = SubHit { hearing_impaired: true, forced: true, ..hit("rel") };
         let waiting = DownloadPhase::Waiting { hit: 0, before: vec![1], attempts: 0 };
         let installed = DownloadPhase::Installed { hit: 0, stream: plx_data::subsearch::InstalledStream {
-            id: 1929519, key: "/library/streams/1929519".into(), codec: "srt".into(), language_code: "nld".into() } };
+            id: 1929519, key: "/library/streams/1929519".into(), codec: "srt".into(), language_code: "nld".into(),
+            can_auto_sync: false } };
         let (mut menu, _store) = on_search_page(snap(SearchStatus::Ready, None, vec![flagged.clone()], waiting));
         menu.set_search(snap(SearchStatus::Ready, None, vec![flagged], installed));
         let (stream, _) = menu.take_search_commit().expect("the install is handed over");
@@ -7465,5 +7535,147 @@ mod classic_placement_tests {
         let r = out[0].1;
         assert_eq!((r.x + r.w, r.y + r.h, r.w), (1824.0, 764.0, plx_ui::table::MENU_MAX_W));
         assert_eq!(r.y, plx_ui::consts::SAFE.y, "the whole room");
+    }
+}
+
+#[cfg(test)]
+mod auto_sync_tests {
+    //! The Subtitles root's Auto-sync row (Plex Pass subtitle auto-sync): offered only for a
+    //! sidecar the server can re-time, its switch and note follow the sidecar's state, OK flips the
+    //! preference and keeps the panel, and a pick carries the track's capability to the sidecar.
+    use super::tests::store_with;
+    use super::*;
+    use plx_media::player::sidecar;
+    use plx_platform::i18n::msg;
+
+    fn syncable_sidecar() -> metadata::Stream {
+        metadata::Stream {
+            id: 42, index: 0, lang: "English".into(), lang_code: "eng".into(), codec: "srt".into(),
+            external: true, key: "/library/streams/42".into(), can_auto_sync: true,
+            ..Default::default()
+        }
+    }
+
+    fn menu() -> (TrackMenuState, plx_data::stores::metadata::MetadataStore) {
+        let ps = plx_media::route::PlaybackSession::IDLE;
+        let store = store_with(vec![syncable_sidecar()]);
+        let menu = TrackMenuState::new(&ps, store.view(), 1, vec!["eng".into()]);
+        (menu, store)
+    }
+
+    fn rows(menu: &TrackMenuState) -> Vec<&Row> {
+        menu.form.table.sections.iter().flat_map(|s| &s.rows).collect()
+    }
+
+    fn auto_sync_row(menu: &TrackMenuState) -> Option<&Row> {
+        menu.form.index_of(&TrackRow::AutoSync).map(|i| rows(menu)[i])
+    }
+
+    fn notes(menu: &TrackMenuState) -> Vec<String> {
+        rows(menu).into_iter().filter(|r| r.is_note()).map(|r| r.label.clone()).collect()
+    }
+
+    #[test]
+    fn the_row_is_offered_only_for_a_sidecar_the_server_can_sync() {
+        let _g = plx_base::testlock::serial();
+        sidecar::reset();
+        assert!(auto_sync_row(&menu().0).is_none(), "nothing selected: no row");
+        sidecar::select_without_fetch_for_test(42);
+        assert!(auto_sync_row(&menu().0).is_none(), "a sidecar the server cannot sync: no row");
+
+        sidecar::select_syncable_for_test(42, false, Some(false));
+        let (m, _store) = menu();
+        let ids = m.ids();
+        let at = ids.iter().position(|r| *r == TrackRow::AutoSync).expect("the Auto-sync row");
+        assert!(ids.iter().position(|r| *r == TrackRow::Style).unwrap() < at, "after Timing and Style");
+        assert_eq!(auto_sync_row(&m).and_then(|r| r.toggle), Some(false));
+        assert!(notes(&m).is_empty(), "off says nothing");
+
+        sidecar::select_syncable_for_test(42, true, None);
+        let (m, _store) = menu();
+        assert_eq!(auto_sync_row(&m).and_then(|r| r.toggle), Some(true));
+        assert!(notes(&m).is_empty(), "asked, not arrived: nothing to say yet");
+
+        sidecar::select_syncable_for_test(42, true, Some(true));
+        assert_eq!(notes(&menu().0), vec![msg::widgets_tracks_auto_sync_note_synced()]);
+        sidecar::select_syncable_for_test(42, true, Some(false));
+        assert_eq!(notes(&menu().0), vec![msg::widgets_tracks_auto_sync_note_not_synced()]);
+        sidecar::reset();
+    }
+
+    #[test]
+    fn ok_flips_the_preference_keeps_the_panel_and_reads_timing_from_zero() {
+        let _g = plx_base::testlock::serial();
+        sidecar::reset();
+        plx_media::player::restore_subtitle_auto_sync(plx_plex::plex::session::SubtitleAutoSync::Off);
+        plx_media::player::set_subtitle_offset(1_500);
+        sidecar::select_syncable_for_test(42, false, Some(false));
+        let (mut m, store) = menu();
+        assert!(m.focus_id(TrackRow::AutoSync));
+        assert_eq!(
+            m.on_ok(store.view()),
+            TrackOk::Commit {
+                commit: TrackCommit::SubtitleAutoSync(plx_plex::plex::session::SubtitleAutoSync::On),
+                keep_open: true,
+            }
+        );
+        assert_eq!(auto_sync_row(&m).and_then(|r| r.toggle), Some(true), "the switch moves at once");
+        assert_eq!(m.offset_ms, 0, "the offset tuned against the other copy is cleared with the commit");
+        plx_media::player::set_subtitle_offset(0);
+        sidecar::reset();
+    }
+
+    #[test]
+    fn a_picked_sidecar_carries_its_auto_sync_capability() {
+        let _g = plx_base::testlock::serial();
+        sidecar::reset();
+        let (mut m, store) = menu();
+        assert!(m.focus_id(TrackRow::Sub(0)));
+        match m.on_ok(store.view()) {
+            TrackOk::Commit { commit: TrackCommit::Subtitle { sidecar_auto_sync, sidecar_key, .. }, .. } => {
+                assert!(sidecar_auto_sync);
+                assert_eq!(sidecar_key.as_deref(), Some("/library/streams/42"));
+            }
+            other => panic!("expected a subtitle commit, got {other:?}"),
+        }
+    }
+
+    /// The Auto-sync row and both of its notes fit the Subtitles panel in every shipped language,
+    /// at the shared menu cap and at the hugged width, with the real font measure.
+    #[test]
+    fn the_row_and_its_notes_fit_the_panel_in_every_shipped_language() {
+        use plx_platform::i18n::{language_on_this_thread_for_test, SHIPPED};
+        let mut out = Vec::new();
+        for language in SHIPPED {
+            for synced in [true, false] {
+                let _g = plx_base::testlock::serial();
+                let _guard = language_on_this_thread_for_test(language);
+                sidecar::select_syncable_for_test(42, true, Some(synced));
+                let (m, _store) = menu();
+                assert!(auto_sync_row(&m).is_some(), "{language:?}");
+                out.extend(m.form.table.menu_cap_failure(&plx_base::fontcov::advances::ShippedMeasure, language.tag()));
+                out.extend(m.form.table.app_fit_failures(plx_ui::table::MENU_MAX_W, language.tag()));
+                out.extend(m.form.table.app_fit_failures_hugged(language.tag()));
+                sidecar::reset();
+            }
+        }
+        plx_ui::table::assert_no_fit_failures(&out);
+    }
+
+    /// The row and its notes say what happens in plain words in every shipped language, and the row
+    /// never reads the same as Timing, the row beside it.
+    #[test]
+    fn the_words_never_use_jargon_and_differ_from_timing() {
+        use plx_platform::i18n::{language_on_this_thread_for_test, SHIPPED};
+        for language in SHIPPED {
+            let _guard = language_on_this_thread_for_test(language);
+            assert_ne!(msg::widgets_tracks_auto_sync(), msg::widgets_tracks_timing(), "{language:?}");
+            for text in [msg::widgets_tracks_auto_sync_note_synced(), msg::widgets_tracks_auto_sync_note_not_synced()] {
+                let lower = text.to_lowercase();
+                for jargon in ["sidecar", "srt", "voice activity", "autoadjust"] {
+                    assert!(!lower.contains(jargon), "{language:?}: {text}");
+                }
+            }
+        }
     }
 }

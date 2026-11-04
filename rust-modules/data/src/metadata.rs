@@ -862,6 +862,14 @@ pub struct Stream {
     /// said so.
     #[serde(default, skip_serializing_if = "is_false")]
     pub can_normalize_loudness: bool,
+    /// Subtitle track only: the server can re-time this track to the film's dialogue (Plex Pass
+    /// subtitle auto-sync, `autoAdjustSubtitle=1`, docs/pms-api.md "Subtitle auto-sync"): the
+    /// stream's own `canAutoSync` AND its version's `hasVoiceActivity`, the two answers Plex Web
+    /// gates its own switch on, folded at the wire copy ([`convert_streams`]) because the second
+    /// belongs to the Media, not the stream. Kept off the wire while false for the same
+    /// recorded-fixture reason as `can_normalize_loudness`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_auto_sync: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -2436,7 +2444,8 @@ pub struct Streams {
     pub dovi: Dovi,
 }
 
-fn convert_streams(streams: &[plx_plex::plex::Stream]) -> Streams {
+/// `voice_activity` is the version's `Media.hasVoiceActivity` ([`Stream::can_auto_sync`]).
+fn convert_streams(streams: &[plx_plex::plex::Stream], voice_activity: bool) -> Streams {
     let (mut audio, mut subs, mut fps) = (Vec::new(), Vec::new(), 0.0);
     let mut hdr = false;
     let mut dovi = Dovi::default();
@@ -2467,6 +2476,7 @@ fn convert_streams(streams: &[plx_plex::plex::Stream]) -> Streams {
             // the server's current pick for this part (a track chosen on another client)
             selected: s.selected != 0,
             can_normalize_loudness: s.can_normalize_loudness,
+            can_auto_sync: s.stream_type == 3 && s.can_auto_sync && voice_activity,
         };
         match s.stream_type {
             1 => {
@@ -2553,11 +2563,30 @@ mod convert_streams_tests {
                 ..Default::default()
             },
         ];
-        let s = convert_streams(&wire);
+        let s = convert_streams(&wire, false);
         assert_eq!(s.audio.len(), 2);
         assert!(s.audio[0].can_normalize_loudness);
         assert!(!s.audio[1].can_normalize_loudness);
         assert!(!s.video.expect("video track").can_normalize_loudness);
+    }
+
+    /// A subtitle reads auto-syncable only when the stream says `canAutoSync` AND its version has
+    /// voice-activity data, and the flag stays off the recorded wire while false.
+    #[test]
+    fn convert_streams_folds_auto_sync_with_the_versions_voice_activity() {
+        let wire = [
+            plx_plex::plex::Stream { stream_type: 3, id: 1, key: "/library/streams/1".into(), can_auto_sync: true, ..Default::default() },
+            plx_plex::plex::Stream { stream_type: 3, id: 2, key: "/library/streams/2".into(), ..Default::default() },
+            plx_plex::plex::Stream { stream_type: 2, id: 3, can_auto_sync: true, ..Default::default() },
+        ];
+        let analysed = convert_streams(&wire, true);
+        assert!(analysed.subs[0].can_auto_sync);
+        assert!(!analysed.subs[1].can_auto_sync, "the track itself said no");
+        assert!(!analysed.audio[0].can_auto_sync, "never an audio track");
+        let unanalysed = convert_streams(&wire, false);
+        assert!(!unanalysed.subs[0].can_auto_sync, "no voice data, nothing to sync against");
+        let json = serde_json::to_string(&analysed.subs[1]).unwrap();
+        assert!(!json.contains("can_auto_sync"), "{json}");
     }
 }
 
@@ -2583,7 +2612,8 @@ fn parse_streams(it: &plx_plex::plex::Metadata, d: &mut Detail) {
         if !p.container.is_empty() {
             d.container = p.container.clone();
         }
-        let s = convert_streams(&p.stream);
+        let voice_activity = it.media_version(None).is_some_and(|(_, m)| m.has_voice_activity);
+        let s = convert_streams(&p.stream, voice_activity);
         d.audio = s.audio;
         d.subs = s.subs;
         d.video = s.video;
@@ -2801,7 +2831,7 @@ fn playing_item_of(
         .map(|it| convert_chapters(&it.chapter))
         .unwrap_or_default();
     let st = media
-        .and_then(|m| m.part.first().map(|p| convert_streams(&p.stream)))
+        .and_then(|m| m.part.first().map(|p| convert_streams(&p.stream, m.has_voice_activity)))
         .unwrap_or_default();
     let (audio, subs, video_fps, dovi, hdr) = (st.audio, st.subs, st.fps, st.dovi, st.hdr);
     let show_rk = it

@@ -77,11 +77,75 @@ impl DolbyVisionMode {
     }
 }
 
+/// Whether the server is asked to re-time a client-drawn external subtitle to the film's dialogue
+/// (Plex Pass subtitle auto-sync, `autoAdjustSubtitle=1`, docs/pms-api.md "Subtitle auto-sync"),
+/// one per profile like [`InstantDpadSeeking`]. The Subtitles menu is its only writer (no Settings
+/// row, like the subtitle tone) and offers it only for a subtitle the server says it can sync.
+/// Absence is `Off`: a viewer opts in, so nothing new is asked of a server until then, and a timing
+/// correction tuned against the file as it is keeps applying to that same file.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubtitleAutoSync {
+    #[default]
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "on")]
+    On,
+}
+
+impl SubtitleAutoSync {
+    /// Every option, in index order.
+    pub const LADDER: [SubtitleAutoSync; 2] = [SubtitleAutoSync::Off, SubtitleAutoSync::On];
+
+    pub fn from_index(i: u8) -> SubtitleAutoSync {
+        Self::LADDER.get(i as usize).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> u8 {
+        Self::LADDER.iter().position(|&m| m == self).unwrap_or(0) as u8
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn is_on(self) -> bool {
+        self == SubtitleAutoSync::On
+    }
+
+    pub fn of(on: bool) -> SubtitleAutoSync {
+        if on { SubtitleAutoSync::On } else { SubtitleAutoSync::Off }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plex::session::{effective, own_prefs, put_own, DolbyVisionModePref,
-        InstantDpadSeekingPref, Preferences, ProfilePrefs};
+        InstantDpadSeekingPref, Preferences, ProfilePrefs, SubtitleAutoSyncPref};
+
+    #[test]
+    fn subtitle_auto_sync_is_off_by_default_and_scoped_per_profile() {
+        for json in ["{}", r#"{"subtitle_auto_sync":"future"}"#, r#"{"subtitle_auto_sync":null}"#] {
+            let prefs: Preferences = serde_json::from_str(json).unwrap();
+            assert_eq!(prefs.subtitle_auto_sync, SubtitleAutoSync::Off);
+            let encoded = serde_json::to_value(&prefs).unwrap();
+            assert!(encoded.get("subtitle_auto_sync").is_none());
+        }
+        let prefs = Preferences::default();
+        let mut records = Vec::new();
+        assert!(put_own::<SubtitleAutoSyncPref>(&mut records, "alice", "account", SubtitleAutoSync::On));
+        assert_eq!(effective::<SubtitleAutoSyncPref>(&prefs, own_prefs(&records, "alice", "account")), SubtitleAutoSync::On);
+        for (user, account) in [("bob", "account"), ("alice", "other")] {
+            assert_eq!(effective::<SubtitleAutoSyncPref>(&prefs, own_prefs(&records, user, account)), SubtitleAutoSync::Off);
+        }
+        let encoded = serde_json::to_string(&records[0].prefs).unwrap();
+        assert!(encoded.contains(r#""subtitle_auto_sync":"on""#), "{encoded}");
+        assert_eq!(serde_json::from_str::<ProfilePrefs>(&encoded).unwrap(), records[0].prefs);
+        for i in 0..3 {
+            assert_eq!(SubtitleAutoSync::from_index(SubtitleAutoSync::from_index(i).index()), SubtitleAutoSync::from_index(i));
+        }
+        assert!(SubtitleAutoSync::of(true).is_on() && !SubtitleAutoSync::of(false).is_on());
+    }
 
     #[test]
     fn instant_dpad_seeking_is_defaulted_and_scoped_per_profile() {

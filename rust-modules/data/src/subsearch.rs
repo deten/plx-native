@@ -101,6 +101,10 @@ pub struct InstalledStream {
     pub key: String,
     pub codec: String,
     pub language_code: String,
+    /// The server can re-time the downloaded file to the film's dialogue
+    /// (`metadata::Stream::can_auto_sync`: the stream's `canAutoSync` and its version's
+    /// `hasVoiceActivity`).
+    pub can_auto_sync: bool,
 }
 
 /// One download's progress. `hit` indexes the result set of the generation it was pressed on.
@@ -460,6 +464,8 @@ pub struct StreamRow {
     pub codec: String,
     pub language_code: String,
     pub title: String,
+    /// `metadata::Stream::can_auto_sync`, folded the same way.
+    pub can_auto_sync: bool,
 }
 
 /// Which of `rows` is the stream our download created. **Pure** — the rule the probe forced: the
@@ -476,7 +482,7 @@ pub fn identify(rows: &[StreamRow], before: &[i64], picked_title: &str) -> Optio
         .or_else(|| (new.len() == 1).then(|| new[0]))
         .or_else(|| new.iter().max_by_key(|r| r.id).copied())?;
     Some(InstalledStream { id: row.id, key: row.key.clone(), codec: row.codec.clone(),
-        language_code: row.language_code.clone() })
+        language_code: row.language_code.clone(), can_auto_sync: row.can_auto_sync })
 }
 
 /// What one request asks the server for.
@@ -612,10 +618,11 @@ fn run_job(client: &'static Client, rk: &str, work: Work) -> Landing {
 /// The item's subtitle streams across every Media/Part, or `None` when the read failed.
 fn subtitle_rows(client: &Client, rk: &str) -> Option<Vec<StreamRow>> {
     let item = client.metadata(rk)?;
-    Some(item.media.iter().flat_map(|m| &m.part).flat_map(|p| &p.stream)
-        .filter(|s| s.stream_type == 3)
-        .map(|s| StreamRow { id: s.id, key: s.key.clone(), codec: s.codec.clone(),
-            language_code: s.language_code.clone(), title: s.title.clone() })
+    Some(item.media.iter()
+        .flat_map(|m| m.part.iter().flat_map(|p| &p.stream).map(move |s| (s, m.has_voice_activity)))
+        .filter(|(s, _)| s.stream_type == 3)
+        .map(|(s, voice)| StreamRow { id: s.id, key: s.key.clone(), codec: s.codec.clone(),
+            language_code: s.language_code.clone(), title: s.title.clone(), can_auto_sync: s.can_auto_sync && voice })
         .collect())
 }
 
@@ -686,7 +693,7 @@ mod tests {
 
     fn row(id: i64, title: &str) -> StreamRow {
         StreamRow { id, key: format!("/library/streams/{id}"), codec: "srt".into(),
-            language_code: "nld".into(), title: title.into() }
+            language_code: "nld".into(), title: title.into(), can_auto_sync: false }
     }
 
     /// A model opened on one item, with no worker ever spawned (`apply` is driven directly).
@@ -880,7 +887,7 @@ mod tests {
             row(1929519, "rel.NOGRP")])));
         assert_eq!(state.view().download(), Some(&DownloadPhase::Installed { hit: 0,
             stream: InstalledStream { id: 1929519, key: "/library/streams/1929519".into(),
-                codec: "srt".into(), language_code: "nld".into() } }));
+                codec: "srt".into(), language_code: "nld".into(), can_auto_sync: false } }));
     }
 
     #[test]

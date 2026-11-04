@@ -35,11 +35,11 @@
 use super::{
     Fallback, Parse, ProfileKeyed, ProfileRecords, Preferences, Row, Scope, Setting, SettingsWrite,
     IntroSkipPref, CreditsSkipPref, DolbyVisionModePref, InstantDpadSeekingPref, AudioEnhancementsPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref, SkipIntervalPref,
-    HudSelectionPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UnderPostersPref,
+    HudSelectionPref, SubtitleAutoSyncPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UnderPostersPref,
 };
 use crate::plex::session::{
     MarkerSkipMode, DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, NextEpisodeMode, PlaybackQuality, Seat, Session, SkipInterval, SubtitlePosition,
-    SubtitleSize, SubtitleTone, UnderPosters,
+    SubtitleAutoSync, SubtitleSize, SubtitleTone, UnderPosters,
 };
 use crate::plex::AudioEnhancements;
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,8 @@ pub struct ProfilePrefs {
     pub under_posters: Option<UnderPosters>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub audio_enhancements: Option<AudioEnhancements>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
+    pub subtitle_auto_sync: Option<SubtitleAutoSync>,
     /// Hero trailer autoplay (P1c). An absent value reads the legacy key, which itself reads ON when
     /// absent.
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
@@ -172,6 +174,7 @@ profile_setting!(
     DeckPressPref = deck_press,
     UnderPostersPref = under_posters,
     AudioEnhancementsPref = audio_enhancements,
+    SubtitleAutoSyncPref = subtitle_auto_sync,
     TrailerAutoplayPref = trailer_autoplay,
 );
 

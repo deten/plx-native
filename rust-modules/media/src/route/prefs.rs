@@ -39,8 +39,8 @@ use plx_plex::plex::session::{
     MarkerSkipMode, IntroSkipPref, CreditsSkipPref, DolbyVisionMode, DolbyVisionModePref, InstantDpadSeeking, InstantDpadSeekingPref, effective, own_prefs, persist_profile_pref, AudioEnhancementsPref, DeckPress, DeckPressPref, DirectPlayMode,
     DirectPlayModePref, HdrOverlayBrightness, HdrOverlayBrightnessPref, NextEpisodeMode, NextEpisodeModePref, Preferences, ProfilePrefs, ProfilePrefsRecord,
     ProfileSetting, ProfileWrite, QualityPref, Row, Setting, SkipInterval, SkipIntervalPref, SubtitlePosition,
-    SubtitlePositionPref, SubtitleSize, SubtitleSizePref, SubtitleTone, SubtitleTonePref, TrailerAutoplayPref, UnderPosters,
-    UnderPostersPref,
+    SubtitleAutoSync, SubtitleAutoSyncPref, SubtitlePositionPref, SubtitleSize, SubtitleSizePref, SubtitleTone, SubtitleTonePref,
+    TrailerAutoplayPref, UnderPosters, UnderPostersPref,
 };
 use plx_plex::plex::session::prefs::{
     MemoryEntry, ProfileKeyed, ProfileList, ProfileMemory, ProfileRecords, SettingsWrite, TrackMemoryEntry,
@@ -142,7 +142,7 @@ macro_rules! packed_by_index {
         }
     )*};
 }
-packed_by_index!(MarkerSkipMode = 1, DolbyVisionMode = 0, InstantDpadSeeking = 0, NextEpisodeMode = 0, SkipInterval = 1, DeckPress = 0, SubtitleSize = 1, SubtitlePosition = 0, SubtitleTone = 0, HdrOverlayBrightness = 1);
+packed_by_index!(SubtitleAutoSync = 0, MarkerSkipMode = 1, DolbyVisionMode = 0, InstantDpadSeeking = 0, NextEpisodeMode = 0, SkipInterval = 1, DeckPress = 0, SubtitleSize = 1, SubtitlePosition = 0, SubtitleTone = 0, HdrOverlayBrightness = 1);
 
 impl Packed for DirectPlayMode {
     const SEED: u8 = 0;
@@ -338,6 +338,7 @@ live_setting!(SubtitlePositionPref, SUBTITLE_POSITION, "subtitle position");
 live_setting!(HdrOverlayBrightnessPref, HDR_OVERLAY_BRIGHTNESS, "HDR overlay brightness");
 live_setting!(SubtitleTonePref, crate::player::SUBTITLE_TONE, "subtitle tone");
 live_setting!(AudioEnhancementsPref, crate::player::AUDIO_ENHANCEMENTS, "audio enhancements");
+live_setting!(SubtitleAutoSyncPref, crate::player::SUBTITLE_AUTO_SYNC, "subtitle auto-sync");
 live_setting!(TrailerAutoplayPref, crate::player::preview::TRAILER_AUTOPLAY, "hero trailer autoplay");
 live_setting!(NextEpisodeModePref, NEXT_EPISODE_MODE, "next episode mode",
     fn after_saved(mode: NextEpisodeMode) {
@@ -397,6 +398,7 @@ pub const LIVE_ROWS: &[LiveRow] = &[
     LiveRow::of::<DeckPressPref>(),
     LiveRow::of::<UnderPostersPref>(),
     LiveRow::of::<AudioEnhancementsPref>(),
+    LiveRow::of::<SubtitleAutoSyncPref>(),
     LiveRow::of::<TrailerAutoplayPref>(),
 ];
 

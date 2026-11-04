@@ -421,3 +421,37 @@ fn a_repick_keeps_the_entrys_other_keys_and_an_unchanged_one_writes_nothing() {
     assert_eq!(serde_json::to_value(&session::peek().prefs.subtitle_offsets).unwrap(), before);
     tidy();
 }
+
+/// **The Subtitles menu's Auto-sync flip** swaps the file under the timing offset (the server's
+/// re-timed copy for the file as it is, or back), so the offset tuned against the copy it replaces
+/// is cleared, live and in the item's remembered entry, while the preference itself is the seated
+/// profile's pick. A flip with no offset writes no memory.
+#[test]
+fn an_auto_sync_flip_clears_the_offset_tuned_against_the_other_copy() {
+    use plx_plex::plex::session::SubtitleAutoSync;
+    let mut ps = crate::route::PlaybackSession::IDLE;
+    let _g = fresh_registry(&mut ps);
+    let _session = session::TempSession::new("memory-auto-sync");
+    session::save(&signed_in("acct"));
+    _session.seated("", "acct");
+    seed_memory_for_test::<SubtitleOffsetEntry>(&session::peek());
+    crate::player::sidecar::reset();
+    let _sid = playing(&mut ps, "machine-auto-sync", "rk-auto-sync");
+    crate::player::set_subtitle_offset(1_200);
+    persist_subtitle_offset(&ps, 1_200);
+    plx_base::storage_worker::drain_for_test();
+    assert_eq!(session::peek().subtitle_offset_for("", "machine-auto-sync", "rk-auto-sync"), Some(1_200), "setup");
+
+    commit_subtitle_auto_sync(&ps, SubtitleAutoSync::On);
+    plx_base::storage_worker::drain_for_test();
+    assert_eq!(crate::player::subtitle_auto_sync(), SubtitleAutoSync::On);
+    assert_eq!(crate::player::subtitle_offset_ms(), 0, "the live offset is cleared");
+    assert_eq!(session::peek().subtitle_offset_for("", "machine-auto-sync", "rk-auto-sync"), None, "and so is the remembered one");
+
+    commit_subtitle_auto_sync(&ps, SubtitleAutoSync::Off);
+    plx_base::storage_worker::drain_for_test();
+    assert_eq!(crate::player::subtitle_auto_sync(), SubtitleAutoSync::Off);
+    assert_eq!(crate::player::subtitle_offset_ms(), 0);
+    crate::player::restore_subtitle_auto_sync(SubtitleAutoSync::Off);
+    tidy();
+}

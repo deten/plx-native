@@ -47,6 +47,19 @@
 //! reads to offer it the sidecar offset range (see `subtitle_offset_range_ms`), where an embedded track
 //! gets a delay only.
 //!
+//! # Auto-sync
+//!
+//! A Plex Pass server can re-time a subtitle to the film's dialogue (`autoAdjustSubtitle=1`,
+//! docs/pms-api.md "Subtitle auto-sync"). A pick says whether the server can do that for this track
+//! and this version (`metadata::Stream::can_auto_sync`), and [`select`] also requires the server to
+//! be known to have Plex Pass; with the viewer's preference on
+//! (`player::subtitle_auto_sync`) the fetch asks for the re-timed copy first and falls back to the
+//! file as it is when the server refuses, or when the copy it sends cannot be drawn. The two are
+//! different downloads, so the ask is part of a [`Selection`]'s identity, and flipping the preference
+//! fetches the selected track again ([`reapply_auto_sync`]). [`auto_sync_status`] is what the
+//! Subtitles menu's Auto-sync row reads. The viewer's timing offset composes on top of whichever
+//! file is drawn, exactly as on any file.
+//!
 //! # Threading
 //!
 //! [`select`]/[`deselect`]/[`active`]/[`ass_source`] are main-thread calls; the fetch runs on a `task` worker and
@@ -85,6 +98,11 @@ struct Selection {
     stream_id: i64,
     key: String,
     codec: String,
+    /// The server can re-time this track for this version (`metadata::Stream::can_auto_sync`).
+    /// Kept so a change of the viewer's preference can fetch the same track again.
+    syncable: bool,
+    /// The fetch asks for the re-timed copy: `syncable` and the viewer's preference.
+    auto_sync: bool,
 }
 
 /// A loaded file as the renderer takes it.
@@ -93,6 +111,8 @@ struct Content {
     font_generation: Option<u64>,
     /// Set for a converted SubRip/WebVTT file, whose header follows the viewer's picks.
     text: Option<TextHold>,
+    /// The file is the server's answer to the auto-sync request (`SidecarFile::synced`).
+    synced: bool,
 }
 
 /// What a converted file needs to be restyled: the script is the synthesized header followed by
@@ -139,28 +159,48 @@ fn state() -> std::sync::MutexGuard<'static, State> {
 }
 
 /// Select the sidecar `stream_id`, fetching `key` from `server` unless that file is already
-/// loaded. MAIN THREAD.
-pub fn select(server: plx_plex::plex::ServerId, stream_id: i64, key: String, codec: String) {
-    select_with_fetch(server, stream_id, key, codec, |server, key, codec| {
+/// loaded. `syncable` is the track's `metadata::Stream::can_auto_sync`: with the viewer's
+/// preference on, the server is asked for a re-timed copy first (module doc, "Auto-sync"). Only a
+/// server known to have Plex Pass is asked (`serverinfo::subscription_of`, `Yes`; an unknown one is
+/// not, like the audio enhancements, `docs/plex-pass-audit.md`). MAIN THREAD.
+pub fn select(server: plx_plex::plex::ServerId, stream_id: i64, key: String, codec: String, syncable: bool) {
+    let syncable = syncable
+        && plx_plex::plex::serverinfo::subscription_of(server) == plx_plex::plex::serverinfo::Subscription::Yes;
+    let auto_sync = syncable && super::subtitle_auto_sync().is_on();
+    select_fetching(server, stream_id, key, codec, syncable, auto_sync, |server, key, codec, auto_sync| {
         let Some(client) = plx_plex::plex::client_for(server) else {
             super::log("sidecar: no client for the playing server");
             return None;
         };
-        client.sidecar_subtitle_detailed(key, codec)
+        client.sidecar_subtitle_fetch(key, codec, auto_sync)
+            .map(|file| (file.bytes, file.synced))
             .map_err(|why| super::log(&format!("sidecar: fetch failed: {why}")))
             .ok()
     });
 }
 
+/// The test seam with the fetch shape every test before auto-sync used: never asks for a re-timed
+/// copy.
+#[cfg(test)]
 fn select_with_fetch(
     server: plx_plex::plex::ServerId, stream_id: i64, key: String, codec: String,
     fetch: impl Fn(plx_plex::plex::ServerId, &str, &str) -> Option<Vec<u8>> + Send + 'static,
+) {
+    select_fetching(server, stream_id, key, codec, false, false, move |server, key, codec, _| {
+        fetch(server, key, codec).map(|bytes| (bytes, false))
+    });
+}
+
+/// `fetch(server, key, codec, auto_sync)` answers the file and whether it is the re-timed copy.
+fn select_fetching(
+    server: plx_plex::plex::ServerId, stream_id: i64, key: String, codec: String, syncable: bool, auto_sync: bool,
+    fetch: impl Fn(plx_plex::plex::ServerId, &str, &str, bool) -> Option<(Vec<u8>, bool)> + Send + 'static,
 ) {
     if stream_id <= 0 || key.is_empty() {
         deselect();
         return;
     }
-    let selection = Selection { server, stream_id, key, codec: codec.to_ascii_lowercase() };
+    let selection = Selection { server, stream_id, key, codec: codec.to_ascii_lowercase(), syncable, auto_sync };
     {
         let mut st = state();
         st.generation = st.generation.wrapping_add(1);
@@ -186,12 +226,26 @@ fn select_with_fetch(
             request
         };
         let stream_id = selection.stream_id;
-        super::log(&format!("sidecar: fetching stream {stream_id}"));
-        let body = fetch(selection.server, &selection.key, &selection.codec);
-        let outcome = match body {
+        let asked = selection.auto_sync;
+        super::log(&format!("sidecar: fetching stream {stream_id}{}", if asked { " (auto-sync asked)" } else { "" }));
+        let decoded = |body: Option<(Vec<u8>, bool)>| match body {
             None => Err(Failure::Fetch),
-            Some(bytes) => decode(bytes, &selection.codec),
+            Some((bytes, synced)) => decode(bytes, &selection.codec).map(|content| Content { synced, ..content }),
         };
+        let body = fetch(selection.server, &selection.key, &selection.codec, asked);
+        let synced_answer = body.as_ref().is_some_and(|(_, synced)| *synced);
+        let mut outcome = decoded(body);
+        if synced_answer && outcome.is_err() {
+            // The re-timed copy the server sent may be one the renderer cannot use (a styled script
+            // answered as SubRip, an empty file): the file as it is still may be.
+            super::log(&format!("sidecar: stream {stream_id} auto-sync answer unusable, fetching the file as it is"));
+            outcome = decoded(fetch(selection.server, &selection.key, &selection.codec, false));
+        }
+        if asked {
+            let synced = outcome.as_ref().is_ok_and(|content| content.synced);
+            super::log(&format!("sidecar: stream {stream_id} auto-sync {}",
+                if synced { "answered by the server" } else { "not answered, drawing the file as it is" }));
+        }
         let mut st = state();
         if st.generation != gen {
             continue; // check and publication share the selection/reset lock
@@ -247,6 +301,7 @@ fn select_for_test(stream_id: i64, codec: &str, script: Option<&[u8]>) {
     st.failed = None;
     let selection = Selection {
         server: plx_plex::plex::ServerId::UNSET, stream_id, key: String::new(), codec: codec.to_owned(),
+        syncable: false, auto_sync: false,
     };
     st.want = Some(selection.clone());
     st.loaded = script.map(|s| {
@@ -281,6 +336,68 @@ pub fn fail_for_test(stream_id: i64, age: Duration) {
     st.failed = Some((want, Failure::Empty, Instant::now().checked_sub(age).unwrap_or_else(Instant::now)));
 }
 
+/// Select `stream_id` as a sidecar the server can sync, asked for (`auto_sync`) or not, with the
+/// loaded file the server's re-timed copy (`Some(true)`), the file as it is (`Some(false)`) or not
+/// arrived yet (`None`). No fetch: for the tests of what the Subtitles menu's Auto-sync row shows.
+#[cfg(any(test, feature = "test-support"))]
+pub fn select_syncable_for_test(stream_id: i64, auto_sync: bool, answered: Option<bool>) {
+    const SCRIPT: &[u8] = b"[Script Info]\nScriptType: v4.00+\n[Events]\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,LINE\n";
+    let mut st = state();
+    st.generation = st.generation.wrapping_add(1);
+    st.pending = None;
+    st.failed = None;
+    let selection = Selection {
+        server: plx_plex::plex::ServerId::UNSET, stream_id, key: String::new(), codec: "ass".to_owned(),
+        syncable: true, auto_sync,
+    };
+    st.want = Some(selection.clone());
+    st.loaded = answered.map(|synced| {
+        let content = decode(SCRIPT.to_vec(), "ass").expect("fixture: an authored script");
+        (selection, Content { synced, ..content })
+    });
+}
+
+/// What the Subtitles menu's Auto-sync row says about the selected sidecar ([`auto_sync_status`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoSyncStatus {
+    /// The viewer has it off: the file is fetched as it is.
+    Off,
+    /// Asked for, and nothing has been drawn yet (the file is on its way, or it failed and the
+    /// sidecar's own failure notice says so).
+    Pending,
+    /// The server answered the re-timed request and that copy is drawn.
+    Synced,
+    /// Asked for, but the server did not answer it, and the file as it is is drawn.
+    NotSynced,
+}
+
+/// The auto-sync state of the selected sidecar, or `None` when no sidecar is selected or the
+/// server cannot sync it (no `canAutoSync`, or no voice-activity data), in which case the Subtitles
+/// menu offers no Auto-sync row at all.
+pub fn auto_sync_status() -> Option<AutoSyncStatus> {
+    let st = state();
+    let want = st.want.as_ref().filter(|want| want.syncable)?;
+    if !want.auto_sync {
+        return Some(AutoSyncStatus::Off);
+    }
+    Some(match &st.loaded {
+        Some((source, content)) if source == want => {
+            if content.synced { AutoSyncStatus::Synced } else { AutoSyncStatus::NotSynced }
+        }
+        _ => AutoSyncStatus::Pending,
+    })
+}
+
+/// The viewer changed the auto-sync preference: select the current sidecar again, which fetches it
+/// under the new preference unless that exact download is already loaded. A track the server
+/// cannot sync is left alone: nothing about its fetch changes. MAIN THREAD.
+pub fn reapply_auto_sync() {
+    let want = state().want.clone();
+    if let Some(w) = want.filter(|w| w.syncable) {
+        select(w.server, w.stream_id, w.key, w.codec, true);
+    }
+}
+
 /// A new item is starting: nothing of the previous one's may survive. MAIN THREAD.
 pub fn reset() {
     let mut st = state();
@@ -312,8 +429,8 @@ pub fn restore_selection(
             (s, "remembered")
         }
     };
-    super::log(&format!("{whose} sidecar subtitle: sid={}", s.id));
-    select(server, s.id, s.key.clone(), s.codec.clone());
+    super::log(&format!("{whose} sidecar subtitle: sid={}{}", s.id, if s.can_auto_sync { " (syncable)" } else { "" }));
+    select(server, s.id, s.key.clone(), s.codec.clone(), s.can_auto_sync);
     Some(s.id)
 }
 
@@ -461,6 +578,7 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
             }),
             font_generation: None,
             text: None,
+            synced: false,
         });
     }
     // A server conversion or error must not silently turn an ASS selection into plain text.
@@ -494,6 +612,7 @@ fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
         }),
         font_generation: None,
         text: Some(TextHold { header_len: header.len(), style_generation: style.generation(), cues: converted.cues, restyling: false }),
+        synced: false,
     })
 }
 
@@ -668,6 +787,98 @@ mod tests {
         assert!(!script.contains(",old\n"));
         reset();
         assert!(!parallel, "an abandoned fetch must finish before another worker is started");
+    }
+
+    /// The text of the drawn script's last event, or `None` while nothing is drawn.
+    fn drawn_line() -> Option<String> {
+        ass_source(false).map(|s| {
+            let ass::Content::Script { bytes, .. } = &s.content else { panic!("a sidecar is a script") };
+            let text = String::from_utf8_lossy(bytes).into_owned();
+            text.trim_end().rsplit(',').next().unwrap_or_default().to_string()
+        })
+    }
+
+    /// A fetch that answers which kind of file it was asked for, and records every ask.
+    fn recording_fetch(
+        asked: std::sync::Arc<Mutex<Vec<bool>>>, honoured: bool,
+    ) -> impl Fn(plx_plex::plex::ServerId, &str, &str, bool) -> Option<(Vec<u8>, bool)> + Clone + Send + 'static {
+        move |_, _, _, auto_sync| {
+            asked.lock().unwrap().push(auto_sync);
+            let synced = auto_sync && honoured;
+            let text = if synced { "synced" } else { "as is" };
+            Some((format!("00:00:01 --> 00:00:03\n{text}\n").into_bytes(), synced))
+        }
+    }
+
+    #[test]
+    fn auto_sync_is_asked_reported_and_refetched_when_the_preference_flips() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        finish_download();
+        let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let fetch = recording_fetch(asked.clone(), true);
+        let sid = plx_plex::plex::ServerId::from_raw(0);
+        select_fetching(sid, 7, "/library/streams/7".into(), "srt".into(), true, true, fetch.clone());
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::Pending), "asked, not arrived");
+        finish_download();
+        assert_eq!(drawn_line().as_deref(), Some("synced"));
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::Synced));
+
+        // the viewer turns it off: the same track is fetched again, as it is
+        select_fetching(sid, 7, "/library/streams/7".into(), "srt".into(), true, false, fetch.clone());
+        finish_download();
+        assert_eq!(drawn_line().as_deref(), Some("as is"));
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::Off));
+        assert_eq!(*asked.lock().unwrap(), vec![true, false]);
+
+        // a track the server cannot sync has no auto-sync state at all, and never asks
+        select_fetching(sid, 8, "/library/streams/8".into(), "srt".into(), false, false, fetch);
+        finish_download();
+        assert_eq!(auto_sync_status(), None);
+        assert_eq!(asked.lock().unwrap().last(), Some(&false));
+        deselect();
+        assert_eq!(auto_sync_status(), None, "nothing selected");
+        reset();
+    }
+
+    #[test]
+    fn a_refused_sync_request_draws_the_file_as_it_is_and_says_so() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        finish_download();
+        let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+        select_fetching(plx_plex::plex::ServerId::from_raw(0), 9, "/library/streams/9".into(), "srt".into(),
+            true, true, recording_fetch(asked.clone(), false));
+        finish_download();
+        assert_eq!(drawn_line().as_deref(), Some("as is"), "the file as it is still draws");
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::NotSynced));
+        assert_eq!(*asked.lock().unwrap(), vec![true], "the plain fallback is the plex layer's, one fetch here");
+        reset();
+    }
+
+    #[test]
+    fn an_unusable_synced_answer_falls_back_to_the_file_as_it_is() {
+        let _guard = plx_base::testlock::serial();
+        reset();
+        finish_download();
+        let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let fetch = {
+            let asked = asked.clone();
+            move |_: plx_plex::plex::ServerId, _: &str, _: &str, auto_sync: bool| {
+                asked.lock().unwrap().push(auto_sync);
+                // a styled track answered as SubRip when synced: the renderer refuses that file
+                let body: &[u8] = if auto_sync { b"1\n00:00:01,000 --> 00:00:02,000\nplain\n" } else { STYLED_SCRIPT };
+                Some((body.to_vec(), auto_sync))
+            }
+        };
+        select_fetching(plx_plex::plex::ServerId::from_raw(0), 10, "/library/streams/10".into(), "ass".into(),
+            true, true, fetch);
+        finish_download();
+        assert_eq!(*asked.lock().unwrap(), vec![true, false]);
+        assert_eq!(ass_source(false).map(|s| s.origin), Some(Origin::Authored), "the styled script as it is");
+        assert_eq!(auto_sync_status(), Some(AutoSyncStatus::NotSynced));
+        assert_eq!(notice(), None, "nothing failed from the viewer's side");
+        reset();
     }
 
     #[test]
