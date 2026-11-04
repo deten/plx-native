@@ -5,5 +5,12 @@
   "settings.playback.instant_dpad_seeking.on": "Уключана",
   "settings.playback.dolby_vision": "Dolby Vision",
   "settings.playback.dolby_vision.copy": "«Аўтаматычна» выкарыстоўвае Dolby Vision, калі тэлевізар яго падтрымлівае. «Выкл.» прайгравае слой HDR10. Файлы без слоя HDR10 канвертуе сервер Plex, і яны могуць не прайгравацца.",
-  "settings.playback.dolby_vision.off": "Выкл."
+  "settings.playback.dolby_vision.off": "Выкл.",
+  "settings.playback.skip_intro": "Пропуск застаўкі",
+  "settings.playback.skip_intro.copy": "«Паказваць кнопку» прапануе «Прапусціць застаўку», калі яна пачынаецца. «Аўтаматычна» прапускае яе за вас. «Выкл.» пакідае яе.",
+  "settings.playback.skip_credits": "Пропуск цітраў",
+  "settings.playback.skip_credits.copy": "«Паказваць кнопку» прапануе «Прапусціць цітры», калі яны пачынаюцца. «Аўтаматычна» прапускае іх за вас або запускае наступную серыю там, дзе гэта зрабіў бы адлік «Далей». «Выкл.» пакідае іх.",
+  "settings.playback.marker_skip.button": "Паказваць кнопку",
+  "settings.playback.marker_skip.automatic": "Аўтаматычна",
+  "settings.playback.marker_skip.off": "Выкл."
 }

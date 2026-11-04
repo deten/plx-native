@@ -172,7 +172,47 @@ impl ControlSlot {
 /// The Next episode preference only changes the offer for that final-credits-with-a-successor
 /// case: `AfterCredits` and `Off` offer nothing there (the discs stay), because the successor is
 /// not announced until the stream ends, if then. The last episode and films keep Skip Credits.
+///
+/// This is the row under the default Skip intro / Skip credits choices; [`slot_for_with`] applies
+/// the viewer's.
 pub fn slot_for(marker: Option<plx_data::metadata::Marker>, has_next: bool, mode: plx_media::route::NextEpisodeMode) -> ControlSlot {
+    slot_for_with(marker, has_next, mode, SkipModes::default())
+}
+
+/// The viewer's Skip intro and Skip credits choices (Settings > Playback), sampled with the rest of
+/// the row's inputs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct SkipModes {
+    pub intro: plx_plex::plex::session::MarkerSkip,
+    pub credits: plx_plex::plex::session::MarkerSkip,
+}
+
+impl SkipModes {
+    /// The seated profile's choices, as Settings last saved them.
+    pub fn live() -> SkipModes {
+        SkipModes { intro: plx_media::route::skip_intro(), credits: plx_media::route::skip_credits() }
+    }
+
+    /// The choice that governs a segment of `kind`.
+    pub fn of(self, kind: plx_data::metadata::MarkerKind) -> plx_plex::plex::session::MarkerSkip {
+        match kind {
+            plx_data::metadata::MarkerKind::Intro => self.intro,
+            plx_data::metadata::MarkerKind::Credits => self.credits,
+        }
+    }
+}
+
+/// PURE: [`slot_for`] with the viewer's skip choices applied. **`Off` is decided here**, where the
+/// offer itself is: a kind set to Off never becomes a Skip stand-in, so the row keeps the discs and
+/// no HUD package (the built-in one or a sideloaded one, which all draw the slot this returns) can
+/// offer it, and no press or BACK can reach it. It never withdraws Up Next, which belongs to the
+/// Next episode preference and has its own Off.
+pub fn slot_for_with(
+    marker: Option<plx_data::metadata::Marker>,
+    has_next: bool,
+    mode: plx_media::route::NextEpisodeMode,
+    skips: SkipModes,
+) -> ControlSlot {
     match marker {
         Some(m) => {
             let pr = crate::skip_pill::prompt_for(m);
@@ -181,12 +221,39 @@ pub fn slot_for(marker: Option<plx_data::metadata::Marker>, has_next: bool, mode
                     plx_media::route::NextEpisodeMode::Countdown => ControlSlot::UpNext(m),
                     plx_media::route::NextEpisodeMode::AfterCredits | plx_media::route::NextEpisodeMode::Off => ControlSlot::Discs(Controls::NONE),
                 }
+            } else if skips.of(m.kind) == plx_plex::plex::session::MarkerSkip::Off {
+                ControlSlot::Discs(Controls::NONE)
             } else {
                 ControlSlot::Skip(pr)
             }
         }
         None => ControlSlot::Discs(Controls::NONE),
     }
+}
+
+/// PURE: does the row's new offer act on its own, the moment it appears? True for a Skip stand-in
+/// whose kind is set to Automatically, and for Up Next when credits are (skipping a final credits
+/// segment with a successor queued is starting it, which is what the Next Episode button does).
+/// The caller then performs the stand-in's own action, the one a press of it performs.
+///
+/// `from_server` is false for the tail the app synthesizes where the server marked no credits
+/// (`metadata::synthesized_tail_marker`): it exists only to time the Up Next countdown, and acting
+/// on it would cut off the end of an episode nobody marked, so it is never skipped.
+pub fn auto_skips(slot: ControlSlot, from_server: bool, skips: SkipModes) -> bool {
+    let automatic = |kind| skips.of(kind) == plx_plex::plex::session::MarkerSkip::Automatic;
+    from_server
+        && match slot {
+            ControlSlot::Skip(pr) => automatic(pr.kind),
+            ControlSlot::UpNext(m) => automatic(m.kind),
+            ControlSlot::Discs(_) => false,
+        }
+}
+
+/// [`auto_skips`] for the row this frame resolved, with the live choices: whether the segment it
+/// offers is one of the playing item's own server markers is read from the store that resolved it.
+pub fn auto_skip(slot: ControlSlot, meta: plx_data::metadata::MetadataView<'_>) -> bool {
+    let from_server = slot.marker().is_some_and(|m| meta.playing_markers().contains(&m));
+    auto_skips(slot, from_server, SkipModes::live())
 }
 
 /// Sample the live globals ONCE and resolve the row. Call this once per frame (and again only when
@@ -211,7 +278,7 @@ pub fn slot(ps: &plx_media::route::PlaybackSession, meta: plx_data::metadata::Me
             .then(|| meta.synthesized_tail_marker(head, has_next))
             .flatten()
     });
-    let slot = slot_for(m, has_next, mode);
+    let slot = slot_for_with(m, has_next, mode, SkipModes::live());
     if slot.is_discs() { ControlSlot::Discs(Controls::now(ps)) } else { slot }
 }
 

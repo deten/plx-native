@@ -201,6 +201,12 @@ pub enum Feature {
     /// five lengths. The length is the whole payload: a closed set of five codes, fired once per
     /// durable change, never per press and never with anything about what was playing.
     SkipInterval(plx_plex::plex::session::SkipInterval),
+    /// **A viewer set the Skip intro preference** (Settings → Video & playback) to one of its three
+    /// choices. The choice is the whole payload: a closed set of three codes, fired once per durable
+    /// change, never per playback and never per skip, and never with anything about what was playing.
+    SkipIntroMode(plx_plex::plex::session::MarkerSkip),
+    /// **A viewer set the Skip credits preference**, reported as [`Feature::SkipIntroMode`] is.
+    SkipCreditsMode(plx_plex::plex::session::MarkerSkip),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +250,16 @@ impl Feature {
                 plx_plex::plex::session::SkipInterval::Seconds15 => "skip_interval_15s",
                 plx_plex::plex::session::SkipInterval::Seconds30 => "skip_interval_30s",
                 plx_plex::plex::session::SkipInterval::Seconds60 => "skip_interval_60s",
+            },
+            Self::SkipIntroMode(mode) => match mode {
+                plx_plex::plex::session::MarkerSkip::Button => "skip_intro_button",
+                plx_plex::plex::session::MarkerSkip::Automatic => "skip_intro_automatic",
+                plx_plex::plex::session::MarkerSkip::Off => "skip_intro_off",
+            },
+            Self::SkipCreditsMode(mode) => match mode {
+                plx_plex::plex::session::MarkerSkip::Button => "skip_credits_button",
+                plx_plex::plex::session::MarkerSkip::Automatic => "skip_credits_automatic",
+                plx_plex::plex::session::MarkerSkip::Off => "skip_credits_off",
             },
         }
     }
@@ -999,6 +1015,24 @@ mod tests {
                 want("skip_interval_60s"),
             ]
         );
+    }
+
+    /// The Skip intro and Skip credits preferences are reported as `feature.used` carrying exactly
+    /// one of three fixed codes each: the choice and nothing else.
+    #[test]
+    fn the_skip_intro_and_skip_credits_settings_report_only_their_choice() {
+        use plx_plex::plex::session::MarkerSkip;
+        let want = |code| ("feature.used", vec![("feature", Value::Str(code))]);
+        let intro: Vec<_> = MarkerSkip::LADDER
+            .iter()
+            .map(|&mode| serialize(DiagEvent::FeatureUsed { feature: Feature::SkipIntroMode(mode) }))
+            .collect();
+        assert_eq!(intro, [want("skip_intro_button"), want("skip_intro_automatic"), want("skip_intro_off")]);
+        let credits: Vec<_> = MarkerSkip::LADDER
+            .iter()
+            .map(|&mode| serialize(DiagEvent::FeatureUsed { feature: Feature::SkipCreditsMode(mode) }))
+            .collect();
+        assert_eq!(credits, [want("skip_credits_button"), want("skip_credits_automatic"), want("skip_credits_off")]);
     }
 
     /// **What is SENT is exactly what is DECLARED — name and every field key, in order.**

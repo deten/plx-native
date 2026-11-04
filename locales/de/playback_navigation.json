@@ -5,5 +5,12 @@
   "settings.playback.instant_dpad_seeking.on": "Ein",
   "settings.playback.dolby_vision": "Dolby Vision",
   "settings.playback.dolby_vision.copy": "„Automatisch“ nutzt Dolby Vision, wenn der Fernseher es unterstützt. „Aus“ spielt die HDR10-Ebene ab. Dateien ohne HDR10-Ebene konvertiert dein Plex-Server, und sie werden womöglich nicht abgespielt.",
-  "settings.playback.dolby_vision.off": "Aus"
+  "settings.playback.dolby_vision.off": "Aus",
+  "settings.playback.skip_intro": "Intro überspringen",
+  "settings.playback.skip_intro.copy": "„Schaltfläche zeigen“ bietet zu Beginn eines Intros „Intro überspringen“ an. „Automatisch“ überspringt es für dich. „Aus“ lässt es laufen.",
+  "settings.playback.skip_credits": "Abspann überspringen",
+  "settings.playback.skip_credits.copy": "„Schaltfläche zeigen“ bietet zu Beginn des Abspanns „Abspann überspringen“ an. „Automatisch“ überspringt ihn für dich oder startet die nächste Episode, wo es der Countdown tun würde. „Aus“ lässt ihn laufen.",
+  "settings.playback.marker_skip.button": "Schaltfläche zeigen",
+  "settings.playback.marker_skip.automatic": "Automatisch",
+  "settings.playback.marker_skip.off": "Aus"
 }

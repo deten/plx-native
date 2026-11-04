@@ -5,5 +5,12 @@
   "settings.playback.instant_dpad_seeking.on": "Aan",
   "settings.playback.dolby_vision": "Dolby Vision",
   "settings.playback.dolby_vision.copy": "Auto gebruikt Dolby Vision als de tv dit ondersteunt. Uit speelt de HDR10-laag af. Bestanden zonder HDR10-laag converteert je Plex-server, en ze spelen mogelijk niet af.",
-  "settings.playback.dolby_vision.off": "Uit"
+  "settings.playback.dolby_vision.off": "Uit",
+  "settings.playback.skip_intro": "Intro overslaan",
+  "settings.playback.skip_intro.copy": "Knop tonen biedt Intro overslaan aan als een intro begint. Automatisch slaat die voor je over. Uit laat hem spelen.",
+  "settings.playback.skip_credits": "Aftiteling overslaan",
+  "settings.playback.skip_credits.copy": "Knop tonen biedt Aftiteling overslaan aan als de aftiteling begint. Automatisch slaat die voor je over, of start de volgende aflevering waar het aftellen dat zou doen. Uit laat hem spelen.",
+  "settings.playback.marker_skip.button": "Knop tonen",
+  "settings.playback.marker_skip.automatic": "Automatisch",
+  "settings.playback.marker_skip.off": "Uit"
 }

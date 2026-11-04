@@ -81,6 +81,10 @@ pub enum PickerKind {
     InstantDpadSeeking,
     /// Manual Dolby Vision override (Auto / Off).
     DolbyVision,
+    /// What the player does at a server intro marker (Show button / Automatically / Off).
+    SkipIntro,
+    /// The same for a credits marker.
+    SkipCredits,
 }
 
 impl SettingsPage {
@@ -103,7 +107,7 @@ impl PickerKind {
     /// The page that lists this field (its picker is pushed from there and returns there).
     pub fn parent(self) -> SettingsPage {
         match self {
-            PickerKind::Quality | PickerKind::DirectPlay | PickerKind::SubtitleSize | PickerKind::SubtitlePosition | PickerKind::HdrOverlay | PickerKind::NextEpisode | PickerKind::DeckPress | PickerKind::SkipInterval | PickerKind::InstantDpadSeeking | PickerKind::DolbyVision => SettingsPage::Playback,
+            PickerKind::Quality | PickerKind::DirectPlay | PickerKind::SubtitleSize | PickerKind::SubtitlePosition | PickerKind::HdrOverlay | PickerKind::NextEpisode | PickerKind::DeckPress | PickerKind::SkipInterval | PickerKind::InstantDpadSeeking | PickerKind::DolbyVision | PickerKind::SkipIntro | PickerKind::SkipCredits => SettingsPage::Playback,
             PickerKind::AudioLanguage | PickerKind::SubtitleMode | PickerKind::SubtitleLanguage | PickerKind::ForcedSubtitles => SettingsPage::AudioSubtitles,
             PickerKind::UiResolution => SettingsPage::Root,
         }

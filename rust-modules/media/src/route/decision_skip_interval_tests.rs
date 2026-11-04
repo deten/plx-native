@@ -59,3 +59,35 @@ fn a_failed_write_changes_and_reports_nothing() {
     assert_eq!(skip_interval(), SkipInterval::Seconds10);
     assert!(events.is_empty(), "{events:?}");
 }
+
+/// **Skip intro and Skip credits take the same seam**: a durable pick is live, the seated profile's
+/// own, and reported once as the choice alone, each under its own kind.
+#[test]
+fn a_durable_skip_intro_or_skip_credits_pick_is_live_persisted_and_reported_once() {
+    use plx_plex::plex::session::{MarkerSkip, SkipCreditsPref, SkipIntroPref};
+    struct Back(MarkerSkip, MarkerSkip);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            restore_skip_intro(self.0);
+            restore_skip_credits(self.1);
+        }
+    }
+    let _g = plx_base::testlock::serial();
+    let session = plx_plex::plex::session::TempSession::new("marker-skip-set");
+    sign_in(&session);
+    let _restore = Back(skip_intro(), skip_credits());
+    restore_skip_intro(MarkerSkip::Button);
+    restore_skip_credits(MarkerSkip::Button);
+
+    let (saved, events) = plx_telemetry::diag::test_events::capture(|| set_skip_intro(MarkerSkip::Automatic));
+    assert!(saved);
+    assert_eq!((skip_intro(), skip_credits()), (MarkerSkip::Automatic, MarkerSkip::Button));
+    assert_eq!(picked::<SkipIntroPref>(), Some(MarkerSkip::Automatic));
+    assert_eq!(events, [DiagEvent::FeatureUsed { feature: Feature::SkipIntroMode(MarkerSkip::Automatic) }]);
+
+    let (saved, events) = plx_telemetry::diag::test_events::capture(|| set_skip_credits(MarkerSkip::Off));
+    assert!(saved);
+    assert_eq!((skip_intro(), skip_credits()), (MarkerSkip::Automatic, MarkerSkip::Off));
+    assert_eq!(picked::<SkipCreditsPref>(), Some(MarkerSkip::Off));
+    assert_eq!(events, [DiagEvent::FeatureUsed { feature: Feature::SkipCreditsMode(MarkerSkip::Off) }]);
+}

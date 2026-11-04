@@ -34,11 +34,11 @@
 //! * **No `extensions`**: a field a later build adds is not carried by this one.
 use super::{
     Fallback, Parse, ProfileKeyed, ProfileRecords, Preferences, Row, Scope, Setting, SettingsWrite,
-    DolbyVisionModePref, InstantDpadSeekingPref, AudioEnhancementsPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref, SkipIntervalPref,
+    DolbyVisionModePref, InstantDpadSeekingPref, AudioEnhancementsPref, DeckPressPref, DirectPlayModePref, HdrOverlayBrightnessPref, NextEpisodeModePref, QualityPref, SkipCreditsPref, SkipIntervalPref, SkipIntroPref,
     HudSelectionPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref, TrailerAutoplayPref, UnderPostersPref,
 };
 use crate::plex::session::{
-    DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, NextEpisodeMode, PlaybackQuality, Seat, Session, SkipInterval, SubtitlePosition,
+    DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, MarkerSkip, NextEpisodeMode, PlaybackQuality, Seat, Session, SkipInterval, SubtitlePosition,
     SubtitleSize, SubtitleTone, UnderPosters,
 };
 use crate::plex::AudioEnhancements;
@@ -68,6 +68,10 @@ pub struct ProfilePrefs {
     pub instant_dpad_seeking: Option<InstantDpadSeeking>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub dolby_vision_mode: Option<DolbyVisionMode>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
+    pub skip_intro: Option<MarkerSkip>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
+    pub skip_credits: Option<MarkerSkip>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
     pub deck_press: Option<DeckPress>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "super::de_soft_opt")]
@@ -163,6 +167,8 @@ profile_setting!(
     SkipIntervalPref = skip_interval,
     InstantDpadSeekingPref = instant_dpad_seeking,
     DolbyVisionModePref = dolby_vision_mode,
+    SkipIntroPref = skip_intro,
+    SkipCreditsPref = skip_credits,
     DeckPressPref = deck_press,
     UnderPostersPref = under_posters,
     AudioEnhancementsPref = audio_enhancements,

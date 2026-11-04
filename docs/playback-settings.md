@@ -1,8 +1,8 @@
 # Playback settings
 
 Settings has **Video & playback** and **Audio & subtitles** pages. The Video & playback
-settings (quality, Direct Play, subtitle size and position, next episode, Continue Watching
-and skip interval) are saved on this television, **per profile**: each Plex Home profile keeps
+settings (quality, Direct Play, subtitle size and position, next episode, skip intro and skip
+credits, Continue Watching and skip interval) are saved on this television, **per profile**: each Plex Home profile keeps
 its own picks, and a profile that has not chosen yet starts from the value the television held
 before profiles had their own. The page names the profile it shows ("Playback settings for
 Maya") and follows a profile switch (Settings itself closes on one). Settings is reached
@@ -34,6 +34,31 @@ the quality controls explain that the saved quality is overridden. Returning to 
 Disabled needs no confirmation.
 
 Audio passthrough remains the television's Digital Sound Output setting.
+
+## Skip intro and Skip credits
+
+**Skip intro** and **Skip credits** decide what the player does when the playhead enters a segment
+the Plex server marked as an intro or as credits, with the three choices of the official Plex
+clients:
+
+- **Show button** (the default) offers the Skip Intro / Skip Credits button, exactly as before.
+- **Automatically** performs that button's own action the moment it would be offered, with no HUD
+  raise: it seeks past an intro or a mid-item credits segment, finishes a film or a show's last
+  episode at its final credits, and starts the next episode where the Up Next countdown would have
+  offered it (final credits with a successor queued, under *Next episode: Up Next countdown*). The
+  action is the press's own (`app::playback::perform_ctrl_row`, reached from
+  `app::playback::auto_skip_offer` on the loop's fresh-offer edge), so it fires once per segment per
+  playback: the segment is retired in the metadata store's skipped set as a press retires it, and a
+  seek back into it plays it. Each automatic skip writes one event-log line,
+  `marker auto-skip: <Intro|Credits> <start>s-<end>s at <position>s, <seek to Ns|finish|next episode>`.
+- **Off** offers nothing for that kind and lets the segment play. It is decided where the control
+  row's occupant is (`appkit::player_hud::slot_for_with`), so no HUD package can offer it.
+
+The 30 s tail the app synthesizes where the server marked no credits exists only to time the Up
+Next countdown and is never skipped. Up Next stays the Next episode setting's: Skip credits Off
+removes the Skip Credits button only, and under *After credits* or *Off* final credits with a
+successor offer nothing, so there is nothing to skip automatically either. An unknown stored value
+reads as Show button.
 
 ## Plex account preferences
 

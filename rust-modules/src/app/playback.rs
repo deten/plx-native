@@ -903,8 +903,38 @@ pub(crate) fn finish_playback(
 /// pointer — they used to hold byte-identical copies of this `match`, and had already
 /// drifted (the key path cleared the held key, the pointer path did not). Returns true when
 /// the route flipped, which is the only thing the two callers still handle differently.
+///
+/// A press of a Skip pill is counted (`feature.used`) here; what the press DOES is
+/// [`perform_ctrl_row`], which an automatic skip ([`auto_skip_offer`]) performs too.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn activate_ctrl_row(
+    player: &mut plx_media::player::machine::Player,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    repause_at: &mut i64,
+    slot: plx_appkit::player_hud::ControlSlot,
+    refresh_hubs: &mut bool,
+    btn: c_int,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
+    bridge: &mut super::bridge::Bridge,
+) -> bool {
+    if let plx_appkit::player_hud::ControlSlot::Skip(pr) = slot {
+        plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
+            feature: match pr.kind {
+                plx_data::metadata::MarkerKind::Intro => plx_telemetry::diag::schema::Feature::SkipIntro,
+                plx_data::metadata::MarkerKind::Credits => {
+                    plx_telemetry::diag::schema::Feature::SkipCredits
+                }
+            },
+        });
+    }
+    perform_ctrl_row(player, pa, repause_at, slot, refresh_hubs, btn, pages, bridge)
+}
+
+/// **The one performer of a stand-in's item**: what Skip Intro, Skip Credits and the Up Next pair
+/// do, whether the viewer pressed them ([`activate_ctrl_row`]) or the viewer's Skip intro / Skip
+/// credits choice is Automatically ([`auto_skip_offer`]). Returns true when the route flipped.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn perform_ctrl_row(
     player: &mut plx_media::player::machine::Player,
     pa: &mut plx_media::player::adapter::PlayerAdapter,
     repause_at: &mut i64,
@@ -934,14 +964,6 @@ pub(crate) fn activate_ctrl_row(
             }
         }
         ControlSlot::Skip(pr) => {
-            plx_telemetry::diag::event(plx_telemetry::diag::schema::DiagEvent::FeatureUsed {
-                feature: match pr.kind {
-                    plx_data::metadata::MarkerKind::Intro => plx_telemetry::diag::schema::Feature::SkipIntro,
-                    plx_data::metadata::MarkerKind::Credits => {
-                        plx_telemetry::diag::schema::Feature::SkipCredits
-                    }
-                },
-            });
             match pr.action {
                 SkipAction::Seek(ns) => {
                     // Retire the segment FIRST: the seek lands on the preceding keyframe, which
@@ -962,6 +984,46 @@ pub(crate) fn activate_ctrl_row(
         }
         ControlSlot::Discs(_) => false,
     }
+}
+
+/// **Skip intro / Skip credits: Automatically.** A fresh offer whose kind the viewer set to skip
+/// automatically (`player_hud::auto_skip`, asked by the loop's `follow_control_row` on the frame
+/// the offer appears) performs the offered item's own action through [`perform_ctrl_row`], exactly
+/// as a press of it would: Skip Intro and a mid-item Skip Credits retire the segment and seek past
+/// it, a last episode's or a film's final Skip Credits finishes the item, and Up Next's primary
+/// item, Next Episode, starts the successor. It rides the fresh-offer edge and the segment is
+/// retired in the store's `skipped` set, so it fires once per segment per playback: a seek back
+/// into a skipped segment is neither offered nor skipped again. Returns true when the route flipped.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn auto_skip_offer(
+    player: &mut plx_media::player::machine::Player,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    repause_at: &mut i64,
+    slot: plx_appkit::player_hud::ControlSlot,
+    refresh_hubs: &mut bool,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
+    bridge: &mut super::bridge::Bridge,
+) -> bool {
+    use plx_appkit::player_hud::ControlSlot;
+    use plx_appkit::skip_pill::SkipAction;
+    let Some(m) = slot.marker() else { return false };
+    let action = match slot {
+        ControlSlot::Skip(pr) => match pr.action {
+            SkipAction::Seek(ns) => format!("seek to {}s", ns / 1_000_000_000),
+            SkipAction::Finish => "finish".to_owned(),
+        },
+        ControlSlot::UpNext(_) => "next episode".to_owned(),
+        ControlSlot::Discs(_) => return false,
+    };
+    // One line per automatic skip, beside the `marker offer:` line the same edge writes.
+    log(&format!(
+        "marker auto-skip: {:?} {}s-{}s at {}s, {action}",
+        m.kind,
+        m.start_ms / 1000,
+        m.end_ms / 1000,
+        plx_media::player::playpos_ns() / 1_000_000_000,
+    ));
+    perform_ctrl_row(player, pa, repause_at, slot, refresh_hubs, slot.primary_btn(), pages, bridge)
 }
 
 /// Start the queued episode. Returns false when there is nothing queued (a movie, or the

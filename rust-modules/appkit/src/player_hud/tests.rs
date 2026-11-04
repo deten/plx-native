@@ -482,6 +482,96 @@ fn only_a_final_credits_segment_finishes_the_item() {
     assert_eq!(intro, SkipAction::Seek(2_000 * 1_000_000));
 }
 
+fn skips(intro: plx_plex::plex::session::MarkerSkip, credits: plx_plex::plex::session::MarkerSkip) -> SkipModes {
+    SkipModes { intro, credits }
+}
+
+/// Every marker shape the row resolves, under every Next episode mode, with and without a successor.
+fn every_row_input() -> Vec<(Option<Marker>, bool, NextEpisodeMode)> {
+    let mut all = Vec::new();
+    for m in [None, Some(marker(MarkerKind::Intro, false)), Some(marker(MarkerKind::Credits, false)), Some(marker(MarkerKind::Credits, true))] {
+        for has_next in [false, true] {
+            for mode in [NextEpisodeMode::Countdown, NextEpisodeMode::AfterCredits, NextEpisodeMode::Off] {
+                all.push((m, has_next, mode));
+            }
+        }
+    }
+    all
+}
+
+/// **Show button, the default, is the row every build before the setting resolved**, and so is
+/// Automatically: the offer is the same, only what follows it differs.
+#[test]
+fn show_button_and_automatically_leave_the_offer_as_it_was() {
+    use plx_plex::plex::session::MarkerSkip as K;
+    assert_eq!(SkipModes::default(), skips(K::Button, K::Button));
+    for (m, has_next, mode) in every_row_input() {
+        for choice in [skips(K::Button, K::Button), skips(K::Automatic, K::Automatic), skips(K::Automatic, K::Button), skips(K::Button, K::Automatic)] {
+            assert!(slot_for_with(m, has_next, mode, choice) == slot_for(m, has_next, mode), "{m:?} {has_next} {mode:?} {choice:?}");
+        }
+    }
+}
+
+/// **Off withdraws its own kind's Skip offer and nothing else.** The row keeps the discs where the
+/// pill would have stood (so no package draws an offer and no press or BACK reaches one), the other
+/// kind is offered as ever, and Up Next, which the Next episode preference owns, is never withdrawn.
+#[test]
+fn off_withdraws_only_its_own_kinds_skip_offer() {
+    use plx_plex::plex::session::MarkerSkip as K;
+    let intro = Some(marker(MarkerKind::Intro, false));
+    let mid_credits = Some(marker(MarkerKind::Credits, false));
+    let final_credits = Some(marker(MarkerKind::Credits, true));
+    let intro_off = skips(K::Off, K::Button);
+    assert!(slot_for_with(intro, true, NextEpisodeMode::Countdown, intro_off).is_discs());
+    assert!(matches!(slot_for_with(mid_credits, true, NextEpisodeMode::Countdown, intro_off), ControlSlot::Skip(p) if p.kind == MarkerKind::Credits));
+    assert!(matches!(slot_for_with(final_credits, false, NextEpisodeMode::Countdown, intro_off), ControlSlot::Skip(p) if p.action == SkipAction::Finish));
+    let credits_off = skips(K::Button, K::Off);
+    assert!(slot_for_with(mid_credits, true, NextEpisodeMode::Countdown, credits_off).is_discs());
+    assert!(slot_for_with(final_credits, false, NextEpisodeMode::Countdown, credits_off).is_discs(), "the last episode's Skip Credits too");
+    assert!(matches!(slot_for_with(intro, true, NextEpisodeMode::Countdown, credits_off), ControlSlot::Skip(p) if p.kind == MarkerKind::Intro));
+    assert!(matches!(slot_for_with(final_credits, true, NextEpisodeMode::Countdown, credits_off), ControlSlot::UpNext(_)), "Up Next stays");
+    for (m, has_next, mode) in every_row_input() {
+        let both_off = slot_for_with(m, has_next, mode, skips(K::Off, K::Off));
+        assert!(both_off.is_discs() || matches!(both_off, ControlSlot::UpNext(_)), "{m:?} {has_next} {mode:?}: only Up Next survives");
+        assert!(matches!(both_off, ControlSlot::UpNext(_)) == matches!(slot_for(m, has_next, mode), ControlSlot::UpNext(_)));
+    }
+}
+
+/// **Automatically acts on exactly the offer of its own kind**: Skip Intro, Skip Credits mid-file and
+/// on a last episode's final credits, and the Up Next offer a final credits segment with a successor
+/// makes (whose primary item, Next Episode, is what skipping those credits does). Never under Show
+/// button or Off, never on the discs, and never on the tail synthesized to time the Up Next countdown.
+#[test]
+fn automatically_acts_on_its_own_kinds_server_offer_only() {
+    use plx_plex::plex::session::MarkerSkip as K;
+    let intro = slot_for(Some(marker(MarkerKind::Intro, false)), true, NextEpisodeMode::Countdown);
+    let mid_credits = slot_for(Some(marker(MarkerKind::Credits, false)), true, NextEpisodeMode::Countdown);
+    let final_credits = slot_for(Some(marker(MarkerKind::Credits, true)), false, NextEpisodeMode::Countdown);
+    let up_next = slot_for(Some(marker(MarkerKind::Credits, true)), true, NextEpisodeMode::Countdown);
+    assert!(matches!(up_next, ControlSlot::UpNext(_)) && up_next.primary_btn() == crate::up_next::BTN_NEXT);
+
+    assert!(auto_skips(intro, true, skips(K::Automatic, K::Button)));
+    assert!(!auto_skips(intro, true, skips(K::Button, K::Automatic)));
+    for slot in [mid_credits, final_credits, up_next] {
+        assert!(auto_skips(slot, true, skips(K::Button, K::Automatic)));
+        assert!(!auto_skips(slot, true, skips(K::Automatic, K::Button)));
+    }
+    for slot in [intro, mid_credits, final_credits, up_next] {
+        assert!(!auto_skips(slot, true, SkipModes::default()), "Show button waits for a press");
+        assert!(!auto_skips(slot, true, skips(K::Off, K::Off)));
+        assert!(!auto_skips(slot, false, skips(K::Automatic, K::Automatic)), "a synthesized tail is never skipped");
+    }
+    for slot in [ControlSlot::Discs(Controls::NONE), slot_for(None, true, NextEpisodeMode::Countdown)] {
+        assert!(!auto_skips(slot, true, skips(K::Automatic, K::Automatic)));
+    }
+    // The synthesized tail is a final credits segment with a successor: under the countdown it is
+    // Up Next, the same slot a server marker makes, so only `from_server` tells the two apart.
+    let tail = plx_data::metadata::tail_marker(3_570_000, 3_600_000).expect("a tail inside its window");
+    let tail_slot = slot_for(Some(tail), true, NextEpisodeMode::Countdown);
+    assert!(matches!(tail_slot, ControlSlot::UpNext(_)));
+    assert!(!auto_skips(tail_slot, false, skips(K::Automatic, K::Automatic)));
+}
+
 /// The ring only goes back to the scrubber on the EDGE where a stand-in vanished under it.
 /// As a steady state (`is_discs() && focused`, which is how it shipped) it fired on every
 /// frame the user had walked UP to the Subtitles/Audio discs, so focus could not rest there

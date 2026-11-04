@@ -688,3 +688,57 @@ fn dolby_vision_mode_is_picked_into_the_seated_profiles_record_and_follows_the_s
     restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
     assert_eq!(dolby_vision_mode(), DolbyVisionMode::Off, "u1 seated again restores Off");
 }
+
+// ---- Skip intro and Skip credits (Settings > Playback) ------------------------------------------
+
+struct MarkerSkipBack;
+impl Drop for MarkerSkipBack {
+    fn drop(&mut self) {
+        restore_skip_intro(MarkerSkip::default());
+        restore_skip_credits(MarkerSkip::default());
+    }
+}
+
+/// Each pick is the seated profile's own and its kind's own: it is live at once, written into that
+/// profile's record (the TV's top-level keys are untouched), absent for another profile, and back
+/// when the first is seated again. A stored spelling this build does not know restores as Show
+/// button.
+#[test]
+fn skip_intro_and_skip_credits_are_picked_into_the_seated_profiles_record_and_follow_the_seat() {
+    let _g = plx_base::testlock::serial();
+    let session = session::TempSession::new("marker-skip");
+    let _restore = Put::back(cells());
+    let _back = MarkerSkipBack;
+    session.seated("u1", TOKEN);
+    let mut legacy = record(Preferences::default(), vec![]);
+    legacy.client_id = "cid-test".into();
+    session::save(&legacy);
+    seed_profile_prefs_for_test(&session::peek());
+    restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
+    assert_eq!((skip_intro(), skip_credits()), (MarkerSkip::Button, MarkerSkip::Button), "the default is the button");
+
+    assert!(confirm::<SkipIntroPref>(MarkerSkip::Automatic));
+    assert_eq!((skip_intro(), skip_credits()), (MarkerSkip::Automatic, MarkerSkip::Button), "one kind moves alone");
+    assert!(confirm::<SkipCreditsPref>(MarkerSkip::Off));
+    assert_eq!((skip_intro(), skip_credits()), (MarkerSkip::Automatic, MarkerSkip::Off));
+    let after = session::load();
+    assert_eq!((after.prefs.skip_intro, after.prefs.skip_credits), (MarkerSkip::Button, MarkerSkip::Button), "the TV's keys are untouched");
+    assert_eq!(own_of::<SkipIntroPref>(&after.prefs.profile_prefs, "u1"), Some(MarkerSkip::Automatic));
+    assert_eq!(own_of::<SkipCreditsPref>(&after.prefs.profile_prefs, "u1"), Some(MarkerSkip::Off));
+
+    session.seated("u2", TOKEN);
+    restore_profile_rows(&session::peek(), &seat("u2"), Overrides::default());
+    assert_eq!((skip_intro(), skip_credits()), (MarkerSkip::Button, MarkerSkip::Button), "another profile reads the default");
+
+    session.seated("u1", TOKEN);
+    restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
+    assert_eq!((skip_intro(), skip_credits()), (MarkerSkip::Automatic, MarkerSkip::Off), "u1 seated again restores its picks");
+    assert!(Choice::KEYS.contains(&"skip_intro") && Choice::KEYS.contains(&"skip_credits"), "Settings rows save them through the door");
+
+    let unknown = record(
+        Preferences::default(),
+        vec![picked("u1", "", serde_json::json!({"skip_intro": "always", "skip_credits": 2}))],
+    );
+    restore(&unknown, &seat("u1"), Overrides::default());
+    assert_eq!((skip_intro(), skip_credits()), (MarkerSkip::Button, MarkerSkip::Button), "an unknown stored value degrades to Show button");
+}

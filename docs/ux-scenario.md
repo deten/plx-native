@@ -686,6 +686,10 @@ position, same height, never narrower than the disc pair, so the transport does 
 When the segment begins the HUD is raised and the focus ring is parked on the pill, so **one bare OK
 skips**. OK seeks past the segment and resumes; on a `final` credits marker it finishes the item
 instead. The pill leaves with the segment, and focus returns to the scrubber when it does.
+Settings > Playback > *Skip intro* and *Skip credits* (each *Show button*, the default,
+*Automatically* or *Off*) change this per kind: *Automatically* performs the pill's own action as
+the segment begins, with no HUD raise, once per segment; *Off* keeps the discs and lets the segment
+play.
 
 **3. Over the credits with another episode queued: Up Next.** The row becomes the next episode's
 still, a caption (*"Up Next · S2, E4 · Laura"*), and **two buttons — Watch Credits** on the left and
@@ -702,7 +706,8 @@ under *After credits* and *Off* the discs stay through the credits, with no tile
 raise.
 
 Up Next deliberately outranks Skip Credits: with somewhere to go, "next episode" is the better
-offer.
+offer. With *Skip credits* set to *Automatically*, those credits start the next episode at once,
+as *Next Episode* would; the synthesized tail below is never skipped.
 
 **Credits detection is a Plex Pass server feature, and where the server has none the app synthesizes
 a 30 s tail — but only when there is a next episode to offer, and only in the default Up Next

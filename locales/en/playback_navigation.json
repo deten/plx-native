@@ -26,5 +26,33 @@
   "settings.playback.dolby_vision.off": {
     "value": "Off",
     "description": "Choice for the Dolby Vision setting (singular): Dolby Vision is never used."
+  },
+  "settings.playback.skip_intro": {
+    "value": "Skip intro",
+    "description": "Playback setting title and picker title: what the player does when a server-marked intro begins; default Show button. Its options are settings.playback.marker_skip.button, .automatic and .off."
+  },
+  "settings.playback.skip_intro.copy": {
+    "value": "Show button offers Skip Intro when an intro begins. Automatically skips it for you. Off lets it play.",
+    "description": "Explanation under the title of the Skip intro picker. It names the three options by their picker labels (Show button, Automatically, Off); keep those words identical to settings.playback.marker_skip.button, .automatic and .off, and Skip Intro identical to the player's button (widgets.skip.intro). Intros are the ones the Plex server marks."
+  },
+  "settings.playback.skip_credits": {
+    "value": "Skip credits",
+    "description": "Playback setting title and picker title: what the player does when server-marked credits begin; default Show button. Its options are settings.playback.marker_skip.button, .automatic and .off."
+  },
+  "settings.playback.skip_credits.copy": {
+    "value": "Show button offers Skip Credits when the credits begin. Automatically skips them for you, or starts the next episode where the Up Next countdown would. Off lets them play.",
+    "description": "Explanation under the title of the Skip credits picker. It names the three options by their picker labels (Show button, Automatically, Off); keep those words identical to settings.playback.marker_skip.button, .automatic and .off, and Skip Credits identical to the player's button (widgets.skip.credits). Where the Next episode setting (Up Next countdown) would show the next episode's countdown at the credits, Automatically starts that episode at once. Off removes only the Skip Credits button; the Up Next countdown is unchanged."
+  },
+  "settings.playback.marker_skip.button": {
+    "value": "Show button",
+    "description": "Skip intro and Skip credits picker option (the default): a Skip button is offered and the viewer presses it."
+  },
+  "settings.playback.marker_skip.automatic": {
+    "value": "Automatically",
+    "description": "Skip intro and Skip credits picker option: the segment is skipped as soon as it begins, as a press of the Skip button would."
+  },
+  "settings.playback.marker_skip.off": {
+    "value": "Off",
+    "description": "Skip intro and Skip credits picker option: no Skip button is offered and the segment plays."
   }
 }

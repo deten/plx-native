@@ -18,7 +18,7 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::mpsc::{self, Receiver};
-use plx_plex::plex::session::{DolbyVisionMode, InstantDpadSeeking, UiResolution};
+use plx_plex::plex::session::{DolbyVisionMode, InstantDpadSeeking, MarkerSkip, UiResolution};
 use plx_plex::plex::account::{AudioPreferences, PreferenceError, PreferenceRequest, PreferenceSnapshot, PreferenceUpdate};
 use plx_media::route::{Choice, DeckPress, DirectPlayMode, NextEpisodeMode, Quality, SkipInterval, SubtitlePosition, SubtitleSize, HdrOverlayBrightness};
 use plx_ui::form::{Form, FormId, FormSection, FormTable, RowKey, RowKind};
@@ -51,6 +51,8 @@ impl PickerKind {
         Self::SkipInterval => plx_platform::i18n::msg::settings_playback_skip_interval(),
         Self::InstantDpadSeeking => plx_platform::i18n::msg::settings_playback_instant_dpad_seeking(),
         Self::DolbyVision => plx_platform::i18n::msg::settings_playback_dolby_vision(),
+        Self::SkipIntro => plx_platform::i18n::msg::settings_playback_skip_intro(),
+        Self::SkipCredits => plx_platform::i18n::msg::settings_playback_skip_credits(),
         Self::UiResolution => plx_platform::i18n::msg::settings_resolution_title(),
         Self::AudioLanguage => plx_platform::i18n::msg::settings_audio_language(), Self::SubtitleMode => plx_platform::i18n::msg::settings_audio_subtitles(),
         Self::SubtitleLanguage => plx_platform::i18n::msg::settings_audio_subtitle_language(), Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_forced_subtitles(),
@@ -68,13 +70,15 @@ impl PickerKind {
         Self::SkipInterval => plx_platform::i18n::msg::settings_playback_skip_interval_copy(),
         Self::InstantDpadSeeking => plx_platform::i18n::msg::settings_playback_instant_dpad_seeking_copy(),
         Self::DolbyVision => plx_platform::i18n::msg::settings_playback_dolby_vision_copy(),
+        Self::SkipIntro => plx_platform::i18n::msg::settings_playback_skip_intro_copy(),
+        Self::SkipCredits => plx_platform::i18n::msg::settings_playback_skip_credits_copy(),
         Self::UiResolution => plx_platform::i18n::msg::settings_resolution_detail(),
         Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => plx_platform::i18n::msg::settings_audio_account_note(),
     }}
     /// The field-list page this field belongs to; `None` for a field the Settings root lists itself.
     fn kind(self) -> Option<Kind> {
         match self {
-            Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::HdrOverlay | Self::NextEpisode | Self::DeckPress | Self::SkipInterval | Self::InstantDpadSeeking | Self::DolbyVision => Some(Kind::Playback),
+            Self::Quality | Self::DirectPlay | Self::SubtitleSize | Self::SubtitlePosition | Self::HdrOverlay | Self::NextEpisode | Self::DeckPress | Self::SkipInterval | Self::InstantDpadSeeking | Self::DolbyVision | Self::SkipIntro | Self::SkipCredits => Some(Kind::Playback),
             Self::AudioLanguage | Self::SubtitleMode | Self::SubtitleLanguage | Self::ForcedSubtitles => Some(Kind::AudioSubtitles),
             Self::UiResolution => None,
         }
@@ -95,7 +99,7 @@ impl Kind {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Value { InstantDpadSeeking(InstantDpadSeeking), DolbyVision(DolbyVisionMode), Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), HdrOverlay(HdrOverlayBrightness), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), UiResolution(UiResolution), Language(String), Mode(i64), Forced(i64) }
+enum Value { InstantDpadSeeking(InstantDpadSeeking), DolbyVision(DolbyVisionMode), SkipIntro(MarkerSkip), SkipCredits(MarkerSkip), Quality(Quality), DirectPlay(DirectPlayMode), SubtitleSize(SubtitleSize), SubtitlePosition(SubtitlePosition), HdrOverlay(HdrOverlayBrightness), NextEpisode(NextEpisodeMode), DeckPress(DeckPress), SkipInterval(SkipInterval), UiResolution(UiResolution), Language(String), Mode(i64), Forced(i64) }
 
 /// The hashed half of a transaction: what the page shows while a load or save is in flight.
 struct Io { busy: bool, status: String }
@@ -264,6 +268,8 @@ impl Txn {
             Value::DeckPress(mode) => PreferenceCmd::Choose(Choice::DeckPress(mode), reply),
             Value::InstantDpadSeeking(seeking) => PreferenceCmd::Choose(Choice::InstantDpadSeeking(seeking), reply),
             Value::DolbyVision(mode) => PreferenceCmd::Choose(Choice::DolbyVision(mode), reply),
+            Value::SkipIntro(mode) => PreferenceCmd::Choose(Choice::SkipIntro(mode), reply),
+            Value::SkipCredits(mode) => PreferenceCmd::Choose(Choice::SkipCredits(mode), reply),
             Value::SkipInterval(interval) => PreferenceCmd::Choose(Choice::SkipInterval(interval), reply),
             // Install-wide, not a seated profile's live setting, so it has no `Choice`.
             Value::UiResolution(mode) => PreferenceCmd::UiResolution { mode, reply },
@@ -346,6 +352,8 @@ impl FormId for RowId {
             Self::Field(PickerKind::InstantDpadSeeking) => 10,
             Self::Field(PickerKind::DolbyVision) => 11,
             Self::PlayerHud => 12,
+            Self::Field(PickerKind::SkipIntro) => 13,
+            Self::Field(PickerKind::SkipCredits) => 14,
             Self::Retry => 6,
         })
     }
@@ -385,6 +393,8 @@ pub struct PreferencesPage {
     skip_interval: SkipInterval,
     instant_dpad_seeking: InstantDpadSeeking,
     dolby_vision: DolbyVisionMode,
+    /// The Skip intro and Skip credits choices the rows were last built from.
+    marker_skips: (MarkerSkip, MarkerSkip),
     /// Whose settings the list was last built for, with the profile publication it read that from
     /// (not canonical state, like `look`: the copy and the rows' dimming are not hashed either).
     whose: (u32, Whose),
@@ -398,7 +408,8 @@ impl PreferencesPage {
             look: (plx_media::route::subtitle_size(), plx_media::route::subtitle_position(), plx_media::route::hdr_overlay_brightness()),
             next_episode: plx_media::route::next_episode_mode(), deck_press: plx_media::route::deck_press(),
             skip_interval: plx_media::route::skip_interval(), instant_dpad_seeking: plx_media::route::instant_dpad_seeking(),
-            dolby_vision: plx_media::route::dolby_vision_mode(), whose: Whose::now() };
+            dolby_vision: plx_media::route::dolby_vision_mode(),
+            marker_skips: (plx_media::route::skip_intro(), plx_media::route::skip_credits()), whose: Whose::now() };
         s.rebuild(None);
         s
     }
@@ -428,6 +439,7 @@ impl PreferencesPage {
         self.skip_interval = plx_media::route::skip_interval();
         self.instant_dpad_seeking = plx_media::route::instant_dpad_seeking();
         self.dolby_vision = plx_media::route::dolby_vision_mode();
+        self.marker_skips = (plx_media::route::skip_intro(), plx_media::route::skip_credits());
         self.whose = Whose::now();
         self.copy = copy_text(Subject::Page(self.state.kind), &self.state.io.status, self.state.direct_play, &self.whose.1).into_owned();
         let inputs = FieldListInputs {
@@ -462,7 +474,7 @@ impl PreferencesPage {
 /// Which fields `kind`'s list shows: Audio & Subtitles has none until a snapshot has loaded.
 fn fields_of(inputs: &FieldListInputs<'_>) -> &'static [PickerKind] {
     match inputs.kind {
-        Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::HdrOverlay, PickerKind::NextEpisode, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking, PickerKind::DolbyVision],
+        Kind::Playback => &[PickerKind::Quality, PickerKind::DirectPlay, PickerKind::SubtitleSize, PickerKind::SubtitlePosition, PickerKind::HdrOverlay, PickerKind::NextEpisode, PickerKind::SkipIntro, PickerKind::SkipCredits, PickerKind::DeckPress, PickerKind::SkipInterval, PickerKind::InstantDpadSeeking, PickerKind::DolbyVision],
         Kind::AudioSubtitles if inputs.prefs.is_some() => &[PickerKind::AudioLanguage, PickerKind::SubtitleMode, PickerKind::SubtitleLanguage, PickerKind::ForcedSubtitles],
         _ => &[],
     }
@@ -481,6 +493,8 @@ fn resolve_value(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
         PickerKind::SkipInterval => Value::SkipInterval(plx_media::route::skip_interval()),
         PickerKind::InstantDpadSeeking => Value::InstantDpadSeeking(plx_media::route::instant_dpad_seeking()),
         PickerKind::DolbyVision => Value::DolbyVision(plx_media::route::dolby_vision_mode()),
+        PickerKind::SkipIntro => Value::SkipIntro(plx_media::route::skip_intro()),
+        PickerKind::SkipCredits => Value::SkipCredits(plx_media::route::skip_credits()),
         PickerKind::UiResolution => Value::UiResolution(plx_plex::plex::session::peek().ui_resolution()),
         // A deprecated code (`pb`) resolves to its replacement so the picker checks that entry.
         PickerKind::AudioLanguage => Value::Language(prefs.and_then(|p| p.stated_language.as_deref()).map(plx_plex::plex::languages::canonical).unwrap_or_default().to_string()),
@@ -510,6 +524,10 @@ fn field_options(field: PickerKind, quality: Quality, direct_play: DirectPlayMod
             .map(|m| (instant_dpad_seeking_label(m).into(), Value::InstantDpadSeeking(m))).collect(),
         PickerKind::DolbyVision => DolbyVisionMode::LADDER.into_iter()
             .map(|m| (dolby_vision_label(m).into(), Value::DolbyVision(m))).collect(),
+        PickerKind::SkipIntro => MarkerSkip::LADDER.into_iter()
+            .map(|m| (marker_skip_label(m).into(), Value::SkipIntro(m))).collect(),
+        PickerKind::SkipCredits => MarkerSkip::LADDER.into_iter()
+            .map(|m| (marker_skip_label(m).into(), Value::SkipCredits(m))).collect(),
         PickerKind::SkipInterval => SkipInterval::LADDER.into_iter()
             .map(|i| (skip_interval_label(i), Value::SkipInterval(i))).collect(),
         PickerKind::UiResolution => UiResolution::LADDER.into_iter()
@@ -625,6 +643,14 @@ fn dolby_vision_label(mode: DolbyVisionMode) -> &'static str {
         DolbyVisionMode::Off => plx_platform::i18n::msg::settings_playback_dolby_vision_off(),
     }
 }
+/// The Skip intro and Skip credits pickers' three options, one set of words for both.
+fn marker_skip_label(mode: MarkerSkip) -> &'static str {
+    match mode {
+        MarkerSkip::Button => plx_platform::i18n::msg::settings_playback_marker_skip_button(),
+        MarkerSkip::Automatic => plx_platform::i18n::msg::settings_playback_marker_skip_automatic(),
+        MarkerSkip::Off => plx_platform::i18n::msg::settings_playback_marker_skip_off(),
+    }
+}
 /// What the Interface resolution reads, on the Settings root and in its picker. The sizes are
 /// numbers, not words, so only Automatic (the native 1920x1080 canvas on every set) is translated.
 pub(crate) fn resolution_label(mode: UiResolution) -> String {
@@ -682,6 +708,7 @@ impl Machine<InnerHost> for PreferencesPage {
                     || self.skip_interval != plx_media::route::skip_interval()
                     || self.instant_dpad_seeking != plx_media::route::instant_dpad_seeking()
                     || self.dolby_vision != plx_media::route::dolby_vision_mode()
+                    || self.marker_skips != (plx_media::route::skip_intro(), plx_media::route::skip_credits())
                     || self.whose.0 != plx_plex::plex::session::current_gen() {
                     self.rebuild_keeping();
                     // An empty loading table had no engine seat. Give its first landing (or

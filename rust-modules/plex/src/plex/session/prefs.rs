@@ -37,7 +37,7 @@
 //! ([`SubtitleOffsetsPref`]).
 use super::{
     DolbyVisionMode, InstantDpadSeeking, DeckPress, DirectPlayMode, HdrOverlayBrightness, LastLibrary, LibraryViews, NativeAudioRefusal, NextEpisodeMode, OpaqueExtensions,
-    PlaintextConsent, HoldHintTaught, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
+    PlaintextConsent, HoldHintTaught, MarkerSkip, PlaybackQuality, ServerKeyPin, Session, SkipInterval, SubtitleOffsetEntry, SubtitleOffsets, SubtitlePosition,
     SubtitleSize, SubtitleTone, UiResolution, UnderPosters,
 };
 use serde::de::DeserializeOwned;
@@ -128,6 +128,13 @@ pub struct Preferences {
     /// Dolby Vision override (`Auto` or `Off`); `Auto` by default.
     #[serde(default, deserialize_with = "de_soft_dolby_vision_mode", skip_serializing_if = "DolbyVisionMode::is_default")]
     pub dolby_vision_mode: DolbyVisionMode,
+    /// What the player does at a server intro marker (see [`MarkerSkip`]); `Button` by default.
+    #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "MarkerSkip::is_default")]
+    pub skip_intro: MarkerSkip,
+    /// The same choice for a credits marker, kept apart because viewers who skip every intro often
+    /// want a film's credits; `Button` by default.
+    #[serde(default, deserialize_with = "de_soft_marker_skip", skip_serializing_if = "MarkerSkip::is_default")]
+    pub skip_credits: MarkerSkip,
     /// **What OK does on a Continue Watching card** — see [`DeckPress`]. A frozen fallback like
     /// [`Preferences::playback_quality`]: each profile keeps its own pick in `profile_prefs`, and a
     /// profile that has not picked reads this top-level key. Absence is Details, so a session written
@@ -522,6 +529,10 @@ setting!(DolbyVisionModePref: DolbyVisionMode = dolby_vision_mode, "dolby_vision
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(SkipIntervalPref: SkipInterval = skip_interval, "skip_interval", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
+setting!(SkipIntroPref: MarkerSkip = skip_intro, "skip_intro", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
+setting!(SkipCreditsPref: MarkerSkip = skip_credits, "skip_credits", Profile fallback LegacyInstallKey,
+    account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(DeckPressPref: DeckPress = deck_press, "deck_press", Profile fallback LegacyInstallKey,
     account false, live true, settings Some(SettingsWrite::Confirm), parse Soft);
 setting!(UnderPostersPref: UnderPosters = under_posters, "under_posters", Profile fallback LegacyInstallKey,
@@ -651,6 +662,8 @@ pub const DESCRIPTORS: &[Descriptor] = &[
     Descriptor::of::<SkipIntervalPref>(),
     Descriptor::of::<InstantDpadSeekingPref>(),
     Descriptor::of::<DolbyVisionModePref>(),
+    Descriptor::of::<SkipIntroPref>(),
+    Descriptor::of::<SkipCreditsPref>(),
     Descriptor::of::<DeckPressPref>(),
     Descriptor::of::<UnderPostersPref>(),
     Descriptor::of::<AudioEnhancementsPref>(),
@@ -1376,6 +1389,18 @@ where
         return Ok(DolbyVisionMode::default());
     };
     Ok(serde_json::from_value::<DolbyVisionMode>(v).unwrap_or_default())
+}
+
+/// Skip intro and Skip credits are preferences too: a spelling this build does not know degrades
+/// to Show button.
+fn de_soft_marker_skip<'de, D>(d: D) -> Result<MarkerSkip, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Ok(v) = serde_json::Value::deserialize(d) else {
+        return Ok(MarkerSkip::default());
+    };
+    Ok(serde_json::from_value::<MarkerSkip>(v).unwrap_or_default())
 }
 
 /// The deck-press mode is a preference too: a spelling this build does not know degrades to Details.

@@ -2161,7 +2161,12 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         // `Tick` now — `step_scrub_hold`, formula for formula, and the debounce gone with
         // click-to-confirm (a key target waits for OK) — which is what makes the field have one
         // owner. Phase 12, PX-PLAYER.)
-        follow_control_row(app, fr.ctrl, fr.now);
+        if follow_control_row(app, fr.ctrl, fr.now) {
+            // An automatic skip retired the segment it was offered (or left the item): the row
+            // this frame hands the page is the one after it, as `content_requests` re-resolves it
+            // after BACK dismisses an offer.
+            fr.ctrl = plx_appkit::player_hud::slot(&app.player.session, app.bridge.metadata_view());
+        }
         // While the countdown runs, hold the HUD up — a timer nobody can see is a cut to the
         // next episode out of nowhere. `hud.dismissed` has to clear with it, not just the
         // timer: a user who UP-hid the HUD and then touched nothing until the credits still
@@ -2571,8 +2576,14 @@ fn loop_requests(app: &mut App) {
 /// Focus follows the control row's OCCUPANT, on both edges. Driven by slot identity
 /// rather than a "was something shown" bool, because the two edges have different jobs
 /// and the previous bool implemented neither of the ones its comment promised.
-fn follow_control_row(app: &mut App, ctrl: plx_appkit::player_hud::ControlSlot, now: u32) {
+///
+/// A fresh offer of a kind the viewer set to skip Automatically is performed instead of offered
+/// (`playback::auto_skip_offer`): no HUD raise, no ring move. Returns true when that happened, so
+/// the caller re-resolves the row it hands the page.
+fn follow_control_row(app: &mut App, ctrl: plx_appkit::player_hud::ControlSlot, now: u32) -> bool {
     let mut reseat = false;
+    let mut auto_skip = false;
+    let on_player = matches!(app.route(), AppArg::Player);
     if let Some(player) = super::bridge::player_mut(&mut app.pages) {
         // Keyed on the SEGMENT, not the slot, and `last_offer` is only ever advanced to
         // a real offer — never cleared back to None. `active_marker` is gated on `is_playing`,
@@ -2591,14 +2602,19 @@ fn follow_control_row(app: &mut App, ctrl: plx_appkit::player_hud::ControlSlot, 
             if let Some((kind, start)) = offer {
                 log(&format!("marker offer: {kind:?} at {}s", start / 1000));
             }
-            // A segment beginning puts the HUD ON SCREEN and offers the row — the timer,
-            // the DISMISSAL and the ring in one act, because raising the timer alone left
-            // the tile behind a transport nobody drew. `HudState::raise_for_offer` is where
-            // that rule, its resting-position clause and the bug are written down.
-            player.raise_for_offer(now, ctrl.primary_btn());
-            // It moved the ring (when it was on the scrubber) with no effect to say so: the engine
-            // has to follow, or OK on the offered pill would toggle play/pause.
-            reseat = true;
+            // Skip intro / Skip credits set to Automatically: the offer is performed below, once
+            // the page is no longer borrowed, and never raised or focused.
+            auto_skip = on_player && plx_appkit::player_hud::auto_skip(ctrl, app.bridge.metadata_view());
+            if !auto_skip {
+                // A segment beginning puts the HUD ON SCREEN and offers the row — the timer,
+                // the DISMISSAL and the ring in one act, because raising the timer alone left
+                // the tile behind a transport nobody drew. `HudState::raise_for_offer` is where
+                // that rule, its resting-position clause and the bug are written down.
+                player.raise_for_offer(now, ctrl.primary_btn());
+                // It moved the ring (when it was on the scrubber) with no effect to say so: the engine
+                // has to follow, or OK on the offered pill would toggle play/pause.
+                reseat = true;
+            }
         } else if plx_appkit::player_hud::standin_left_the_ring(
             player.hud.was_standin,
             ctrl,
@@ -2620,12 +2636,27 @@ fn follow_control_row(app: &mut App, ctrl: plx_appkit::player_hud::ControlSlot, 
             // behaviour change of this PR.
             reseat = true;
         }
-        player.hud.was_standin = !ctrl.is_discs();
+        // A stand-in performed automatically was never drawn: the row's last drawn occupant stands.
+        if !auto_skip {
+            player.hud.was_standin = !ctrl.is_discs();
+        }
         player.publish();
     }
     if reseat {
         super::bridge::reseat_player_focus(&mut app.pages);
     }
+    if auto_skip {
+        super::playback::auto_skip_offer(
+            &mut app.player,
+            &mut app.adapters.player,
+            &mut app.repause_at,
+            ctrl,
+            &mut app.refresh_hubs,
+            &mut app.pages,
+            &mut app.bridge,
+        );
+    }
+    auto_skip
 }
 
 /// The update phase: per-route screen updates (which run the route-gated store pumps), the
@@ -9174,6 +9205,251 @@ mod lifecycle_regression_tests {
             "E1 is marked watched after its `stopped` report: {:?}",
             rig.requests.lock().unwrap(),
         );
+    }
+
+    // ---- Skip intro / Skip credits: Show button, Automatically, Off ------------------------------
+
+    /// Puts the Skip intro and Skip credits choices back whatever the test did.
+    struct SkipGuard(plx_plex::plex::session::MarkerSkip, plx_plex::plex::session::MarkerSkip);
+    impl SkipGuard {
+        fn set(intro: plx_plex::plex::session::MarkerSkip, credits: plx_plex::plex::session::MarkerSkip) -> Self {
+            let prior = Self(plx_media::route::skip_intro(), plx_media::route::skip_credits());
+            plx_media::route::restore_skip_intro(intro);
+            plx_media::route::restore_skip_credits(credits);
+            prior
+        }
+    }
+    impl Drop for SkipGuard {
+        fn drop(&mut self) {
+            plx_media::route::restore_skip_intro(self.0);
+            plx_media::route::restore_skip_credits(self.1);
+        }
+    }
+
+    /// A segment of `kind` from 0 to 60 s, as the server marks it.
+    fn segment(kind: plx_data::metadata::MarkerKind, final_seg: bool) -> plx_data::metadata::Marker {
+        plx_data::metadata::Marker { kind, start_ms: 0, end_ms: 60_000, final_seg }
+    }
+
+    /// Mount the Player over the resolved plan and play `markers` with the playhead at `pos_ms`, so
+    /// the REAL `player_hud::slot` (via `Frame::begin`) decides the row and the loop's offer edge
+    /// reacts to it. Returns the frame clock after two settled frames.
+    fn mount_playing_at(rig: &mut Rig, markers: Vec<plx_data::metadata::Marker>, pos_ms: i64) -> u32 {
+        super::super::bridge::nav_push(&mut rig.app.pages, AppArg::Player);
+        frame(&mut rig.app, 16);
+        plx_data::metadata::set_playing_markers_for_test(rig.app.bridge.metadata_mut().state_mut(), markers);
+        plx_media::player::restore_state_for_test(plx_media::player::PlaybackState::Playing as u8);
+        plx_media::player::SHARED.playpos_ns.store(pos_ms * 1_000_000, Ordering::Relaxed);
+        let mut t = 16;
+        step(&mut rig.app, &mut t, vec![]);
+        step(&mut rig.app, &mut t, vec![]);
+        t
+    }
+
+    /// The `marker auto-skip:` lines this thread logged inside `f`.
+    fn auto_skip_lines<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+        plx_base::eventlog::with_private_log(|| {
+            let r = f();
+            let log = std::fs::read_to_string(plx_base::eventlog::events_log()).unwrap_or_default();
+            (r, log.lines().filter(|l| l.contains("marker auto-skip:")).map(str::to_owned).collect())
+        })
+    }
+
+    /// **Skip intro: Show button**, the default, is the offer every build before the setting made:
+    /// the Skip Intro pill takes the row, the HUD comes up with the ring on it, and nothing moves
+    /// until the viewer presses it.
+    #[test]
+    fn show_button_offers_skip_intro_and_waits_for_a_press() {
+        use plx_appkit::player_hud::{geometry::GROUP_ROW, ControlSlot};
+        use plx_plex::plex::session::MarkerSkip;
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED show_button_offers_skip_intro_and_waits_for_a_press: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _skips = SkipGuard::set(MarkerSkip::Button, MarkerSkip::Button);
+        assert_eq!((plx_media::route::skip_intro(), plx_media::route::skip_credits()), Default::default());
+        rig.request();
+        rig.resolve();
+        let seek_before = plx_media::player::seek_pending();
+        let (_, lines) = auto_skip_lines(|| mount_playing_at(&mut rig, vec![segment(plx_data::metadata::MarkerKind::Intro, false)], 30_000));
+        assert!(lines.is_empty(), "{lines:?}");
+        let player = super::super::bridge::player(&rig.app.pages).expect("the player page is mounted");
+        assert!(matches!(player.slot, ControlSlot::Skip(p) if p.kind == plx_data::metadata::MarkerKind::Intro), "Skip Intro is offered");
+        assert_eq!(player.hud.nav.focus, GROUP_ROW, "the offer parked the ring on the pill");
+        assert_eq!(plx_media::player::seek_pending(), seek_before, "nothing seeks without a press");
+    }
+
+    /// **Skip intro / Skip credits: Automatically** seeks past the segment on the frame it is offered,
+    /// with the press's own action (`playback::perform_ctrl_row`: retire the segment, seek to its
+    /// end), without raising the HUD or moving the ring, and logs one `marker auto-skip:` line. It
+    /// fires once: the segment is retired, so the row is the discs at once and a seek back into it
+    /// is neither offered nor skipped again. A mid-item credits segment is skipped the same way.
+    #[test]
+    fn automatically_seeks_past_an_intro_or_mid_item_credits_once() {
+        use plx_appkit::player_hud::{geometry::GROUP_ROW, ControlSlot};
+        use plx_data::metadata::MarkerKind;
+        use plx_plex::plex::session::MarkerSkip;
+        let _serial = plx_base::testlock::serial();
+        for (kind, skips) in [
+            (MarkerKind::Intro, (MarkerSkip::Automatic, MarkerSkip::Button)),
+            (MarkerKind::Credits, (MarkerSkip::Button, MarkerSkip::Automatic)),
+        ] {
+            let Some(mut rig) = Rig::new() else {
+                eprintln!("SKIPPED automatically_seeks_past_an_intro_or_mid_item_credits_once: \
+                    lifecycle fixture worker thread could not be spawned");
+                return;
+            };
+            let _skips = SkipGuard::set(skips.0, skips.1);
+            rig.request();
+            rig.resolve();
+            let (mut t, lines) = auto_skip_lines(|| mount_playing_at(&mut rig, vec![segment(kind, false)], 30_000));
+            assert_eq!(lines.len(), 1, "{kind:?}: {lines:?}");
+            assert!(lines[0].contains(&format!("marker auto-skip: {kind:?} 0s-60s at 30s, seek to 60s")), "{kind:?}: {lines:?}");
+            assert_eq!(plx_media::player::seek_pending(), 60_000_000_000, "{kind:?}: the segment was skipped");
+            let player = super::super::bridge::player(&rig.app.pages).expect("the player page is mounted");
+            assert!(matches!(player.slot, ControlSlot::Discs(_)), "{kind:?}: the page draws the discs, never the pill");
+            assert_ne!(player.hud.nav.focus, GROUP_ROW, "{kind:?}: the ring was not moved onto an offer");
+
+            // The skip's seek lands (this rig has no engine to land it), then the viewer seeks back
+            // into the segment on purpose: it plays.
+            plx_media::player::SHARED.seeking.store(false, Ordering::Relaxed);
+            plx_media::player::restore_state_for_test(plx_media::player::PlaybackState::Playing as u8);
+            plx_media::player::SHARED.playpos_ns.store(20_000_000_000, Ordering::Relaxed);
+            let (_, again) = auto_skip_lines(|| {
+                step(&mut rig.app, &mut t, vec![]);
+                step(&mut rig.app, &mut t, vec![]);
+            });
+            assert!(plx_media::player::is_playing(&rig.app.player.session), "{kind:?}: still Playing inside the segment");
+            assert!(again.is_empty(), "{kind:?}: skipped once per segment: {again:?}");
+            let fr = Frame::begin(&rig.app.player.session, rig.app.bridge.metadata_view());
+            assert!(fr.ctrl.is_discs(), "{kind:?}: a skipped segment is not offered again");
+        }
+    }
+
+    /// **Skip intro: Off** withdraws the Skip Intro offer: the row keeps the discs, the HUD is not
+    /// raised, nothing seeks and nothing is logged, and the intro plays. Credits are still offered.
+    #[test]
+    fn off_withdraws_the_skip_intro_offer_and_the_intro_plays() {
+        use plx_appkit::player_hud::{geometry::GROUP_ROW, ControlSlot};
+        use plx_data::metadata::MarkerKind;
+        use plx_plex::plex::session::MarkerSkip;
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED off_withdraws_the_skip_intro_offer_and_the_intro_plays: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _skips = SkipGuard::set(MarkerSkip::Off, MarkerSkip::Button);
+        rig.request();
+        rig.resolve();
+        let seek_before = plx_media::player::seek_pending();
+        let (mut t, lines) = auto_skip_lines(|| {
+            mount_playing_at(&mut rig, vec![segment(MarkerKind::Intro, false), plx_data::metadata::Marker { start_ms: 60_000, end_ms: 90_000, ..segment(MarkerKind::Credits, false) }], 30_000)
+        });
+        assert!(lines.is_empty(), "{lines:?}");
+        let player = super::super::bridge::player(&rig.app.pages).expect("the player page is mounted");
+        assert!(matches!(player.slot, ControlSlot::Discs(_)), "no Skip Intro offer");
+        assert_ne!(player.hud.nav.focus, GROUP_ROW, "no offer raised the HUD onto the row");
+        assert_eq!(plx_media::player::seek_pending(), seek_before, "nothing seeks");
+        // Skip credits is its own choice: the credits after the intro are offered as ever.
+        plx_media::player::SHARED.playpos_ns.store(70_000_000_000, Ordering::Relaxed);
+        step(&mut rig.app, &mut t, vec![]);
+        step(&mut rig.app, &mut t, vec![]);
+        let player = super::super::bridge::player(&rig.app.pages).expect("the player page is mounted");
+        assert!(matches!(player.slot, ControlSlot::Skip(p) if p.kind == MarkerKind::Credits), "Skip Credits is offered");
+    }
+
+    /// **Skip credits: Automatically** on an episode's final credits with a successor queued and the
+    /// Up Next countdown on: what skipping those credits does is Up Next's own Next Episode, so the
+    /// successor is requested at once, with no countdown.
+    #[test]
+    fn automatically_on_final_credits_starts_the_next_episode_where_up_next_would() {
+        use plx_plex::plex::session::MarkerSkip;
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED automatically_on_final_credits_starts_the_next_episode_where_up_next_would: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::Countdown);
+        let _skips = SkipGuard::set(MarkerSkip::Button, MarkerSkip::Automatic);
+        rig.request();
+        rig.resolve();
+        // Hold the successor's answer, so the request the skip makes is what is graded (see
+        // `countdown_requests_the_successor_from_inside_the_credits`).
+        rig.hold_answers();
+        let (_, lines) = auto_skip_lines(|| {
+            mount_playing_at(&mut rig, vec![segment(plx_data::metadata::MarkerKind::Credits, true)], 30_000)
+        });
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("marker auto-skip: Credits 0s-60s at 30s, next episode"), "{lines:?}");
+        assert!(plx_media::route::play_pending(), "the successor is requested with no countdown");
+        rig.answer_held();
+    }
+
+    /// **Skip credits: Automatically** on a film's (or a last episode's) final credits, where there is
+    /// nowhere to go: the Skip Credits press finishes the item, and so does the automatic skip. The
+    /// player is left; nothing is requested.
+    #[test]
+    fn automatically_on_final_credits_with_nowhere_to_go_finishes_the_item() {
+        use plx_plex::plex::session::MarkerSkip;
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::serving(false) else {
+            eprintln!("SKIPPED automatically_on_final_credits_with_nowhere_to_go_finishes_the_item: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _skips = SkipGuard::set(MarkerSkip::Button, MarkerSkip::Automatic);
+        rig.request();
+        rig.release.send(()).unwrap();
+        poll_until("fixture plan did not land", || {
+            plx_media::route::pump_play(&mut rig.app.player.session, rig.app.bridge.metadata_mut()).is_some()
+        });
+        assert!(plx_media::route::up_next(&rig.app.player.session).is_none(), "premise: a film, nothing queued");
+        let (mut t, lines) = auto_skip_lines(|| {
+            mount_playing_at(&mut rig, vec![segment(plx_data::metadata::MarkerKind::Credits, true)], 30_000)
+        });
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("marker auto-skip: Credits 0s-60s at 30s, finish"), "{lines:?}");
+        assert!(!plx_media::route::play_pending(), "nothing to start");
+        for _ in 0..200 {
+            if !matches!(rig.app.route(), AppArg::Player) {
+                break;
+            }
+            step(&mut rig.app, &mut t, vec![]);
+        }
+        assert!(!matches!(rig.app.route(), AppArg::Player), "the finished film left the player");
+    }
+
+    /// **The tail synthesized to time the Up Next countdown is never skipped**, whatever Skip credits
+    /// says: on a server that marked no credits the last 30 s of an episode with a successor raise Up
+    /// Next and its countdown as they always have, and nothing is requested before the countdown runs
+    /// out.
+    #[test]
+    fn automatically_never_skips_the_tail_synthesized_for_up_next() {
+        use plx_appkit::player_hud::ControlSlot;
+        use plx_plex::plex::session::MarkerSkip;
+        let _serial = plx_base::testlock::serial();
+        let Some(mut rig) = Rig::new() else {
+            eprintln!("SKIPPED automatically_never_skips_the_tail_synthesized_for_up_next: \
+                lifecycle fixture worker thread could not be spawned");
+            return;
+        };
+        let _mode = NextEpisodeGuard::set(plx_media::route::NextEpisodeMode::Countdown);
+        let _skips = SkipGuard::set(MarkerSkip::Automatic, MarkerSkip::Automatic);
+        rig.request();
+        rig.resolve();
+        rig.hold_answers();
+        plx_media::player::SHARED.duration_ns.store(120_000_000_000, Ordering::Relaxed);
+        let (_, lines) = auto_skip_lines(|| mount_playing_at(&mut rig, vec![], 100_000));
+        assert!(lines.is_empty(), "{lines:?}");
+        let player = super::super::bridge::player(&rig.app.pages).expect("the player page is mounted");
+        assert!(matches!(player.slot, ControlSlot::UpNext(_)), "the synthesized tail still raises Up Next");
+        assert!(!plx_media::route::play_pending(), "and nothing skipped it");
+        rig.answer_held();
+        plx_media::player::SHARED.duration_ns.store(0, Ordering::Relaxed);
     }
 }
 
