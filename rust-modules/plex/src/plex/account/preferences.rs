@@ -460,14 +460,21 @@ impl PreferenceRequest {
     fn load_marker_access_with(&self, current: impl Fn() -> bool,
         mut read: impl FnMut(&str) -> Result<Vec<u8>, PreferenceError>) -> Result<MarkerAccess, PreferenceError> {
         if !current() { return Err(PreferenceError::Stale); }
-        let user: AccountUser = serde_json::from_slice(&read("/api/v2/user")?)
-            .map_err(|_| PreferenceError::InvalidResponse)?;
+        let user_body = read("/api/v2/user").inspect_err(|e| plx_base::eventlog::log(&format!("markers diag: /api/v2/user failed: {e:?}")))?;
+        let user: AccountUser = serde_json::from_slice(&user_body)
+            .map_err(|_| { plx_base::eventlog::log("markers diag: /api/v2/user did not parse"); PreferenceError::InvalidResponse })?;
         if (self.user.id == 0 && self.user.uuid.is_empty()) || !user.matches_identity(&self.user) {
+            plx_base::eventlog::log(&format!("markers diag: identity refused (seat id known={} uuid known={}, answer id known={} uuid known={})",
+                self.user.id != 0, !self.user.uuid.is_empty(), user.id.is_some(), user.uuid.as_deref().is_some_and(|u| !u.is_empty())));
             return Err(PreferenceError::Refused);
         }
         if !current() { return Err(PreferenceError::Stale); }
-        let features: Vec<ViewerFeature> = serde_json::from_slice(&read("/api/v2/features")?)
-            .map_err(|_| PreferenceError::InvalidResponse)?;
+        let feat_body = read("/api/v2/features").inspect_err(|e| plx_base::eventlog::log(&format!("markers diag: /api/v2/features failed: {e:?}")))?;
+        let features: Vec<ViewerFeature> = serde_json::from_slice(&feat_body)
+            .map_err(|_| { plx_base::eventlog::log(&format!("markers diag: /api/v2/features did not parse as a list ({} bytes, starts {:?})",
+                feat_body.len(), String::from_utf8_lossy(&feat_body[..feat_body.len().min(12)]))); PreferenceError::InvalidResponse })?;
+        let ids: Vec<&str> = features.iter().map(|f| f.id.as_str()).collect();
+        plx_base::eventlog::log(&format!("markers diag: {} features: {}", ids.len(), ids.join(",")));
         if !current() { return Err(PreferenceError::Stale); }
         Ok(MarkerAccess { intro: features.iter().any(|f| f.id == "intro-markers"),
             credits: features.iter().any(|f| f.id == "credits-markers") })

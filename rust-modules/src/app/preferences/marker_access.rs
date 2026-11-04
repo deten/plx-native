@@ -143,7 +143,10 @@ impl MarkerAccessRunner {
         let Some(scope) = self.state.begin(now) else {
             return;
         };
-        let Some(request) = PreferenceRequest::capture_marker_access().filter(|r| r.matches_profile(profile))
+        let captured = PreferenceRequest::capture_marker_access();
+        plx_base::eventlog::log(&format!("markers diag: capture={} matches_profile={}", captured.is_some(),
+            captured.as_ref().is_some_and(|r| r.matches_profile(profile))));
+        let Some(request) = captured.filter(|r| r.matches_profile(profile))
         else {
             self.state
                 .land(scope, Err(PreferenceError::Unavailable), now);
@@ -153,6 +156,7 @@ impl MarkerAccessRunner {
         self.pending = Some((scope, rx));
         plx_base::task::spawn_small("marker-grants", move || {
             let result = request.load_marker_access();
+            plx_base::eventlog::log(&format!("markers diag: result {result:?}"));
             let _ = tx.send(result);
             plx_machine::idle::invalidate();
         });
