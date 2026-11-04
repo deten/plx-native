@@ -1,8 +1,8 @@
 # Playback settings
 
 Settings has **Video & playback** and **Audio & subtitles** pages. The Video & playback
-settings (quality, Direct Play, subtitle size and position, next episode, Continue Watching
-and skip interval) are saved on this television, **per profile**: each Plex Home profile keeps
+settings (quality, Direct Play, subtitle size and position, next episode, passout protection,
+Continue Watching and skip interval) are saved on this television, **per profile**: each Plex Home profile keeps
 its own picks, and a profile that has not chosen yet starts from the value the television held
 before profiles had their own. The page names the profile it shows ("Playback settings for
 Maya") and follows a profile switch (Settings itself closes on one). Settings is reached
@@ -34,6 +34,26 @@ the quality controls explain that the saved quality is overridden. Returning to 
 Disabled needs no confirmation.
 
 Audio passthrough remains the television's Digital Sound Output setting.
+
+## Passout protection
+
+**Passout protection** (Off by default, or after 1, 2 or 3 hours) stops Up Next from starting the
+next episode by itself once nobody has pressed a button for that long, the way other players ask
+whether you are still watching. It is listed under Next episode on the Video & playback page.
+
+Only the player's own advances are held back: the Up Next countdown running out, and the end of the
+stream under *Up Next countdown* or *After credits*. When one is held back the episode ends and the
+player goes back to the page it was opened from, exactly as under *Next episode: Off*; a countdown
+held back ends the episode in its final credits and marks it watched, as Skip Credits on that
+segment does. The event log records one line,
+`up next: passout after <N>m idle (limit <H>h), not advancing`.
+
+The idle time runs from the viewer's last key press, click, wheel or pointer movement on any page
+(`App::last_input`, stamped only by the loop's input ingest), so nothing the app does by itself
+restarts it, and episodes that started on their own do not either. A press of *Next Episode* on the
+Up Next tile, and the transport's Next, always start the next episode. The decision is
+`app::playback::passout_holds`, asked by `passout_holds_back` from `finish_playback` and
+`countdown_elapsed`. Off changes nothing, and an unknown stored value reads as Off.
 
 ## Plex account preferences
 

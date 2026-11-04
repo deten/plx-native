@@ -26,5 +26,27 @@
   "settings.playback.dolby_vision.off": {
     "value": "Off",
     "description": "Choice for the Dolby Vision setting (singular): Dolby Vision is never used."
+  },
+  "settings.playback.passout_protection": {
+    "value": "Passout protection",
+    "description": "Playback setting title and picker title: stops the next episode starting by itself when nobody has pressed a button for a long time (the viewer has probably fallen asleep); default Off. Its options are Off (settings.playback.passout_protection.off) and lengths in hours (settings.playback.passout_protection.hours)."
+  },
+  "settings.playback.passout_protection.copy": {
+    "value": "Stop autoplay after this long without a button press.",
+    "description": "Explanation under the title of the Passout protection picker. Once the time has passed, the episode ends and the player goes back to the page it was opened from instead of starting the next episode; pressing Next Episode always works."
+  },
+  "settings.playback.passout_protection.off": {
+    "value": "Off",
+    "description": "Choice for the Passout protection setting (the default): the next episode always starts by itself as the Next episode setting says."
+  },
+  "settings.playback.passout_protection.hours": {
+    "value": {
+      "one": "After {count} hour",
+      "other": "After {count} hours"
+    },
+    "description": "Choice for the Passout protection setting and the row's read-out: how long without a button press before autoplay stops (1, 2 or 3 hours).",
+    "args": {
+      "count": "i64"
+    }
   }
 }

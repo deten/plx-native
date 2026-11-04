@@ -10,12 +10,12 @@
 //! descriptors are declared.
 use super::prefs::{Descriptor, Fallback, ListRow, Parse, ProfileMemory, Row, Scope, Setting, SettingsWrite, DESCRIPTORS};
 use super::prefs::{DolbyVisionModePref, InstantDpadSeekingPref, AudioEnhancementsPref, AutoSignInPref, DeckPressPref, UnderPostersPref, DirectPlayModePref, LastHeroBlurPref,
-    LastLibraryRow, LibraryViewsRow, NextEpisodeModePref, PlaintextConsentRow, QualityPref, ServerKeyPinsRow,
+    LastLibraryRow, LibraryViewsRow, NextEpisodeModePref, PassoutProtectionPref, PlaintextConsentRow, QualityPref, ServerKeyPinsRow,
     HdrOverlayBrightnessPref, SkipIntervalPref, SubtitleOffsetsPref, SubtitlePositionPref, SubtitleSizePref, SubtitleTonePref,
     HoldHintTaughtPref, TrailerAutoplayPref, UiResolutionPref};
 use super::{
     DolbyVisionMode, InstantDpadSeeking, CanonicalSessionPreferences, DeckPress, UnderPosters, UnderPostersDetails, DirectPlayMode, LastLibrary, LibraryViews, NextEpisodeMode,
-    PlaintextChoice, PlaintextConsent, PlaybackQuality, Preferences, ServerKeyPin, Session, SkipInterval,
+    PassoutProtection, PlaintextChoice, PlaintextConsent, PlaybackQuality, Preferences, ServerKeyPin, Session, SkipInterval,
     HdrOverlayBrightness, HoldHintTaught, SubtitleOffsetEntry, SubtitlePosition, SubtitleSize, SubtitleTone, UiResolution,
 };
 use serde::de::{self, Deserializer, Visitor};
@@ -109,6 +109,7 @@ fn every_marker_names_its_own_field() {
     check_row::<SubtitlePositionPref>(SubtitlePosition::High);
     check_row::<HdrOverlayBrightnessPref>(HdrOverlayBrightness::Half);
     check_row::<NextEpisodeModePref>(NextEpisodeMode::Off);
+    check_row::<PassoutProtectionPref>(PassoutProtection::Hours3);
     check_row::<SkipIntervalPref>(SkipInterval::Seconds30);
     check_row::<InstantDpadSeekingPref>(InstantDpadSeeking::On);
     check_row::<DolbyVisionModePref>(DolbyVisionMode::Off);
@@ -121,13 +122,13 @@ fn every_marker_names_its_own_field() {
     check_row::<LastHeroBlurPref>(Some([[0.5, 0.25, 0.125]; 4]));
     check_row::<UiResolutionPref>(UiResolution::Hd720);
     check_row::<HoldHintTaughtPref>(HoldHintTaught { card: true, pill: false });
-    // The table lists exactly these eighteen `Setting` rows, the five list rows below, the two
+    // The table lists exactly these nineteen `Setting` rows, the five list rows below, the two
     // memory-door rows (`TrackMemoryPref`, whose field check is
     // `track_memory_tests::the_list_row_names_its_own_field`, and `SubtitleOffsetsPref`, checked by
     // `the_subtitle_offsets_row_names_its_own_field`) and the per-profile record list
     // (`ProfilePrefsPref`, `profile_prefs_tests::nothing_picked_serializes_to_no_key`): a row needs
     // its line in one of the four places.
-    assert_eq!(DESCRIPTORS.len(), 18 + 5 + 2 + 1 + 1, "plus `HudSelectionPref`, a `String` row checked by `profile_prefs_tests`");
+    assert_eq!(DESCRIPTORS.len(), 19 + 5 + 2 + 1 + 1, "plus `HudSelectionPref`, a `String` row checked by `profile_prefs_tests`");
 }
 
 /// The list rows do what `check_row` proves for the `Copy` ones: the marker names its own field
@@ -218,6 +219,7 @@ fn the_declared_live_and_settings_facts_are_the_ones_main_has() {
         ("playback_quality", Some(Confirm)),
         ("direct_play_mode", Some(Confirm)),
         ("next_episode_mode", Some(Confirm)),
+        ("passout_protection", Some(Confirm)),
         ("skip_interval", Some(Confirm)),
         ("instant_dpad_seeking", Some(Confirm)),
         ("dolby_vision_mode", Some(Confirm)),
@@ -333,6 +335,7 @@ fn garbage_fixtures() -> Vec<(&'static str, Vec<Value>)> {
         ("subtitle_position", generic()),
         ("hdr_overlay_brightness", generic()),
         ("next_episode_mode", generic()),
+        ("passout_protection", generic()),
         ("skip_interval", generic()),
         ("instant_dpad_seeking", generic()),
         ("dolby_vision_mode", generic()),

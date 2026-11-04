@@ -201,6 +201,10 @@ pub enum Feature {
     /// five lengths. The length is the whole payload: a closed set of five codes, fired once per
     /// durable change, never per press and never with anything about what was playing.
     SkipInterval(plx_plex::plex::session::SkipInterval),
+    /// **A viewer set the Passout protection preference** (Settings → Video & playback) to one of
+    /// its four choices. The choice is the whole payload: a closed set of four codes, fired once per
+    /// durable change, never per playback and never with anything about what was playing.
+    PassoutProtection(plx_plex::plex::session::PassoutProtection),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +248,12 @@ impl Feature {
                 plx_plex::plex::session::SkipInterval::Seconds15 => "skip_interval_15s",
                 plx_plex::plex::session::SkipInterval::Seconds30 => "skip_interval_30s",
                 plx_plex::plex::session::SkipInterval::Seconds60 => "skip_interval_60s",
+            },
+            Self::PassoutProtection(protection) => match protection {
+                plx_plex::plex::session::PassoutProtection::Off => "passout_protection_off",
+                plx_plex::plex::session::PassoutProtection::Hours1 => "passout_protection_1h",
+                plx_plex::plex::session::PassoutProtection::Hours2 => "passout_protection_2h",
+                plx_plex::plex::session::PassoutProtection::Hours3 => "passout_protection_3h",
             },
         }
     }
@@ -997,6 +1007,27 @@ mod tests {
                 want("skip_interval_15s"),
                 want("skip_interval_30s"),
                 want("skip_interval_60s"),
+            ]
+        );
+    }
+
+    /// The Passout protection preference is reported as `feature.used` carrying exactly one of four
+    /// fixed codes: the choice and nothing else.
+    #[test]
+    fn the_passout_protection_setting_reports_only_its_limit() {
+        use plx_plex::plex::session::PassoutProtection;
+        let sent: Vec<_> = PassoutProtection::LADDER
+            .iter()
+            .map(|&protection| serialize(DiagEvent::FeatureUsed { feature: Feature::PassoutProtection(protection) }))
+            .collect();
+        let want = |code| ("feature.used", vec![("feature", Value::Str(code))]);
+        assert_eq!(
+            sent,
+            [
+                want("passout_protection_off"),
+                want("passout_protection_1h"),
+                want("passout_protection_2h"),
+                want("passout_protection_3h"),
             ]
         );
     }

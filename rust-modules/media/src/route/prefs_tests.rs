@@ -688,3 +688,49 @@ fn dolby_vision_mode_is_picked_into_the_seated_profiles_record_and_follows_the_s
     restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
     assert_eq!(dolby_vision_mode(), DolbyVisionMode::Off, "u1 seated again restores Off");
 }
+
+// ---- Passout protection (Settings > Playback) ---------------------------------------------------
+
+struct PassoutProtectionBack;
+impl Drop for PassoutProtectionBack {
+    fn drop(&mut self) {
+        restore_passout_protection(PassoutProtection::default());
+    }
+}
+
+/// A pick is the seated profile's own: it is live at once, written into that profile's record (the
+/// TV's top-level key is untouched), absent for another profile, and back when the first is seated
+/// again. A stored spelling this build does not know restores as Off.
+#[test]
+fn passout_protection_is_picked_into_the_seated_profiles_record_and_follows_the_seat() {
+    let _g = plx_base::testlock::serial();
+    let session = session::TempSession::new("passout-protection");
+    let _restore = Put::back(cells());
+    let _back = PassoutProtectionBack;
+    session.seated("u1", TOKEN);
+    let mut legacy = record(Preferences::default(), vec![]);
+    legacy.client_id = "cid-test".into();
+    session::save(&legacy);
+    seed_profile_prefs_for_test(&session::peek());
+    restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
+    assert_eq!(passout_protection(), PassoutProtection::Off);
+
+    assert!(confirm::<PassoutProtectionPref>(PassoutProtection::Hours2));
+    assert_eq!(passout_protection(), PassoutProtection::Hours2);
+    let after = session::load();
+    assert_eq!(after.prefs.passout_protection, PassoutProtection::Off, "the TV's key is untouched");
+    assert_eq!(own_of::<PassoutProtectionPref>(&after.prefs.profile_prefs, "u1"), Some(PassoutProtection::Hours2));
+
+    session.seated("u2", TOKEN);
+    restore_profile_rows(&session::peek(), &seat("u2"), Overrides::default());
+    assert_eq!(passout_protection(), PassoutProtection::Off, "another profile reads the default");
+
+    session.seated("u1", TOKEN);
+    restore_profile_rows(&session::peek(), &seat("u1"), Overrides::default());
+    assert_eq!(passout_protection(), PassoutProtection::Hours2, "u1 seated again restores its pick");
+    assert!(Choice::KEYS.contains(&"passout_protection"), "a Settings row saves it through the door");
+
+    let unknown = record(Preferences::default(), vec![picked("u1", "", serde_json::json!({"passout_protection": "4h"}))]);
+    restore(&unknown, &seat("u1"), Overrides::default());
+    assert_eq!(passout_protection(), PassoutProtection::Off, "an unknown stored value degrades to Off");
+}

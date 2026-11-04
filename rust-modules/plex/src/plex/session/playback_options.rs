@@ -77,11 +77,70 @@ impl DolbyVisionMode {
     }
 }
 
+/// How long without a press before Up Next stops starting the next episode by itself — one per
+/// profile, like [`InstantDpadSeeking`]. Absence is `Off`, the advance every build before the
+/// preference made. A closed set, like [`super::SkipInterval`], so a hand-edited file cannot ask
+/// for a limit of a few seconds. Only an advance nobody pressed for is held back
+/// (`app::playback::passout_holds`): a pressed Next Episode always plays.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassoutProtection {
+    #[default]
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "1h")]
+    Hours1,
+    #[serde(rename = "2h")]
+    Hours2,
+    #[serde(rename = "3h")]
+    Hours3,
+}
+
+impl PassoutProtection {
+    /// Every option, Off first and then shortest first — the order the picker lists them in.
+    pub const LADDER: [PassoutProtection; 4] = [
+        PassoutProtection::Off,
+        PassoutProtection::Hours1,
+        PassoutProtection::Hours2,
+        PassoutProtection::Hours3,
+    ];
+
+    /// An in-memory index back to an option — out of range is the default, for the reason
+    /// [`super::SubtitleTone::from_index`] gives: the ladder can grow or shrink.
+    pub fn from_index(i: u8) -> PassoutProtection {
+        Self::LADDER.get(i as usize).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> u8 {
+        Self::LADDER.iter().position(|&p| p == self).unwrap_or(0) as u8
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The limit in hours; `Off` is 0.
+    pub fn hours(self) -> u32 {
+        match self {
+            PassoutProtection::Off => 0,
+            PassoutProtection::Hours1 => 1,
+            PassoutProtection::Hours2 => 2,
+            PassoutProtection::Hours3 => 3,
+        }
+    }
+
+    /// **The decision**, pure: whether an advance Up Next would make on its own, `idle_ms` after
+    /// the viewer's last press, is held back. `Off` never holds one; a limit holds one from the
+    /// moment the idle time reaches it.
+    pub fn holds(self, idle_ms: u32) -> bool {
+        self != PassoutProtection::Off && u64::from(idle_ms) >= u64::from(self.hours()) * 3_600_000
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plex::session::{effective, own_prefs, put_own, DolbyVisionModePref,
-        InstantDpadSeekingPref, Preferences, ProfilePrefs};
+        InstantDpadSeekingPref, PassoutProtectionPref, Preferences, ProfilePrefs};
 
     #[test]
     fn instant_dpad_seeking_is_defaulted_and_scoped_per_profile() {
@@ -127,6 +186,49 @@ mod tests {
         for probed in [Supported, Unknown, Unsupported] {
             assert_eq!(DolbyVisionMode::Auto.gate(probed), probed);
             assert_eq!(DolbyVisionMode::Off.gate(probed), Unsupported);
+        }
+    }
+
+    /// Absent, null, an unknown spelling or a wrong type reads as Off, and Off writes no key; a
+    /// profile's own pick is its own and round-trips.
+    #[test]
+    fn passout_protection_is_defaulted_and_scoped_per_profile() {
+        for json in ["{}", r#"{"passout_protection":"4h"}"#, r#"{"passout_protection":null}"#, r#"{"passout_protection":2}"#] {
+            let prefs: Preferences = serde_json::from_str(json).unwrap();
+            assert_eq!(prefs.passout_protection, PassoutProtection::Off, "{json}");
+            let encoded = serde_json::to_value(&prefs).unwrap();
+            assert!(encoded.get("passout_protection").is_none());
+        }
+        let prefs = Preferences::default();
+        for protection in PassoutProtection::LADDER.into_iter().filter(|p| !p.is_default()) {
+            let mut records = Vec::new();
+            assert!(put_own::<PassoutProtectionPref>(&mut records, "alice", "account", protection));
+            assert_eq!(effective::<PassoutProtectionPref>(&prefs, own_prefs(&records, "alice", "account")), protection);
+            for (user, account) in [("bob", "account"), ("alice", "other")] {
+                assert_eq!(effective::<PassoutProtectionPref>(&prefs, own_prefs(&records, user, account)), PassoutProtection::Off);
+            }
+            let encoded = serde_json::to_string(&records[0].prefs).unwrap();
+            assert!(encoded.contains("passout_protection"), "{encoded}");
+            assert_eq!(serde_json::from_str::<ProfilePrefs>(&encoded).unwrap(), records[0].prefs);
+        }
+        for protection in PassoutProtection::LADDER {
+            assert_eq!(PassoutProtection::from_index(protection.index()), protection);
+        }
+        assert_eq!(PassoutProtection::from_index(200), PassoutProtection::Off);
+    }
+
+    /// Off never holds an advance back, however long nobody pressed anything; a limit holds one
+    /// from the moment the idle time reaches it, and not a millisecond before.
+    #[test]
+    fn passout_protection_holds_an_advance_once_the_idle_time_reaches_its_limit() {
+        const H: u32 = 3_600_000;
+        assert_eq!(PassoutProtection::LADDER.map(PassoutProtection::hours), [0, 1, 2, 3]);
+        assert!(!PassoutProtection::Off.holds(u32::MAX), "Off never holds one");
+        for (protection, hours) in [(PassoutProtection::Hours1, 1), (PassoutProtection::Hours2, 2), (PassoutProtection::Hours3, 3)] {
+            assert!(!protection.holds(0), "{protection:?}: a press just now");
+            assert!(!protection.holds(hours * H - 1), "{protection:?}: inside the limit");
+            assert!(protection.holds(hours * H), "{protection:?}: at the limit");
+            assert!(protection.holds(u32::MAX), "{protection:?}: long past it");
         }
     }
 }

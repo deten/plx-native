@@ -22,6 +22,8 @@
 use super::*;
 use plx_media::player::report::AttemptOrigin;
 mod queue_transport;
+#[cfg(test)]
+mod passout_tests;
 // The list is what the LOOP still spells, and phase 12 (PX-PLAYER) is why it is short: the scrub
 // gesture's constants and its two pure policies (`scrub_press`, `failed_key_action`) are read by
 // `screens::player` alone now, so re-exporting them here would be this module claiming a
@@ -870,10 +872,91 @@ pub(crate) fn return_hold_settle(app: &mut super::App, now: u32) {
 /// and moves it a beat later. 300 ms is the plan's proposal, not yet judged on the television.
 pub(crate) const CW_RETURN_HOLD_MS: u32 = 300;
 
+/// **How an advance to the next episode was asked for**, the one fact Passout protection turns on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Advance {
+    /// The viewer pressed for it: *Next Episode* on the Up Next tile, or *Skip Credits* on a `final`
+    /// marker. Never held back, because the press is itself the input the protection waits for.
+    Pressed,
+    /// The player is about to advance on its own (the end of the stream, or the Up Next countdown
+    /// running out), `idle_ms` after the viewer's last press.
+    Automatic { idle_ms: u32 },
+}
+
+impl Advance {
+    /// An automatic advance at `now`, the viewer's last press having arrived at `last_input`.
+    ///
+    /// That instant is `App::last_input`, which the loop's input ingest stamps for every fresh key
+    /// press, click, wheel and pointer movement, on the player and on every other page, and which
+    /// nothing the app does by itself writes. A play the viewer started therefore starts the count
+    /// afresh (it began with a press), while Up Next's own advances leave it running, which is the
+    /// point: the limit is time since a person last touched the remote, however many episodes have
+    /// played since. A `last_input` ahead of `now` (a replay's stamp) reads as no idle time, the
+    /// codebase's half-range wrapping idiom.
+    pub(crate) fn automatic(now: u32, last_input: u32) -> Self {
+        let idle = now.wrapping_sub(last_input);
+        Advance::Automatic { idle_ms: if idle < 0x8000_0000 { idle } else { 0 } }
+    }
+}
+
+/// **Passout protection's decision**, pure: whether this advance is held back. Only an automatic
+/// advance, only to a successor that exists, and only once the chosen limit has passed.
+pub(crate) fn passout_holds(advance: Advance, protection: plx_plex::plex::session::PassoutProtection, has_successor: bool) -> bool {
+    match advance {
+        Advance::Pressed => false,
+        Advance::Automatic { idle_ms } => has_successor && protection.holds(idle_ms),
+    }
+}
+
+/// **Passout protection's gate**, asked at the two places Up Next starts the successor on its own:
+/// the end of the stream ([`finish_playback`]) and the countdown running out ([`countdown_elapsed`]).
+/// True means the advance is held back; the one `up next: passout` line is logged here, and the
+/// caller leaves the player as it would under *Next episode: Off*.
+pub(crate) fn passout_holds_back(advance: Advance, ps: &plx_media::route::PlaybackSession) -> bool {
+    let protection = plx_media::route::passout_protection();
+    if !passout_holds(advance, protection, plx_media::route::up_next(ps).is_some()) {
+        return false;
+    }
+    if let Advance::Automatic { idle_ms } = advance {
+        log(&format!("up next: passout after {}m idle (limit {}h), not advancing", idle_ms / 60_000, protection.hours()));
+    }
+    true
+}
+
+/// **Up Next's countdown ran out**: start the queued episode on its own. When Passout protection
+/// holds the advance back ([`passout_holds_back`]), the episode ends here instead and the player is
+/// left as *Next episode: Off* leaves it at an episode's end. The countdown only runs inside a
+/// `final` credits segment, so ending there is finishing the item, as *Skip Credits* on that
+/// segment is (`SkipAction::Finish`): the flag makes the stop mark it watched.
+pub(crate) fn countdown_elapsed(
+    player: &mut plx_media::player::machine::Player,
+    pa: &mut plx_media::player::adapter::PlayerAdapter,
+    repause_at: &mut i64,
+    refresh_hubs: &mut bool,
+    pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
+    bridge: &mut super::bridge::Bridge,
+    advance: Advance,
+) {
+    if passout_holds_back(advance, &player.session) {
+        if let Some(screen) = super::bridge::player_mut(pages) {
+            screen.up_next.cancel(); // the exit only parks the pop: don't re-fire meanwhile
+        }
+        player.session.finished = true;
+        exit_player(player, pa, repause_at, refresh_hubs, pages);
+        return;
+    }
+    if !play_up_next(&mut player.session, pa, HUD_LINGER_MS, pages, bridge) {
+        if let Some(screen) = super::bridge::player_mut(pages) {
+            screen.up_next.cancel(); // nothing queued after all — don't re-fire
+        }
+    }
+}
+
 /// The episode is OVER — drained to EOS, or the user skipped a `final` credits marker.
 /// Starts the queued episode when the show has one, else leaves the player exactly as
 /// `exit_player` would. There is no interstitial: "always the next episode" — except under the
-/// Next episode preference `Off`, which leaves the player here like a film.
+/// Next episode preference `Off`, which leaves the player here like a film, and when Passout
+/// protection holds back an `advance` nobody has pressed for in too long ([`passout_holds_back`]).
 ///
 /// Returns whether playback was handed off to Up Next (`true`) or the player was left (`false`).
 /// `exit_player`'s `PopTo` only PARKS the navigation (`Dispatcher::request`, applied at the next
@@ -887,8 +970,10 @@ pub(crate) fn finish_playback(
     refresh_hubs: &mut bool,
     pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
     bridge: &mut super::bridge::Bridge,
+    advance: Advance,
 ) -> bool {
     if plx_media::route::next_episode_mode() != plx_media::route::NextEpisodeMode::Off
+        && !passout_holds_back(advance, &player.session)
         && play_up_next(&mut player.session, pa, HUD_LINGER_MS, pages, bridge)
     {
         return true;
@@ -922,7 +1007,8 @@ pub(crate) fn activate_ctrl_row(
         // *Watch Credits* does nothing beyond the cancel the frame block below performs
         // for it — the button exists so that "let it run" is a THING YOU CAN PRESS rather
         // than an absence, which on a countdown is the difference between choosing and
-        // being caught out.
+        // being caught out. A press of *Next Episode* is never held back by Passout protection
+        // (`Advance::Pressed`): only the player's own advances are.
         ControlSlot::UpNext(_) => {
             if btn == plx_appkit::up_next::BTN_NEXT {
                 play_up_next(&mut player.session, pa, HUD_LINGER_MS, pages, bridge)
@@ -955,7 +1041,7 @@ pub(crate) fn activate_ctrl_row(
                 // a `final` credits segment: skipping it IS finishing the item
                 SkipAction::Finish => {
                     player.session.finished = true;
-                    let _ = finish_playback(player, pa, repause_at, refresh_hubs, pages, bridge);
+                    let _ = finish_playback(player, pa, repause_at, refresh_hubs, pages, bridge, Advance::Pressed);
                     true
                 }
             }

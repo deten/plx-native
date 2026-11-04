@@ -715,6 +715,12 @@ At the end of an item with nothing queued — or with *Next episode* set to *Off
 exits to the page it came from. **There
 is no full-screen post-play interstitial** — one was built and is deliberately not shipped.
 
+**Passout protection** (Settings > Playback, Off by default, or after 1, 2 or 3 hours) stops the
+automatic advance when nobody has pressed anything for that long: when the countdown runs out or
+the stream ends, the player instead exits to the page it came from, as under *Off*, and the event
+log records an `up next: passout` line. Any key press, click or pointer movement restarts the
+count; episodes that started on their own do not. Pressing *Next Episode* always advances.
+
 ### 6.8 Info and Chapters
 
 The two tabs at the HUD's bottom left. Both are modal panels on the live player, and BACK closes
